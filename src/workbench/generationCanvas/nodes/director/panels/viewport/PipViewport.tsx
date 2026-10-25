@@ -6,7 +6,7 @@
  *        没有机位或节目黑场时盖黑底「无信号」；位置/宽度/折叠持久到 localStorage。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NomiSelect, WorkbenchButton, WorkbenchIconButton } from '../../../../../../design'
 import { IconChevronDown, IconChevronUp, IconVideo } from '../../../../../../vendor/tablerIcons'
@@ -50,7 +50,7 @@ function writeLayout(layout: PipLayout): void {
   }
 }
 
-export function PipViewport({ rectRef, canvasHostRef }: { rectRef: React.MutableRefObject<PipRect>; canvasHostRef: React.RefObject<HTMLDivElement> }): JSX.Element | null {
+export function PipViewport({ rectRef, canvasHostRef }: { rectRef: React.MutableRefObject<PipRect>; canvasHostRef: React.RefObject<HTMLDivElement | null> }): JSX.Element | null {
   const { t } = useTranslation()
   const store = useDirectorStoreApi()
   const cameras = useDirectorStore((state) => state.activeScene().cameras)
@@ -205,7 +205,7 @@ export function PipViewport({ rectRef, canvasHostRef }: { rectRef: React.Mutable
             ) : null}
             <div className="absolute bottom-0 right-0 size-3 cursor-nwse-resize" title={t('director.camera.pipResize')} onPointerDown={beginResize} />
           </div>
-          <div className="flex items-center justify-between gap-2 bg-nomi-paper px-2 py-1 font-nomi-mono text-micro text-nomi-ink-40">
+          <div className="flex items-center justify-between gap-2 bg-nomi-paper px-2 py-1 font-nomi-mono text-caption text-nomi-ink-40">
             <span>{shown ? t('director.camera.pipFov', { fov: shown.fov.toFixed(1), mm: shown.focalLengthMm }) : '—'}</span>
             {shown ? (
               <span title={enterBlockedReason ?? undefined}>

@@ -1,0 +1,150 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-explicit-render-kind",
+  "problem_type": "Intrinsic fallback shadows a valid explicitly authored node render kind",
+  "symptom": "The existing explicit character/shot-frame regression fails; all four kind-owned card nodes can ignore a declared explicit render kind.",
+  "direct_cause": "A redundant kindOwned early return was inserted ahead of the existing explicit branch; the original intrinsic fallback still exists after that branch.",
+  "class_root": "Hard workspace constraints, explicit node choice, intrinsic defaults and category fallbacks must have one ordered decision path.",
+  "affected_population": [
+    "Character/scene/audio/whiteboard nodes with explicit renderKind",
+    "Body selection, sizing, history and ReactFlow callers of the same resolver"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.ts"
+  ],
+  "entry_points": [
+    "resolveNodeRenderKind"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is internal node/render type precedence. The existing node type, original regression, protected workspace branches and all resolver callers decide the invariant; no third-party behavior changes.",
+  "invariants": [
+    "Valid explicit render kinds precede intrinsic defaults",
+    "Asset/editor/agent-artifact protections and storyboard-group workspace semantics still win",
+    "Missing explicit values still fall through intrinsic then category defaults",
+    "Do not mutate node data, persist migrations, resize controls or delete functionality"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/useNodeResultHistory.ts",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowNodes.tsx",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "isCardRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "symbol": "isCardRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeResultHistory.ts",
+      "symbol": "isCardRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowNodes.tsx",
+      "symbol": "isCardRenderKind"
+    }
+  ],
+  "door_reduction": {
+    "before": 8,
+    "after": 8,
+    "why_not": "Retain existing rendering/sizing/history callers. They already converge at resolveNodeRenderKind; removing the duplicated decision path repairs them without moving UI owners."
+  },
+  "generality_proof": "Preserve the existing failed assertion and execute every declared stored render kind across all four intrinsic-card kinds. Independent protected-workspace cases retain their behavior even with an explicit card value, and frozen input JSON remains unchanged.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+      "symbol": "resolveNodeRenderKind",
+      "responsibility": "Single ordered render-kind decision shared by body and sizing consumers"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "entry_point": "resolveNodeRenderKind",
+      "disposition": "enforced",
+      "evidence": "Base body dispatch consumes this resolver; no caller-side duplicate precedence is added"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "entry_point": "resolveNodeRenderKind",
+      "disposition": "enforced",
+      "evidence": "Visual sizing consumes the same resolved card/media choice"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any intrinsic-card kind with explicit metadata can lose user choice at the same early return.",
+    "same_class_scan": [
+      "Generated actual resolveNodeRenderKind/isCardRenderKind caller doors",
+      "Read node type and authoritative declared render kinds",
+      "Checked migration and protected workspace semantics and the existing failing test"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+    "invariant": "Explicit choice is evaluated once before defaults, after protected workspace constraints.",
+    "failure_mode": "Tests reject default shadowing while retaining hard editor/asset/table protections.",
+    "exception_policy": "none",
+    "strategy": "Delete the redundant early intrinsic return rather than add a second override or a migration.",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/resolveRenderKind.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/nodes/resolveRenderKind.ts"
+    ],
+    "rationale": "Remove duplicated kindOwned early return; keep the existing single intrinsic fallback."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No renderer/framework dependency behavior changes; existing pure resolver owns the decision.",
+    "exit_criteria": []
+  },
+  "migration": "None. Inputs are read-only and the correct render body is selected at the existing boundary.",
+  "residual_risks": [
+    "No App/screenshots/visual baseline updates; the actual mounted UI remains coordination acceptance",
+    "The unchanged door-map tool does not list the resolver definition as its own call site, so the real-diff check retains one door-coverage advisory for resolveRenderKind.ts. Actual generated caller doors and the changed centralized boundary are both recorded; no fake self-call or checker exemption is added."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

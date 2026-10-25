@@ -15,6 +15,9 @@ import type {
   CertificationSubmissionState,
 } from "../integrationCertification/types";
 import type { AdapterRunStage as SharedAdapterRunStage } from "../shared/providerAdapterContract";
+import type { TransportAbandonDisposition, TransportDelivery } from "../catalog/transportDelivery";
+import type { AdapterSelfCheckReason } from "./selfCheck";
+import type { DeclaredAssetIngestion, DeclaredSelfCheck } from "./declarationCard";
 
 export type AdapterAuthType = "none" | "bearer" | "x-api-key" | "query";
 
@@ -78,6 +81,14 @@ export type AdapterSourceEvidence = {
 export type AdapterModeDraft = {
   taskKind: ProfileKind;
   create: HttpOperation;
+  /**
+   * 这条 wire 是同步返回结果还是提交任务后轮询——**上游契约的事实，不是 kind 的常量**
+   * （类根因见 electron/catalog/transportDelivery.ts）。缺省时按「有 query 即异步」向后兼容推断；
+   * 声明成 asynchronous 却不给 query/statusMapping 会在免费自检里直接判缺陷，不会再拿用户的钱去试。
+   */
+  delivery?: TransportDelivery;
+  /** 异步任务不要了怎么办（取消端点 / 轮询到底）。**没有第三种叫「丢掉」**。 */
+  abandon?: TransportAbandonDisposition;
   query?: HttpOperation;
   result?: HttpOperation;
   statusMapping?: Record<string, string[]>;
@@ -100,6 +111,8 @@ export type AdapterModelDraft = {
     default?: string | number | boolean;
     min?: number;
     max?: number;
+    /** §5：这个参数的取值范围与默认值是从哪一页读来的（mode 级 sourceUrls 已有，参数级补齐）。 */
+    sourceUrl?: string;
   }>;
   modes: AdapterModeDraft[];
 };
@@ -110,10 +123,23 @@ export type ProviderAdapterDraft = {
     authType: AdapterAuthType;
     authHeader?: string;
     authQueryParam?: string;
+    /**
+     * `Authorization` 里 key 前面的方案词（Higgsfield 的 `Key id:secret`）。由 Nomi 从已绑定的
+     * vendor 填；卡上只能复述、不能改——它属于「key 怎么放」，与地址同一档（§6.1）。
+     */
+    authScheme?: string;
     providerKind?: AiSdkProviderKind;
   };
   sources: AdapterSourceEvidence[];
   models: AdapterModelDraft[];
+  /** §5：本地素材怎么进这家。Agent 交件时**必填**（`none` 必须显式）；内部编译器那条路可空。 */
+  assetIngestion?: DeclaredAssetIngestion;
+  /** §5：免费自检的形状。缺省 = 打这家自己的模型列表。 */
+  selfCheck?: DeclaredSelfCheck;
+  /** §5：文档写了但这张卡刻意不声明的字段 + 理由。不参与执行，只让取舍可审计。 */
+  omitted?: Array<{ field: string; reason: string; sourceUrl: string }>;
+  /** §2.3：指回供应商自己的 OpenAPI 文档作为证据（我们指向它，不复制它）。 */
+  openapi?: { url: string; operationIds?: Record<string, string> };
 };
 
 /**
@@ -145,14 +171,18 @@ export type AdapterModeResult = {
   taskKind: ProfileKind;
   state: AdapterModeState;
   attempts: number;
-  stage?: "docs" | "compile" | "localize_reference" | "create" | "poll" | "result" | "verify_asset" | "promote";
+  /**
+   * 失败发生在哪一段。付费验证删掉之后，中转自检只剩 `credential`（鉴权/可达）与 `contract`
+   * （说明卡形状）两段；`verify_asset` 留给本地 ComfyUI 候选那条免费的真实产物校验。
+   */
+  stage?: "docs" | "compile" | "credential" | "contract" | "verify_asset" | "promote";
   error?: string;
   /**
    * 失败归类，抛出点查表得来（vendorHttp：401/403→auth、402→balance、429→quota、400/422→input、5xx→server）。
    * 渲染层据此说人话 + 给对应的下一步动作；**不要在 UI 里用关键词猜**（同型 bug 已反复出现 5 轮，
    * 见 2026-08-12 `fix(errors): 文本侧错误也在源头留住 category`）。
    */
-  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "unknown";
+  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "submission-unknown" | "unknown";
   /**
    * stage === "compile" 时的结构化细分原因。`compile` 这个 stage 混着两种完全不同的处境：
    * 「我们没读懂这家文档」与「这个 kind 压根没有通用协议」——给用户的话和该点的按钮都不一样，
@@ -160,6 +190,11 @@ export type AdapterModeResult = {
    */
   compileFailureReason?: AdapterCompileFailureReason;
   httpStatus?: number;
+  /**
+   * 「我们这边缺什么」这一维（与上游 errorCategory 正交）。渲染层据它给修复路径，
+   * 而不是把英文原文甩给用户再建议「你自己接」。
+   */
+  selfCheckReason?: AdapterSelfCheckReason;
   verifiedAt?: string;
   /** One bounded, sanitized evidence record for every promoted media asset. */
   mediaEvidence?: CertificationMediaEvidence[];

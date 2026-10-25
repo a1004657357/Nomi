@@ -1,0 +1,652 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-workflow-signal-compatibility",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "invariant_owner_layer": {
+    "layer": "electron/shared",
+    "tests": ["src/i18n/workflowSignalBoundary.test.ts"]
+  },
+  "problem_type": "Translated presentation used as workflow identity and incomplete legacy tool display",
+  "symptom": "Two focused tests fail and six production consumers exceed fragile-match baseline by 13 occurrences.",
+  "direct_cause": "Creative component aliases have live registry declarations but no summary branches; a Scene3D test still asserts the retired AI destination; workflow readers infer outcome, frame roles and prompt idempotency from Chinese display prose.",
+  "class_root": "Producers and readers do not consistently share authoritative structured identity or canonical authored source constructors.",
+  "affected_population": [
+    "Chinese and English workflows",
+    "Persisted pre-code errors and Chinese authored prompts",
+    "Legacy camera move constructors and canonical Director routes"
+  ],
+  "scope_paths": [
+    "electron/shared/nomiErrorCodes.ts",
+    "electron/catalog/taskParams.ts",
+    "electron/ai/agentError.ts",
+    "electron/ai/codexImagegenRunner.ts",
+    "electron/blender/blenderRunner.ts",
+    "src/workbench/observability/classifyError.ts",
+    "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+    "src/workbench/generationCanvas/components/toolCallSummary.ts",
+    "src/i18n/locales/customWorkflow.ts",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dTypes.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+    "electron/shared/canvas/sourceDefaults.ts",
+    "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+    "electron/shared/storyboard/storyboardShotPrompts.ts",
+    "src/workbench/generationCanvas/runner/videoPromptCompiler.ts"
+  ],
+  "entry_points": [
+    "summarizeToolCall",
+    "resolveCapabilityAlias",
+    "createCameraMoveReferenceNode",
+    "cameraMoveFrameCount",
+    "readCameraMoveAutoCapture",
+    "classifyGenerationError",
+    "detectLegacyErrorKind",
+    "detectBalance",
+    "detectMissingImageReference",
+    "matchNomiErrorCode",
+    "tagNomiError",
+    "stripNomiErrorCode",
+    "describeEmptyAgentReply",
+    "imageEditGuardError",
+    "runCodexImageGeneration",
+    "isRetryableGenerationError",
+    "runBlenderSceneRender",
+    "referenceSlotForScene3DCaptureTitle",
+    "scene3dCaptureSource",
+    "cameraMoveDirective",
+    "computeAttachCameraMove",
+    "compileVideoPromptForReferences",
+    "needsScreenVisibilityRule",
+    "RecipeCameraOutput",
+    "appendCameraMoveDirective",
+    "screenVisibilityRuleForPrompt",
+    "referenceSlotForScene3DCapture",
+    "cameraMoveFrameLabel",
+    "useScene3DMoveFrameExport",
+    "Scene3DCaptureResult",
+    "NomiErrorCode"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "Repository-owned alias declarations, local process outcomes, saved records and prompt/source constructors define this compatibility contract. No external service capability is inferred or invoked.",
+  "invariants": [
+    "No new permissions, model-facing metadata, paid calls, automatic resubmission, App launch or remote writes.",
+    "Known legacy source records and Chinese authored prompt markers remain readable; display locale never changes saved source bytes.",
+    "Structured failure/frame identities outrank translated prose; existing balance evidence recognizer owns Chinese billing recognition.",
+    "Canonical Director production routing stays intact and the legacy Scene3D constructor remains callable.",
+    "No baseline, exclusion, frozen count, protected budget or registry edits."
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/modelFacingToolRegistry.ts",
+      "symbol": "resolveCapabilityAlias"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/registry.ts",
+      "symbol": "resolveCapabilityAlias"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "symbol": "RecipeCameraOutput"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/nomiErrorCodes.ts",
+      "symbol": "NomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "symbol": "resolveCapabilityAlias"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/CameraMoveCaptureHost.tsx",
+      "symbol": "readCameraMoveAutoCapture"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/CameraMoveCaptureHost.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.ts",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DAutoCapture.tsx",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DAutoCapture.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMath.ts",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dSharedTypes.ts",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTypes.ts",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dViewControllers.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/StagingCaptureHost.tsx",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/StagingCaptureHost.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "Scene3DCaptureResult"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/agentError.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/codexImagegenRunner.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/assets/generatedMediaDecode.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/blender/blenderRunner.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "imageEditGuardError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/assetLocalization.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/taskParams.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/desktopIntegrationIpc.ts",
+      "symbol": "runBlenderSceneRender"
+    },
+    {
+      "kind": "write",
+      "path": "electron/networkOutboundMessage.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/productionRun/productionRunService.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/productionRun/submissionOutbox.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "electron/productionRun/submissionOutbox.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/runtime.ts",
+      "symbol": "imageEditGuardError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/runtime.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "symbol": "cameraMoveFrameLabel"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/productionShotPhase.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/storyboard/storyboardShotPrompts.ts",
+      "symbol": "needsScreenVisibilityRule"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/storyboard/storyboardShotPrompts.ts",
+      "symbol": "screenVisibilityRuleForPrompt"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/codexImageTask.ts",
+      "symbol": "runCodexImageGeneration"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/comfyCandidateTest.ts",
+      "symbol": "stripNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/taskResultQuery.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/taskResultQuery.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorOutboundGuard.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/lane/laneCommandFailure.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/api/taskApi.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/applyCanvasToolCall.ts",
+      "symbol": "createCameraMoveReferenceNode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/canvasWriteTarget.ts",
+      "symbol": "summarizeToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "symbol": "summarizeToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "symbol": "cameraMoveDirective"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "symbol": "appendCameraMoveDirective"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/CameraMoveCaptureHost.tsx",
+      "symbol": "computeAttachCameraMove"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/createCameraMoveReferenceNode.ts",
+      "symbol": "cameraMoveFrameCount"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeRecoverableReport.tsx",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "symbol": "cameraMoveDirective"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "symbol": "appendCameraMoveDirective"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/CameraMoveCaptureHost.tsx",
+      "symbol": "computeAttachCameraMove"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.ts",
+      "symbol": "cameraMoveFrameCount"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "useScene3DMoveFrameExport"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "symbol": "cameraMoveFrameLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "symbol": "referenceSlotForScene3DCaptureTitle"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "referenceSlotForScene3DCapture"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeModelAutoSelect.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/catalogTaskActions.ts",
+      "symbol": "compileVideoPromptForReferences"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/catalogTaskResolve.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/catalogTaskResultParse.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "isRetryableGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/outboundBlockedRecovery.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/recoverableTimeout.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+      "symbol": "tagNomiError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/videoPromptCompiler.ts",
+      "symbol": "screenVisibilityRuleForPrompt"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/spend/spendConfirm.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "stripNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "detectMissingImageReference"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "detectBalance"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "detectLegacyErrorKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/generationFeedback.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/taskCenter/taskCenterEntries.ts",
+      "symbol": "classifyGenerationError"
+    }
+  ],
+  "door_reduction": {
+    "before": 73,
+    "after": 88,
+    "why_not": "The same 31-symbol AST map is replayed against base Git blobs and current source: 73 before, 88 after. Additional source tagging and structured capture readers are real identity-transport doors, not duplicate owners. Input guards, Agent finish outcomes and local process outcomes remain separate producers; UI narration and retry safety are separate readers. Modern Director and supported legacy Scene3D consumers must both remain. Authored rule constructors and their compatibility readers share actual source formatters rather than removing user paths."
+  },
+  "generality_proof": "Use the live capability registry for summaries, the existing IPC-safe error-code codec for source outcomes and old-record decoding, explicit capture roles, and shared actual authored prompt constructors for both Director and legacy consumers.",
+  "shared_boundaries": [
+    {
+      "path": "electron/shared/nomiErrorCodes.ts",
+      "symbol": "matchNomiErrorCode",
+      "responsibility": "Stable process/input failure identity with bounded historical record decoding."
+    },
+    {
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "symbol": "scene3dCaptureSource",
+      "responsibility": "Locale-neutral authored capture labels; explicit new frame roles with legacy source parsing."
+    },
+    {
+      "path": "electron/shared/storyboard/storyboardShotPrompts.ts",
+      "symbol": "needsScreenVisibilityRule",
+      "responsibility": "Device reference and authored screen constraint semantics."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "symbol": "cameraMoveDirective",
+      "responsibility": "Actual camera movement prompt construction shared by modern and legacy callers."
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "symbol": "summarizeToolCall",
+      "responsibility": "Human summaries of live registered creative component aliases."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "symbol": "referenceSlotForScene3DCapture",
+      "responsibility": "Explicit frame role before editable title; bounded allowed role set and source-derived legacy title compatibility."
+    },
+    {
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "detectBalance",
+      "responsibility": "Existing actionable Chinese billing evidence owner; incidental mentions of balance no longer override the transport outcome."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/observability/classifyError.ts",
+      "entry_point": "classifyGenerationError",
+      "disposition": "enforced",
+      "evidence": "Reads local source error codes, retaining the existing provider-origin and balance evidence boundary."
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "entry_point": "isRetryableGenerationError",
+      "disposition": "enforced",
+      "evidence": "Codex unknown outcome and cancellation remain non-resubmittable independently of locale or transient words."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "entry_point": "handleScreenshot and Blender failure catch",
+      "disposition": "enforced",
+      "evidence": "Consumes explicit capture roles and coded cancellation; uses display translation only after outcome selection."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "entry_point": "computeAttachCameraMove",
+      "disposition": "enforced",
+      "evidence": "Legacy constructor shares the actual Director prompt builder/idempotency boundary."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/applyCanvasToolCall.ts",
+      "entry_point": "create_camera_move",
+      "disposition": "not-affected",
+      "evidence": "Already routes to canonical Director; test must compare with that owner, with separate legacy input coverage."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any locale, historical record or second workflow entry can expose prose-dependent identity and stale destination assumptions.",
+    "same_class_scan": [
+      "Actual AST doorsForTargets across all named producer, reader and alias symbols.",
+      "Pure fragile-match scan over src and electron; baseline never written.",
+      "Search all CameraOutput definitions: old public type already reexports the sole shared RecipeCameraOutput, so no type modification."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/nomiErrorCodes.ts",
+    "invariant": "Source failure codes and structured capture roles are consumed before human display; prompt idempotency follows the real constructor owner.",
+    "failure_mode": "Unknown tools keep their name, unsupported roles do not attach a frame, ambiguous paid outcomes cannot auto-resubmit; unknown user text is never translated or rewritten.",
+    "exception_policy": "none",
+    "strategy": "Tag the source outcome before IPC, decode only bounded historical source formats, and reuse live alias and authored prompt owners in every affected consumer.",
+    "artifacts": [
+      "electron/shared/nomiErrorCodes.ts",
+      "electron/shared/canvas/sourceDefaults.ts",
+      "electron/shared/storyboard/storyboardShotPrompts.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/components/toolCallSummary.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.test.ts",
+    "src/i18n/workflowSignalBoundary.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.test.ts",
+    "electron/ai/agentError.test.ts",
+    "electron/ai/codexImagegenRunner.test.ts",
+    "electron/blender/blenderRunner.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/i18n/workflowSignalBoundary.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "Existing legacy tool names, Scene3D constructor and authored Chinese inputs are retained as supported compatibility entries, not obsolete implementations to delete."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No new dependencies. Existing registry, i18next, codec, source constructors and Vitest are the owners.",
+    "exit_criteria": []
+  },
+  "migration": "No stored record rewrite. New errors carry IPC-safe codes, new captures carry explicit frame slots, and the boundary reads existing historical source records. Existing public camera-output type already aliases the shared type.",
+  "residual_risks": [
+    "All 18 targeted test files pass (506 tests); original source/prompt/geometry hash and SSR regressions are included. This is not whole-repository CI.",
+    "Full contracts, protected frozen approval and CI are coordinator-owned and are not run or changed here.",
+    "Real App, real media generation, paid calls and OS process lifecycle behavior remain unverified. Local process producer tests use fake children; unexpected execFile is denied and asserted unused.",
+    "Bare incidental balance mentions are deliberately no longer evidence of a billing failure; existing actionable Chinese balance/arrears/recharge recognition is retained."
+  ]
+}

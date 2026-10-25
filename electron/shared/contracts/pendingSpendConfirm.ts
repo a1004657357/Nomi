@@ -11,6 +11,25 @@
  * 印 0 恰好是唯一会被读成「这次不花钱」的那一种。与 `productionRun/shotPricing.ts`
  * 的 `ShotPrice` 同形，那边是求值的家，这里是过线的形状。
  */
+import type { ResidentSurfaceDisabledReason, ResidentSurfaceOffPhase } from "./residentSurfaceLifecycle";
+import type { GenerationShotKind } from "../generationShotKind";
+
+import { z } from 'zod';
+import { generationReferenceSchema, type GenerationReference } from '../agentCapabilities/generationPlanSchemas';
+
+export type PendingSpendReference = GenerationReference & Readonly<{ url?: string }>;
+/** Semantic renderer edit; pinned identities are accepted only when already in this candidate. */
+export const spendReferenceInputSchema = z.union([
+  z.object({ reference: generationReferenceSchema, url: z.string().min(1).optional() }).strict(),
+  generationReferenceSchema.omit({ assetId: true, contentHash: true, version: true })
+    .extend({ url: z.string().trim().min(1) }).required({ kind: true }).strict(),
+]);
+export type SpendReferenceInput = z.infer<typeof spendReferenceInputSchema>;
+
+export function spendReferenceKey(reference: GenerationReference): string {
+  return JSON.stringify([reference.assetId, reference.contentHash, reference.version, reference.kind ?? null, reference.role ?? null]);
+}
+
 export type PendingSpendPrice = { known: true; amount: number } | { known: false };
 
 /** 一镜在付费卡上的全部事实。绝不含 transportModelId、密钥或供应商 URL。 */
@@ -23,9 +42,20 @@ export type PendingSpendShot = Readonly<{
   prompt: string;
   providerId: string;
   modelId: string;
+  /**
+   * 这一镜出来的是图片还是视频（宿主按 `generationShotKind` 算，和画布节点、派发同一个答案）。
+   * 卡标题说「张 / 段」、卡体那张生成框的种类都只读它，不再各自去解读 `mode` 或模型目录（2026-09-30 第 9 条）。
+   */
+  kind: GenerationShotKind;
   mode?: string;
   modeId?: string;
+  /**
+   * 候选上显式写着的变体（没写 = 缺席）。卡上那张生成框拿它和 `modelId` 问唯一 owner
+   * `resolveArchetypeVariant`——与宿主派发问的是同一个函数、同一组输入，卡上写哪个就派哪个（2026-09-26）。
+   */
+  variantId?: string;
   parameters: Readonly<Record<string, unknown>>;
+  references?: readonly PendingSpendReference[];
   price: PendingSpendPrice;
 }>;
 
@@ -35,6 +65,8 @@ export type PendingSpendConfirm = Readonly<{
   operationId: string;
   /** 幂等键的一半：改参数把它推进一版（`generation.revise` 的 commandId 用它）。 */
   planVersion: number;
+  /** Host identity of the exact displayed candidates, scope and quote. */
+  quoteId: string;
   candidateRevision: number;
   /**
    * 付费门已经开着时它就是那道门的 id；还是草稿（没封印）时缺席。
@@ -49,3 +81,20 @@ export type PendingSpendConfirm = Readonly<{
   knownSubtotal: number;
   unknownShotCount: number;
 }>;
+
+/**
+ * 「有没有待确认的一笔」这条读通道的**完整**答案（2026-09-14）。
+ *
+ * 三种现实必须是三种不同的值，而不是一个数组加一个异常：
+ *   · `ready` + rows        —— 面装着，这些就是要确认的（空数组 = 真的没有）；
+ *   · `off`                 —— 本会话按配置没装这条面 / 还在起 / 已停。**不是失败**：这种相下
+ *                              没有任何一面能 announce「有一笔在等你」，所以也没有卡可画；
+ *   · 抛 `spend_confirm_surface_unavailable` —— 装配抛了。那才是要一路传到用户眼前的失败。
+ *
+ * 2026-09-12 的修法只把「null」改成「抛」，于是「按配置关掉」也成了失败（Canvas Performance
+ * 18 个场景每 1.5s 一条 console error）；2026-09-13 又在渲染层把那个错吞回去（而且没接上线）。
+ * 两头各修一次都不对，因为两头都不是这份状态的 owner。
+ */
+export type PendingSpendRead =
+  | Readonly<{ surface: "ready"; rows: readonly PendingSpendConfirm[] }>
+  | Readonly<{ surface: "off"; phase: ResidentSurfaceOffPhase; reason?: ResidentSurfaceDisabledReason }>;

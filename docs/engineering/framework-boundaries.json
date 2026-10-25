@@ -11,11 +11,9 @@
   ],
   "capabilityInventory": {
     "_comment": [
-      "机器抽取的能力词表要覆盖哪些依赖（2026-09-07 加）。上面的 frameworks 是**人手写**的，",
-      "只覆盖已经出过四列表的那几项能力——它天生只包含已知的东西。这里换一条腿：",
-      "scripts/gen-dependency-capabilities.mjs 从 node_modules 的 .d.ts 导出符号与 README 标题",
-      "机器抽出词表，落到 docs/engineering/dependency-capabilities.generated.json，",
-      "给「还不知道自己不知道」的人当原料。加一个包 = 往这个数组里加一行，然后重跑生成器。"
+      "哪些在用的依赖必须有框架登记或债登记（2026-09-07 加；check:framework-boundary 逐个核）。",
+      "2026-10-02：原先由 gen-dependency-capabilities 机器抽取能力词表（check:dependency-capabilities，零红）已删，",
+      "这里只保留「在用的包清单」这一半。加一个包 = 往这个数组里加一行。"
     ],
     "packages": [
       "@earendil-works/pi-coding-agent",
@@ -34,7 +32,8 @@
       "下面的能力词，且该文件不在豁免登记里 → 出 warning。它抓的是 forbidden 正则抓不到的那半边：",
       "换个符号名重写一份框架已有的能力。正则认的是具体写法，词表认的是**这件事本身**。",
       "为什么先不阻断：这类启发式的死因是误报——一道天天红的门岗等于不存在（R17）。",
-      "先跑一周量误报率，按 promotion 里写死的条件再决定升不升红。"
+      "先跑一周量误报率，按 promotion 里写死的条件再决定升不升红。",
+      "⚠️ 下面的 promotion.reviewDue 已过期且 2026-09-15 那次续期**刻意没改它**：它不阻断任何门岗，改日期只会把一次到期的复盘变成备忘录。这条复盘本身没做，是笔明账。"
     ],
     "watchWords": ["session", "retry", "steer", "steering", "parent", "compaction", "harness", "transcript", "persistence", "resume"],
     "exemptions": "scripts/framework-boundary-advisory-exemptions.json",
@@ -68,31 +67,49 @@
   "referenceConformanceDebt": [
     {
       "_comment": "参考实现逐层对照的**债**（R29 第二份必交物）。登记的是欠账不是豁免：每条绑一个到期日，到期不交门岗就红。清掉一条 = 从这里删一行并在框架条目上写 referenceConformance。id = 框架 id 或 capabilityInventory 里的包名。",
-      "id": "pi",
-      "doc": "docs/research/2026-09-07-pi-reference-implementation-conformance.md",
-      "due": "2026-09-14",
-      "why": "九层对照已交（doc 字段那份，2026-09-07 合入 main），它照出 24 条「压根没想到」。债剩下的是**把它们清掉**，不是再写一份对照。到 2026-09-07 阶段 2 为止：阶段 2 前必补的 9 条已销 7 条（G-01 根级 anyOf / G-02 失败必须 throw / G-03 描述三通道+重建系统提示词两段 / G-05 枚举用 enum 形态 / G-09 addedToolNames 已判并写结论，本阶段销；G-04 工具输出截断 / G-08 唯一校验点带容忍梯，阶段 1 已销），剩 2 条各自带票：G-06（改名后旧会话的旧形状 tool call 折旧，阶段 4 迁移旧转录前必补）、G-07（路径参数 containPath()，阶段 3 接生成/导出类工具时才有落点）。阶段 3 前必补的 8 条（G-10～G-17）与 G-18 跨进程会话锁尚未开工。销账明细见 docs/plan/2026-09-07-agent-runtime-rebuild.md §12.10。"
-    },
-    {
       "id": "xyflow-react",
       "doc": "docs/research/2026-10-07-xyflow-reference-implementation-conformance.md",
-      "due": "2026-10-07",
-      "why": "生成画布的交互内核（R23 单内核）。React Flow 官方 examples 是同一套 API 的参考实现，我们的画布已经在 sub-flows、受控视口、节点类型注册这些层上各走了自己的路（2026-09-07 已就 sub-flows 单独查过一轮，见 docs/research/2026-09-07-react-flow-subflows-vs-frame.md），但九层从没并排摆过。id 从包名 @xyflow/react 改成框架 id xyflow-react：PR #550 把它从「只在 capabilityInventory 里的包」升成了登记框架，债要挂在框架 id 上才认得出（同一笔债，没有新增）。"
+      "due": "2026-12-15",
+      "plan": "docs/plan/2026-10-01-tech-stack-line-0.24.md",
+      "why": "生成画布的交互内核（R23 单内核）。React Flow 官方 examples 是同一套 API 的参考实现，我们的画布已经在 sub-flows、受控视口、节点类型注册这些层上各走了自己的路（2026-09-07 已就 sub-flows 单独查过一轮，见 docs/research/2026-09-07-react-flow-subflows-vs-frame.md），但九层从没并排摆过。id 从包名 @xyflow/react 改成框架 id xyflow-react：PR #550 把它从「只在 capabilityInventory 里的包」升成了登记框架，债要挂在框架 id 上才认得出（同一笔债，没有新增）。 2026-10-01 顺延：技术栈线推到 0.24，本笔跟 S7（画布内核对照），新到期日 2026-12-15，见 plan 字段。"
     },
     {
       "id": "ai",
       "doc": "docs/research/2026-10-07-vercel-ai-sdk-reference-implementation-conformance.md",
-      "due": "2026-10-07",
-      "why": "Vercel AI SDK 是模型调用与流式转录那条线的底座，AI Elements demo 是它的参考实现。工具、转录渲染、控制流三层我们各写了一份宿主侧的版本，没有对照过它的分层。"
+      "due": "2026-11-30",
+      "plan": "docs/plan/2026-10-01-tech-stack-line-0.24.md",
+      "why": "Vercel AI SDK 是模型调用与流式转录那条线的底座，AI Elements demo 是它的参考实现。工具、转录渲染、控制流三层我们各写了一份宿主侧的版本，没有对照过它的分层。 2026-10-01 顺延：技术栈线推到 0.24，本笔跟 S5（AI SDK 主版本裁决），新到期日 2026-11-30，见 plan 字段。"
     },
     {
       "id": "@mantine/core",
       "doc": "docs/research/2026-10-31-mantine-reference-implementation-conformance.md",
-      "due": "2026-10-31",
-      "why": "组件层。排在最后是因为它离「重造框架能力」最远（我们的设计系统是 token-only 自持的，D2 意义上的护城河在别处），但扩展 API 与安全两层仍值得并排看一次，尤其是 Mantine 官方 demo 怎么处理受控/非受控与可访问性。"
+      "due": "2026-12-31",
+      "plan": "docs/plan/2026-10-01-tech-stack-line-0.24.md",
+      "why": "组件层。排在最后是因为它离「重造框架能力」最远（我们的设计系统是 token-only 自持的，D2 意义上的护城河在别处），但扩展 API 与安全两层仍值得并排看一次，尤其是 Mantine 官方 demo 怎么处理受控/非受控与可访问性。 2026-10-01 顺延：技术栈线推到 0.24，本笔跟 S6（Tailwind 4 与 AI Elements 评估），新到期日 2026-12-31，见 plan 字段。"
     }
   ],
   "frameworks": [
+    {
+      "id": "whisper-cpp",
+      "packages": ["whisper.cpp"],
+      "version": "OpenWhispr-0.0.10",
+      "fourColumnTable": "docs/plan/2026-09-17-local-transcription.md",
+      "referenceConformance": {
+        "verifiedAt": "2026-09-17",
+        "upstreamVersion": "OpenWhispr-0.0.10",
+        "doc": "docs/plan/2026-09-17-local-transcription.md"
+      },
+      "capabilities": [{
+        "id": "multilingual-sidecar",
+        "provides": "whisper-server provides multilingual ASR and automatic language detection via multipart /inference; Nomi owns verified installation and video task orchestration only.",
+        "evidence": "https://github.com/ggml-org/whisper.cpp/blob/master/examples/server/README.md; https://github.com/OpenWhispr/openwhispr/blob/main/scripts/download-whisper-cpp.js",
+        "scope": ["electron/localSpeech/", "electron/shared/localSpeech/"],
+        "forbidden": [
+          { "id": "no-english-only-weights", "pattern": "ggml-[a-z0-9-]+\\.en(?:[.-])", "why": "English-only weights cannot satisfy the multilingual invariant; use the engine's multilingual models." },
+          { "id": "no-second-engine", "pattern": "(?:faster-whisper|sherpa-onnx|whisper-rs)", "why": "The approved single whisper.cpp engine already owns inference; a second engine splits execution and supply-chain ownership." }
+        ]
+      }]
+    },
     {
       "id": "pi",
       "packages": [
@@ -102,11 +119,67 @@
       ],
       "version": "0.85.1",
       "fourColumnTable": "docs/plan/2026-09-07-agent-runtime-rebuild.md",
+      "historyContextConformance": "docs/research/2026-09-19-pi-history-read-side/prior-art.md",
+      "referenceConformance": {"doc": "docs/research/2026-10-01-pi-coding-agent-reference-conformance/report.md", "upstreamVersion": "0.85.1", "verifiedAt": "2026-10-01", "note": "参考实现 = pi coding agent 0.85.1（docs + dist/core 公共面 + pi-agent-core harness 运行时源码）。九层全在、未裁剪。09-07 那份（docs/research/2026-09-07-pi-reference-implementation-conformance.md）的 24 条没想到：已关 19、部分 2、待核 2；新的没想到 N-1…N-6 带阶段列在报告末尾。开放问题：进程内改用 AgentSession 未评估。"},
       "why": "2026-09-06 #546 架构评审：接入时只接了最底层的 agent loop，pi 已提供的会话持久化、有序转录、重试、价格与 steer/followUp 各被我们重写了一份，而且更差。这张表把那次评审的结论钉成机器判据。",
       "surface": {
         "why": "2026-09-07 真实事故：electron/agentLane/laneTools.mts:175 给所有 lane 工具硬写 executionMode:'sequential'，而 pi 的 AgentHarnessTool.executionMode 逐工具可选；同一个对象字面量里 replay 已经改成从 mutates 派生。四列表与逐层对照都看的是「层」，看不见「字段」，所以两份都没拦住。",
-        "scope": ["electron/agentLane/", "electron/harness/runtime/pi/", "electron/projectAgentHost/"],
+        "scope": ["electron/agentLane/"],
         "sources": [
+          {
+            "package": "@earendil-works/pi-agent-core",
+            "dtsPath": "node_modules/@earendil-works/pi-agent-core/dist/harness/session/types.d.ts",
+            "types": [
+              {
+                "name": "BranchScan",
+                "why": "Read-side paging; fixed-version field evidence in docs/research/2026-09-19-pi-history-read-side/prior-art.md.",
+                "declaredIn": [
+                  "node_modules/@earendil-works/pi-agent-core/"
+                ],
+                "anchors": [
+                  {
+                    "kind": "typeAnnotation",
+                    "name": "BranchScan"
+                  }
+                ],
+                "fields": {
+                  "start": {
+                    "verdict": "derived",
+                    "at": "electron/agentLane/laneHistoryPage.mts:17"
+                  },
+                  "cursor": {
+                    "verdict": "derived",
+                    "at": "electron/agentLane/laneHistoryPage.mts:17"
+                  },
+                  "limit": {
+                    "verdict": "derived",
+                    "at": "electron/agentLane/laneHistoryPage.mts:17"
+                  },
+                  "order": {
+                    "verdict": "constant",
+                    "value": "'newestFirst'",
+                    "reason": "Read latest entries via original SDK cursors; reverse once for chronological display."
+                  },
+                  "stopAtType": {
+                    "verdict": "unused",
+                    "why": "UI paging includes every original entry kind and does not stop at compaction."
+                  },
+                  "stopAtId": {
+                    "verdict": "unused",
+                    "why": "UI paging includes every original entry kind and does not stop at compaction."
+                  },
+                  "type": {
+                    "verdict": "unused",
+                    "why": "UI paging includes every original entry kind and does not stop at compaction."
+                  },
+                  "customType": {
+                    "verdict": "unused",
+                    "why": "UI paging includes every original entry kind and does not stop at compaction."
+                  }
+                }
+              }
+            ]
+          },
           {
             "package": "@earendil-works/pi-agent-core",
             "dtsPath": "node_modules/@earendil-works/pi-agent-core/dist/harness/types.d.ts",
@@ -210,10 +283,8 @@
                     "at": "electron/agentLane/laneHost.mts:75"
                   },
                   "resources": {
-                    "verdict": "debt",
-                    "due": "2026-09-21",
-                    "owner": "阶段 3b · 技能与提示词资源",
-                    "why": "DefaultResourceLoader（skills / prompts / themes / AGENTS 文件）是 pi 的资源装配面，Nomi 的技能系统目前走自己那条路。这一格属于 framework-boundaries 已登记的 resource-loading 能力，收敛方案在 docs/plan/2026-09-07-agent-runtime-rebuild.md，裁决要跟着那份方案一起下。"
+                    "verdict": "unused",
+                    "why": "2026-09-18 还清那笔 debt 时的裁决：技能的发现与解析已经是 pi 的——`loadSourcedSkills`（electron/agentLane/laneSkillCatalog.mts）出目录、`formatSkillsForPrompt` 出 <available_skills>、`formatSkillInvocation` 出选中技能的信封（laneSkillPrompt.mts）。这一格收的是 pi-coding-agent 那套 Resources（prompts / themes / AGENTS 文件 + 系统提示词装配），Nomi 没有 prompts/themes/AGENTS 这些概念，系统提示词由 composeLaneSystemPrompt 按回合求值（laneHost.mts）；把技能塞进 resources 会让同一份索引有两个装配点。所以不构造它，技能走上面三个 pi 函数。"
                   },
                   "streamOptions": {
                     "verdict": "unused",
@@ -406,9 +477,9 @@
       "capabilities": [
         {
           "id": "session-persistence",
-          "provides": "SessionManager 负责会话的落盘、追加与恢复（含 CURRENT_SESSION_VERSION 迁移）",
+          "provides": "AgentHarness lanes use public Session/Branch persistence and paged history; legacy coding-agent uses SessionManager. Runtime transcript is a compacted working set, not UI history.",
           "evidence": "@earendil-works/pi-coding-agent@0.85.1 dist/core/session-manager.d.ts:184 `export declare class SessionManager`；dist/core/session-manager.d.ts:334 `static inMemory`",
-          "scope": ["electron/harness/runtime/pi/", "electron/agentLane/"],
+          "scope": ["electron/agentLane/"],
           "forbidden": [
             {
               "id": "opt-out-of-session-store",
@@ -426,7 +497,7 @@
           "id": "retry-policy",
           "provides": "RetryPolicy：模型请求的重试与退避策略，由 settings.retry 与 provider.maxRetries 驱动",
           "evidence": "@earendil-works/pi-ai@0.85.1 `RetryPolicy`（经 pi-coding-agent dist/core/compaction/compaction.d.ts:8 import、:105 `completeSummarization(..., retry?: RetryPolicy, ...)` 透出）；pi-coding-agent dist/core/settings-manager.d.ts:81 `retry?: RetrySettings`",
-          "scope": ["electron/harness/runtime/pi/", "electron/agentLane/"],
+          "scope": ["electron/agentLane/"],
           "forbidden": [
             {
               "id": "retry-disabled-wholesale",
@@ -441,10 +512,28 @@
           ]
         },
         {
+          "id": "context-compaction",
+          "provides": "自动压缩 compaction（只调 reserveTokens / keepRecentTokens）：超阈值时在回合之间摘要旧消息、保留尾巴、落可回放条目；切点与摘要全是 pi 的",
+          "evidence": "@earendil-works/pi-agent-core dist/harness/compaction/compaction.js:144 `shouldCompact`、dist/harness/runtime/drive/structural.js:837 `prepareCompactionThreshold`；@earendil-works/pi-coding-agent docs/compaction.md；我们的唯一设置入口 electron/agentLane/laneContextBudget.mts `laneCompactionSettings`",
+          "scope": ["electron/agentLane/"],
+          "forbidden": [
+            {
+              "id": "compaction-disabled",
+              "pattern": "compaction:\\s*\\{\\s*enabled:\\s*false",
+              "why": "关掉 pi 的压缩后，长对话的上下文只能由宿主自己裁剪——那正是 laneContextFit 那份自写件（写了又删）重新长出来的地方。"
+            },
+            {
+              "id": "hand-rolled-context-trimming",
+              "pattern": "fitContextToBudget|elideOldToolResults|pruneToolResults|trimContextToBudget",
+              "why": "自己裁剪每次请求的消息视图，等于第二个压缩器：失去 pi 的切点规则、摘要和可回放的 compaction 条目；该调的是 laneCompactionSettings 的 reserveTokens / keepRecentTokens。"
+            }
+          ]
+        },
+        {
           "id": "steering",
           "provides": "AgentSession.steer() / followUp()：把用户的新指令按流式状态排进当前回合或下一回合",
           "evidence": "@earendil-works/pi-coding-agent@0.85.1 dist/core/agent-session.d.ts:375 `steer(text, images?)`、:383 `followUp(text, images?)`；pi-agent-core dist/agent.d.ts:84/86",
-          "scope": ["electron/projectAgentHost/", "electron/agentLane/"],
+          "scope": ["electron/agentLane/"],
           "forbidden": [
             {
               "id": "host-owned-steering-queue",
@@ -462,7 +551,7 @@
           "id": "resource-loading",
           "provides": "DefaultResourceLoader：扩展 / skills / prompts / themes / AGENTS 文件的发现、加载与系统提示词装配",
           "evidence": "@earendil-works/pi-coding-agent@0.85.1 dist/core/resource-loader.d.ts:120 `export declare class DefaultResourceLoader implements ResourceLoader`",
-          "scope": ["electron/harness/runtime/pi/", "electron/agentLane/"],
+          "scope": ["electron/agentLane/"],
           "forbidden": [
             {
               "id": "hand-rolled-resource-loader",
@@ -473,14 +562,19 @@
               "id": "private-skill-resource-catalog",
               "pattern": "createNomiSkillResourceCatalog|getNomiSkillRoots",
               "why": "自研 skill 发现与目录装配，与 DefaultResourceLoader.getSkills() 同职责；两份发现逻辑迟早对同一目录给出不同答案。"
+            },
+            {
+              "id": "private-skill-directory-walk",
+              "pattern": "discoverSkillRecordsFromRoots|createLaneInstalledSkills",
+              "why": "2026-09-18 之前仓里有两份自研的技能遍历器（skillStore 的 discoverSkillRecordsFromRoots 只认 root/<dir>/SKILL.md；laneInstalledSkills 对不叫 SKILL.md 的路径直接抛），各自比 pi 的 loadSkills 窄一点——以 my-skill.md 分发的技能在 pi / Claude Code 装得进、在 Nomi 报错。发现只能来自 pi 的 loadSourcedSkills（laneSkillCatalog.mts）；投影、受众、内容寻址、软链纪律才是我们的活。"
             }
           ]
         },
         {
           "id": "ordered-transcript",
-          "provides": "AgentSession 的有序事件流与会话条目：按段（文本 / 思考 / 工具调用 / 结果）保序，宿主订阅即可拿到结构",
+          "provides": "AgentHarness lane.watch and reduceLaneSnapshot own ordered runtime state; Branch.findEntries owns original history order. UI page caches never feed model context or replace the reducer.",
           "evidence": "@earendil-works/pi-coding-agent@0.85.1 dist/core/agent-session.d.ts:40 `AgentSessionEvent`、:103 `AgentSessionEventListener`",
-          "scope": ["electron/harness/runtime/pi/", "electron/agentLane/"],
+          "scope": ["electron/agentLane/", "electron/shared/agentLane/"],
           "forbidden": [
             {
               "id": "flatten-text-deltas-into-one-string",
@@ -809,10 +903,7 @@
                     "verdict": "unused",
                     "why": "选中集的真相源在 Zustand，选中变化只经 onNodesChange 一条路回写。再接一份内核的选中事件就是同一语义两份定义（R14.1）；框选只用到 onSelectionEnd（收框那一下要落 Zustand）。"
                   },
-                  "selectionMode": {
-                    "verdict": "unused",
-                    "why": "选中集的真相源在 Zustand，选中变化只经 onNodesChange 一条路回写。再接一份内核的选中事件就是同一语义两份定义（R14.1）；框选只用到 onSelectionEnd（收框那一下要落 Zustand）。"
-                  },
+                  "selectionMode": {"verdict": "derived", "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:198", "reason": "SelectionMode.Partial＝扫到即选，是 docs/plan/2026-06-14-canvas-smoothness-ABC.md §B2 拍板的框选语义（旧内核做 AABB 相交）。内核默认 Full 要求整张卡完全落进框内，用户得把框拉得比卡还大。", "why": "迁移时漏传、2026-09-11 回填①补回；值是 @xyflow/react 的枚举成员，机器扫出来算动态赋值。"},
                   "panActivationKeyCode": {
                     "verdict": "upstream-default",
                     "default": "'Space'",
@@ -889,13 +980,13 @@
                     "verdict": "derived",
                     "reason": "创作画布需在既定 20–300% 范围查看节点概览与细节；表节点低于 40% 展示卡片，所有缩放入口必须保持同一范围。",
                     "why": "Existing shared canvas range is passed to React Flow kernel, fit and slider; no independent zoom clamp.",
-                    "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:176"
+                    "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:181"
                   },
                   "maxZoom": {
                     "verdict": "derived",
                     "reason": "创作画布需在既定 20–300% 范围查看节点概览与细节；表节点低于 40% 展示卡片，所有缩放入口必须保持同一范围。",
                     "why": "Existing shared canvas range is passed to React Flow kernel, fit and slider; no independent zoom clamp.",
-                    "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:176"
+                    "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:181"
                   },
                   "viewport": {
                     "verdict": "unused",
@@ -926,36 +1017,16 @@
                     "verdict": "unused",
                     "why": "画布样式只走设计 token 与组件 className（R10：全局/内联样式只可减不可增）。从内核 props 传内联样式会开出第二条样式源。"
                   },
-                  "zoomOnScroll": {
-                    "verdict": "upstream-default",
-                    "default": "true",
-                    "why": "滚轮缩放是画布类工具的通用手势（Figma/Miro 同款），没有偏离的理由。"
-                  },
+                  "zoomOnScroll": {"verdict": "derived", "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:203", "why": "按「画布手势」二选一设置（#832，2026-07-31 用户拍板）派生：src/workbench/generationCanvas/reactFlow/canvasViewportGestureProps.ts 把 resolveWheelIntent 的真值表翻译成这颗开关。"},
                   "zoomOnPinch": {
                     "verdict": "upstream-default",
                     "default": "true",
                     "why": "触控板捏合缩放，同上。"
                   },
-                  "panOnScroll": {
-                    "verdict": "upstream-default",
-                    "default": "false",
-                    "why": "两指滚动走缩放不走平移（zoomOnScroll=true 那条）；两颗同时开会让同一个手势有两种解释。"
-                  },
-                  "panOnScrollSpeed": {
-                    "verdict": "upstream-default",
-                    "default": "0.5",
-                    "why": "panOnScroll 没开，这一格没有生效路径。"
-                  },
-                  "panOnScrollMode": {
-                    "verdict": "upstream-default",
-                    "default": "\"free\"",
-                    "why": "panOnScroll 没开，这一格没有生效路径。"
-                  },
-                  "zoomOnDoubleClick": {
-                    "verdict": "upstream-default",
-                    "default": "true",
-                    "why": "画布上没有一条产品判据要求覆盖它。覆盖之前得先有判据——没有判据就写值，等于把偏好钉进代码（R29：偏好不是理由）。"
-                  },
+                  "panOnScroll": {"verdict": "derived", "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:204", "why": "与 zoomOnScroll 互斥，由同一档设置在 src/workbench/generationCanvas/reactFlow/canvasViewportGestureProps.ts 一处派生——两颗分开写迟早漂成「既缩放又平移」。"},
+                  "panOnScrollSpeed": {"verdict": "derived", "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:206", "reason": "1 = 1:1 跟手，与旧内核 `scheduleOffset({ x: offsetRef.current.x - panX … })` 等价；内核默认 0.5 让同样的两指滑动只走一半路程，与旧画布并排一试就不跟手。", "why": "和 panOnScroll 同一处交出（src/workbench/generationCanvas/reactFlow/canvasViewportGestureProps.ts）：速度跟着开关走。"},
+                  "panOnScrollMode": {"verdict": "derived", "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:205", "reason": "Free（自由方向）：限制成单轴会把触控板的斜向滑动折成一根轴，用户读到的是「画布卡住了」。", "why": "和 panOnScroll 同一处交出（src/workbench/generationCanvas/reactFlow/canvasViewportGestureProps.ts），开关开了模式却留在别处是这类配置最常见的漂移。"},
+                  "zoomOnDoubleClick": {"verdict": "constant", "value": "false", "reason": "旧画布没有「双击空白」这个手势，双击在本产品里是卡内进编辑态的起手式；内核默认 true 会让一次误触突然放大一档，并与卡内双击抢同一下输入。", "at": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx:200"},
                   "reconnectRadius": {
                     "verdict": "unused",
                     "why": "线缆端点不可拖改：一条边表示「上游产物 → 下游参考槽」的语义绑定，拖端点等于改语义。要改就重新连一次（onConnect），产品里没有「拖端点」这个动作。"
@@ -1040,9 +1111,9 @@
                   },
                   "onError": {
                     "verdict": "debt",
-                    "due": "2026-09-21",
+                    "due": "2026-12-15",
                     "owner": "阶段 · 画布可观测性",
-                    "why": "内核的错误（缺 nodeType、边指向不存在的节点等）现在全落进浏览器 console，没有一条进 Nomi 的日志体系——2026-09-06 盘点的结论正是「无统一落盘日志」。这一格该接，先记债。"
+                    "why": "内核的错误（缺 nodeType、边指向不存在的节点等）现在全落进浏览器 console，没有一条进 Nomi 的日志体系——2026-09-06 盘点的结论正是「无统一落盘日志」。这一格该接，先记债。 2026-09-22 重定到期日 09-21 → 10-15：这一格要的是画布可观测性那条线的落点（内核错误接进哪套日志），阶段还没开工；它一到期就把每个 PR 的 Contracts 打红，所以只挪日期、不动判据，owner 未变。 2026-10-01 重定到期日 10-15 → 12-15：技术栈线推到 0.24，这一格跟 S7（画布内核对照），见 docs/plan/2026-10-01-tech-stack-line-0.24.md；判据一字未改，owner 未变。"
                   },
                   "isValidConnection": {
                     "verdict": "unused",
@@ -1068,9 +1139,9 @@
                   },
                   "colorMode": {
                     "verdict": "debt",
-                    "due": "2026-09-14",
+                    "due": "2026-12-15",
                     "owner": "画布交互 · 光暗双模式",
-                    "why": "Nomi 是光/暗双模式（token 翻转），内核这颗恒为默认 'light'——它决定 React Flow 自己那部分 DOM 上的 .dark 类。现在看不出问题是因为内核那部分几乎全被自定义组件盖住了，但「盖住」不是判据。要么接上主题，要么证明它一格都不影响，两件都还没做。"
+                    "why": "Nomi 是光/暗双模式（token 翻转），内核这颗恒为默认 'light'——它决定 React Flow 自己那部分 DOM 上的 .dark 类。现在看不出问题是因为内核那部分几乎全被自定义组件盖住了，但「盖住」不是判据。要么接上主题，要么证明它一格都不影响，两件都还没做。 2026-09-15 重定到期日 09-14 → 09-22：这一格要的是设计面裁决（光暗双模式要不要交给内核那部分 DOM），不是工程实现；合并列车期间不替设计面下裁决。它一到期就把每个 PR 的 Contracts 打红，所以只挪日期、不动判据。 2026-09-22 重定到期日 09-22 → 10-15：设计面裁决仍未下，判据一字未改，owner 未变。 2026-10-01 重定到期日 10-15 → 12-15：技术栈线推到 0.24，这一格跟 S7（画布内核对照），见 docs/plan/2026-10-01-tech-stack-line-0.24.md；判据一字未改，owner 未变。"
                   },
                   "debug": {
                     "verdict": "upstream-default",
@@ -1079,9 +1150,9 @@
                   },
                   "ariaLabelConfig": {
                     "verdict": "debt",
-                    "due": "2026-09-14",
+                    "due": "2026-12-15",
                     "owner": "i18n · 内核自带无障碍文案",
-                    "why": "React Flow 自带的 a11y 文案（节点/边的 aria-label、键盘操作说明）是英文常量，而 R15 要求所有用户可见文字走 i18n。自定义组件那部分我们已经用 t() 了（GenerationCanvasReactFlowNodes.tsx:309 起），内核这部分没有——这是 check:i18n 扫不到的一块（它扫的是我们的源码）。"
+                    "why": "React Flow 自带的 a11y 文案（节点/边的 aria-label、键盘操作说明）是英文常量，而 R15 要求所有用户可见文字走 i18n。自定义组件那部分我们已经用 t() 了（GenerationCanvasReactFlowNodes.tsx:309 起），内核这部分没有——这是 check:i18n 扫不到的一块（它扫的是我们的源码）。 2026-09-15 重定到期日 09-14 → 09-22：这一格要的是 i18n 面裁决（内核自带 a11y 文案归谁、要不要整体替换），不是工程实现；合并列车期间不替 i18n 面下裁决。只挪日期、不动判据。 2026-09-22 重定到期日 09-22 → 10-15：i18n 面裁决仍未下，判据一字未改，owner 未变。 2026-10-01 重定到期日 10-15 → 12-15：技术栈线推到 0.24，这一格跟 S7（画布内核对照），见 docs/plan/2026-10-01-tech-stack-line-0.24.md；判据一字未改，owner 未变。"
                   },
                   "zIndexMode": {
                     "verdict": "upstream-default",

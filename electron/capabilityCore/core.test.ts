@@ -9,8 +9,11 @@ import {
   createNamedProject,
   deleteProjectNodes,
   generateOnProject,
+  listAvailableModels,
   listAllProjects,
   referencesFromEdges,
+  renderDirectorOnProject,
+  resolveCapabilityPollIntervalMs,
   resolveCapabilityPollTimeoutMs,
   setProjectNodePrompt,
 } from './core'
@@ -88,6 +91,11 @@ let mockedDocumentsRoot = ''
 let mockedUserDataRoot = ''
 
 vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (value: string) => Buffer.from(value),
+    decryptString: (value: Buffer) => value.toString(),
+  },
   app: {
     getPath: (name: string) => {
       if (name === 'documents') return mockedDocumentsRoot
@@ -117,6 +125,75 @@ afterEach(() => {
 })
 
 describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
+  it('AGNES 视频 headless 轮询使用保守间隔，其他慢道保持既有间隔', () => {
+    expect(resolveCapabilityPollIntervalMs('image_to_video', 'agnes')).toBe(15_000)
+    expect(resolveCapabilityPollIntervalMs('text_to_video', 'kie')).toBe(3_000)
+    expect(resolveCapabilityPollIntervalMs('text_to_image', 'agnes')).toBe(1_500)
+  })
+
+  it('models 只暴露已连接供应商的启用模型', () => {
+    const now = '2026-07-17T00:00:00.000Z'
+    const vendor = (key: string, patch: Record<string, unknown> = {}) => ({
+      key,
+      name: key,
+      enabled: true,
+      authType: 'bearer',
+      baseUrlHint: `https://${key}.example`,
+      createdAt: now,
+      updatedAt: now,
+      ...patch,
+    })
+    const model = (modelKey: string, vendorKey: string, patch: Record<string, unknown> = {}) => ({
+      modelKey,
+      vendorKey,
+      labelZh: modelKey,
+      kind: 'image',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      ...patch,
+    })
+    fs.writeFileSync(path.join(mockedUserDataRoot, 'model-catalog.json'), JSON.stringify({
+      version: 5,
+      vendors: [
+        vendor('local', { authType: 'none' }),
+        vendor('connected'),
+        vendor('missing-key'),
+        vendor('disabled-vendor', { enabled: false, authType: 'none' }),
+      ],
+      models: [
+        model('local-image', 'local'),
+        model('connected-image', 'connected'),
+        model('missing-key-image', 'missing-key'),
+        model('disabled-vendor-image', 'disabled-vendor'),
+        model('disabled-model', 'local', { enabled: false }),
+      ],
+      mappings: ['local', 'connected', 'missing-key', 'disabled-vendor'].map((vendorKey) => ({
+        id: `${vendorKey}-image`, vendorKey, modelKey: `${vendorKey}-image`, taskKind: 'text_to_image',
+        name: 'Fixture image', enabled: true, createdAt: now, updatedAt: now,
+        create: { method: 'POST', path: '/v1/images/generations', body: { prompt: '{{request.prompt}}' } },
+      })),
+      apiKeysByVendor: {
+        connected: {
+          vendorKey: 'connected',
+          apiKey: Buffer.from('opaque-test-value').toString('base64'),
+          enc: 'safeStorage',
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    }), 'utf8')
+
+    const listing = listAvailableModels()
+    expect(listing.filter((entry) => entry.keyStatus === 'ok').map((entry) => `${entry.vendor}/${entry.modelKey}`)).toEqual([
+      'local/local-image',
+      'connected/connected-image',
+    ])
+    expect(listing.find((entry) => entry.vendor === 'missing-key')).toMatchObject({ keyStatus: 'missing' })
+    expect(listing.some((entry) => entry.vendor === 'disabled-vendor' || entry.modelKey === 'disabled-model')).toBe(false)
+  })
+
   it('建项目 → 加节点 → 连线 → 改提示词 → 读画布，全程落盘且重读一致', async () => {
     const project = createNamedProject('能力核测试项目')
     expect(project.id).toBeTruthy()
@@ -335,6 +412,161 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
       },
     )
     expect(kind).toBe('image_to_video')
+  })
+
+  it('generate：异步结果查询被限流时只退避续查，不重复 create', async () => {
+    vi.useFakeTimers()
+    try {
+      const project = createNamedProject('AGNES 限流续查测试')
+      const runTask = vi.fn(async () => ({ id: 'agnes-task-1', status: 'queued', assets: [] }))
+      const fetchTaskResult = vi.fn()
+        .mockRejectedValueOnce(new Error('HTTP 429 rate limit exceeded'))
+        .mockResolvedValueOnce({ result: { id: 'agnes-task-1', status: 'succeeded', assets: [{ type: 'video', url: 'nomi-local://asset/p/video.mp4' }] } })
+      const pending = generateOnProject(
+        { projectId: project.id, intent: 'video', prompt: '人物转身', vendor: 'agnes', modelKey: 'agnes-video-v2.0', references: ['https://cdn/ref.png'] },
+        createDiskGateway(project.id),
+        runTask,
+        fetchTaskResult,
+      )
+
+      await vi.runAllTimersAsync()
+      await expect(pending).resolves.toMatchObject({ status: 'succeeded' })
+      expect(runTask).toHaveBeenCalledTimes(1)
+      expect(fetchTaskResult).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('generate：同画布参考资产会持久化到目标节点并自动建立 reference 血缘边', async () => {
+    const project = createNamedProject('参考血缘测试')
+    const gateway = createDiskGateway(project.id)
+    const sourceUrl = 'nomi-local://asset/project/assets/source.png'
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push({
+      id: 'source-image',
+      kind: 'image',
+      title: '角色定妆',
+      position: { x: 0, y: 0 },
+      result: { id: 'source-result', type: 'image', url: sourceUrl, createdAt: 1 },
+    })
+    await gateway.apply(snapshot)
+
+    const output = await generateOnProject(
+      {
+        projectId: project.id,
+        intent: 'video',
+        prompt: '角色转身看向镜头',
+        vendor: 'agnes',
+        modelKey: 'agnes-video-v2.0',
+        references: [sourceUrl],
+      },
+      gateway,
+      async () => ({ id: 'task-lineage', status: 'succeeded', assets: [] }),
+    )
+
+    const persisted = await gateway.readDoc()
+    expect(persisted.nodes.find((node) => node.id === output.nodeId)?.references).toEqual([sourceUrl])
+    expect(persisted.edges).toEqual([
+      expect.objectContaining({ source: 'source-image', target: output.nodeId, mode: 'reference' }),
+    ])
+  })
+
+  it('generate：参考 URL 同时匹配多个来源节点时不猜来源、不自动连线', async () => {
+    const project = createNamedProject('歧义参考测试')
+    const gateway = createDiskGateway(project.id)
+    const sourceUrl = 'nomi-local://asset/project/assets/shared.png'
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push(
+      { id: 'source-a', kind: 'image', title: 'A', position: { x: 0, y: 0 }, result: { url: sourceUrl } },
+      { id: 'source-b', kind: 'image', title: 'B', position: { x: 0, y: 320 }, result: { url: sourceUrl } },
+    )
+    await gateway.apply(snapshot)
+
+    await generateOnProject(
+      { projectId: project.id, intent: 'video', prompt: '镜头推进', vendor: 'agnes', modelKey: 'agnes-video-v2.0', references: [sourceUrl] },
+      gateway,
+      async () => ({ id: 'task-ambiguous', status: 'succeeded', assets: [] }),
+    )
+
+    expect((await gateway.readDoc()).edges).toHaveLength(0)
+  })
+
+  it('director render 只读取 scene3d 状态，并把预演图与 GLB 作为连接输出回写画布', async () => {
+    const project = createNamedProject('导演桥接测试')
+    const gateway = createDiskGateway(project.id)
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push({
+      id: 'scene-node',
+      kind: 'scene3d',
+      title: '咖啡广告导演台',
+      position: { x: 120, y: 240 },
+      meta: {
+        scene3dState: {
+          objects: [],
+          cameras: [],
+          trajectories: [],
+          trajectoryBindings: [],
+          sceneTimeline: { totalDuration: 3 },
+          environment: {},
+          editorCamera: {},
+        },
+      },
+    })
+    await gateway.apply(snapshot)
+    const calls: Array<Record<string, unknown>> = []
+
+    const output = await renderDirectorOnProject(
+      { projectId: project.id, sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' },
+      gateway,
+      async (input) => {
+        calls.push(input)
+        return {
+          jobId: 'director-job',
+          blenderVersion: '4.0.1',
+          preview: { url: 'nomi-local://asset/p/director-preview.png', assetId: 'preview-asset' },
+          blend: { url: 'nomi-local://asset/p/director-scene.blend', assetId: 'blend-asset' },
+          model: { url: 'nomi-local://asset/p/director-scene.glb', assetId: 'model-asset' },
+        }
+      },
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ projectId: project.id, ownerNodeId: 'scene-node', stagePreset: 'coffee_shop' })
+    expect(output).toMatchObject({ jobId: 'director-job', sourceNodeId: 'scene-node' })
+    const persisted = await gateway.readDoc()
+    const preview = persisted.nodes.find((node) => node.id === output.previewNodeId)
+    const model = persisted.nodes.find((node) => node.id === output.modelNodeId)
+    expect(preview).toMatchObject({ kind: 'image', title: 'Blender 导演预演', status: 'success', result: { type: 'image' } })
+    expect(model).toMatchObject({ kind: 'model3d', title: 'Blender 导演场景', status: 'success', result: { type: 'model3d' } })
+    expect(persisted.edges.filter((edge) => edge.source === 'scene-node')).toHaveLength(2)
+    expect((persisted.nodes.find((node) => node.id === 'scene-node')?.meta?.scene3dState as { lastThumbnail?: string }).lastThumbnail).toContain('director-preview.png')
+  })
+
+  it('director render 为外部刚创建的空 scene3d 节点补一个标准灰模初始状态', async () => {
+    const project = createNamedProject('空导演台')
+    const gateway = createDiskGateway(project.id)
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push({ id: 'scene-node', kind: 'scene3d', title: '空导演台', position: { x: 0, y: 0 } })
+    await gateway.apply(snapshot)
+    let capturedScene: unknown
+
+    await renderDirectorOnProject(
+      { projectId: project.id, sourceNodeId: 'scene-node' },
+      gateway,
+      async (input) => {
+        capturedScene = input.scene
+        return {
+          jobId: 'director-default',
+          preview: { url: 'nomi-local://asset/p/default-preview.png' },
+          blend: { url: 'nomi-local://asset/p/default-scene.blend' },
+          model: { url: 'nomi-local://asset/p/default-scene.glb' },
+        }
+      },
+    )
+
+    expect(capturedScene).toMatchObject({ objects: [{ type: 'mannequin' }], cameras: [{ aspectRatio: '16:9' }] })
+    expect((await gateway.readDoc()).nodes.find((node) => node.id === 'scene-node')?.meta?.scene3dState).toBeTruthy()
   })
 
   // 病根回归：轮询到点旧版只 break，result 保持 queued 且不带 error —— 调用方（MCP/agent/CLI）

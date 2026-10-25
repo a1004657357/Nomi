@@ -1,3 +1,4 @@
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 /**
  * v0.8: 节点标题 inline 编辑组件。
  *
@@ -6,7 +7,7 @@
  * - 失焦 / Enter → 保存。Escape → 撤销。
  * - 阻止外层 React Flow 节点拖动事件（pointer / mouse / click）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../../utils/cn'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
@@ -93,7 +94,7 @@ export function EditableNodeTitle({ nodeId, value, placeholder, className }: Pro
         className,
       )}
     >
-      {isEmpty ? resolvedPlaceholder : value}
+      {isEmpty ? resolvedPlaceholder : translateCanvasComponentText(value)}
     </span>
   )
 }

@@ -1,10 +1,11 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 /**
  * PropCardNode body — 道具分类节点（v0.8 极简版）。
  *
  * - 信息区按内容条件渲染（空则 0px）。
  * - 道具名 inline 可编辑。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconLink } from '@tabler/icons-react'
 import { cn } from '../../../../utils/cn'
@@ -14,6 +15,7 @@ import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
 import { STRIPED_BG_CLASS, UsageDot, UploadFallback } from './CardCommon'
 import { useNodeImageUpload } from '../../adapters/useNodeImageUpload'
 import { EditableNodeTitle } from './EditableNodeTitle'
+import { useNodeMediaMeasurement } from '../useNodeMediaMeasurement'
 import { DeferredNodeImage } from '../DeferredNodeMedia'
 
 type Props = {
@@ -22,6 +24,7 @@ type Props = {
 
 function PropCardNodeImpl({ node }: Props): JSX.Element {
   const { t } = useTranslation()
+  const mediaMeasurement = useNodeMediaMeasurement(node)
   const meta = readPropMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
   const hasImage = Boolean(node.result?.url)
@@ -37,16 +40,17 @@ function PropCardNodeImpl({ node }: Props): JSX.Element {
         {hasImage ? (
           <DeferredNodeImage
             src={node.result!.url!}
+            onLoad={mediaMeasurement.onImageLoad}
             alt={node.title || ''}
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label={t('generationCommon.card.prop.image')} onUpload={handleUpload} kind="prop" />
+          <UploadFallback accept={acceptAttrForSurface('image-reference')} label={t('generationCommon.card.prop.image')} onUpload={handleUpload} kind="prop" />
         )}
       </div>
 
       {hasInfoArea ? (
-        <div className="shrink-0 px-3 py-2 flex flex-col gap-1">
+        <div ref={mediaMeasurement.infoRef} className="shrink-0 px-3 py-2 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2">
             <EditableNodeTitle
               nodeId={node.id}

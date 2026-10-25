@@ -1,0 +1,86 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-bounded-custom-contract-fixtures",
+  "change_kind": "structural",
+  "problem_type": "升级合并后测试仍以旧投影、旧说明片段或无效媒体近似现有契约",
+  "symptom": "十个有限单测文件因查询形状、消息数量、再生成血缘、协议偏好、旧开发脚本或媒体头伪夹具失败。",
+  "direct_cause": "断言和模拟未随既有owner迁移；有一项2026-08的无总量假设已被官方CLI只读帮助明确推翻。",
+  "class_root": "兼容验收应执行现有共享解析/状态/提示装配/持久化边界，而非把旧字面描述当成现行真相。",
+  "scope_paths": [
+    "electron/catalog/videoQueryContractMatrix.test.ts",
+    "electron/customDesktopStrings.test.ts",
+    "electron/runtime.fallback-path.test.ts",
+    "electron/shared/modelArchetypes/seedance20Contract.test.ts",
+    "scripts/check-gates-chain.test.mjs",
+    "src/workbench/generationCanvas/agent/generationCanvasAgentClient.test.ts",
+    "src/workbench/generationCanvas/components/batchPlanPreview.confirm.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/stagingPoses.test.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentClient.test.ts",
+    "src/workbench/observability/legacyEvidence.test.ts"
+  ],
+  "affected_population": [
+    "本轮固定集成树的十个离线契约测试文件"
+  ],
+  "entry_points": [
+    "限定十文件maxWorkers1 Vitest；不运行真实Provider"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "不修改第三方协议、档案或限制；测试对账已有仓内owner、历史响应形状和本机已安装CLI的只读帮助，无新增网络事实或真实生成。",
+  "invariants": [
+    "生产实现、注册表、元数据权限、并发、超时、重试、模型档案和冻结基线不动。",
+    "Agnes三种既有URL读法和Pixstag已有官方示例形状都进入同一矩阵；不伪称本轮真出片。",
+    "原202条中文逐项对比未删除未改写，精确列入19项已有workflow标签，双语和占位符逐项校验保留。",
+    "Codex归档测试使用现有有效PNG，不能绕过未知字节检查；此测试不验证生图质量或尺寸验收。",
+    "再生成使用regeneratedFrom，跨分类derivedFrom仍不得出现；保留旧结果与模型、批准前不授权、换项目不执行。",
+    "CLI总12保持，其余API的9/3/3不被误掐窄；用真实约束函数证12合法13拒绝。",
+    "提示词验收读实际lane装配的保源/不生成指导；旧pose开发截图脚本不复活，以全13姿势builder+JSON重载证兼容，不称视觉验收。",
+    "fetch失败结果不明仍不变成安全重试；明确ECONNREFUSED仍识别网络。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "electron/catalog/videoQueryContractMatrix.test.ts",
+      "electron/customDesktopStrings.test.ts",
+      "electron/runtime.fallback-path.test.ts",
+      "electron/shared/modelArchetypes/seedance20Contract.test.ts",
+      "scripts/check-gates-chain.test.mjs",
+      "src/workbench/generationCanvas/agent/generationCanvasAgentClient.test.ts",
+      "src/workbench/generationCanvas/components/batchPlanPreview.confirm.test.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/stagingPoses.test.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentClient.test.ts",
+      "src/workbench/observability/legacyEvidence.test.ts"
+    ],
+    "preserved_exports": [],
+    "behavior_preservation": "仅十个测试文件变更；不修改任何生产字节。旧过时断言均有现行owner、正反例和原失败日志支持，未增加skip或超时。Seedance CLI v1.4.21(commit89c7256/build2026-10-19)帮助明确total inputs<=12，保留既有限制而非删除它让测试绿。",
+    "verification_limits": "离线合成/历史文档形状，不是当前Provider、真实账号、Nomi真窗口或PNG验收。测试有效PNG为2x2归档夹具，不冒充用户所需生成规格。"
+  },
+  "regression_tests": [
+    "electron/catalog/videoQueryContractMatrix.test.ts",
+    "electron/customDesktopStrings.test.ts",
+    "electron/runtime.fallback-path.test.ts",
+    "electron/shared/modelArchetypes/seedance20Contract.test.ts",
+    "scripts/check-gates-chain.test.mjs",
+    "src/workbench/generationCanvas/agent/generationCanvasAgentClient.test.ts",
+    "src/workbench/generationCanvas/components/batchPlanPreview.confirm.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/stagingPoses.test.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentClient.test.ts",
+    "src/workbench/observability/legacyEvidence.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "只更新测试，不恢复官方已删开发脚本，不删除任何现有功能或执行路径。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "不改依赖或生产行为；只将断言对齐既有参数约束owner。",
+    "exit_criteria": []
+  },
+  "migration": "无日常项目、模型、账号、素材或冻结快照迁移。",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "当前全仓最终回归未完成；此批通过不等于main验收。",
+    "生图质量和原生比例限制按用户指示不在本轮改模型端。",
+    "工具冻结和视觉差异仍需独立处理，不能用fixture绿代替。"
+  ]
+}

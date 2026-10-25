@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React from 'react'
+import React, { type JSX } from 'react'
+import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { IconCamera } from '@tabler/icons-react'
@@ -21,6 +22,7 @@ import {
 import { BodyPortal, NomiLogoMark } from '../../../design'
 import { cn } from '../../../utils/cn'
 import { NomiBrowserAssetPopover } from '../popover/NomiBrowserAssetPopover'
+import { useOpenProjectId } from '../../../workbench/project/useOpenProjectId'
 import {
   BROWSER_START_SHORTCUTS,
   CAPTURE_FLYOUT_KEYFRAME_TIMES,
@@ -101,6 +103,7 @@ export function NomiBrowserDialogView({
   webContainerRef,
   webContentBounds,
 }: NomiBrowserDialogViewProps): JSX.Element {
+  const openProjectId = useOpenProjectId()
   const { t } = useTranslation()
   const browserAssetPopoverBounds = React.useMemo(() => {
     if (!localBrowserAssetPopoverSplit || !webContentBounds) return webContentBounds
@@ -303,7 +306,7 @@ export function NomiBrowserDialogView({
                         }}
                       >
                         <IconWorld size={15} stroke={1.7} className="shrink-0 text-nomi-ink-40" aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate">{site.name}</span>
+                        <span className="min-w-0 flex-1 truncate">{translateCanvasComponentText(site.name)}</span>
                         <IconExternalLink size={13} stroke={1.7} className="shrink-0 text-nomi-ink-30" aria-hidden="true" />
                       </button>
                     ))}
@@ -440,7 +443,7 @@ export function NomiBrowserDialogView({
                       {BROWSER_START_SHORTCUTS.map((site) => {
                         // 预设站图标不求第三方 favicon 服务（Google s2 对部分域 404、
                         // 中国网络下每次开浏览器都刷 console 错）——首字母瓷贴，零网络零 flake。
-                        const siteLabel = site.labelKey ? t(site.labelKey) : site.label
+                        const siteLabel = site.labelKey !== undefined ? t(site.labelKey) : site.label
                         const initial = (siteLabel || '?').trim().slice(0, 1)
                         return (
                           <button
@@ -482,6 +485,7 @@ export function NomiBrowserDialogView({
                 style={localBrowserAssetPopoverSplit ? { width: dockPanelWidth } : undefined}
               >
                 <NomiBrowserAssetPopover
+                  projectId={openProjectId}
                   surface="contained"
                   placement="absolute"
                   opened={browserAssetPopoverOpen}

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconRefresh } from '@tabler/icons-react'
 import { WorkbenchButton } from '../../../design'
@@ -68,18 +68,20 @@ export type DeferredNodeImageProps = Omit<NomiImageProps, 'src'> & {
   src: string
   priority?: boolean
   placeholderClassName?: string
+  visibilityRoot?: Element | null
 }
 
 export function DeferredNodeImage({
   src,
   priority = false,
   placeholderClassName,
+  visibilityRoot,
   className,
   onLoad,
   onError,
   ...props
 }: DeferredNodeImageProps): JSX.Element {
-  const media = useDeferredNodeMediaSrc({ src, kind: 'image', priority })
+  const media = useDeferredNodeMediaSrc({ src, kind: 'image', priority, visibilityRoot })
   const retainedSrc = media.readySrc && media.readySrc !== media.activeSrc ? media.readySrc : null
   return (
     <>
@@ -126,6 +128,7 @@ export type DeferredNodeVideoProps = React.VideoHTMLAttributes<HTMLVideoElement>
   src: string
   priority?: boolean
   placeholderClassName?: string
+  visibilityRoot?: Element | null
 }
 
 function releaseVideoElement(video: HTMLVideoElement | null): void {
@@ -163,13 +166,14 @@ export function DeferredNodeVideo({
   src,
   priority = false,
   placeholderClassName,
+  visibilityRoot,
   className,
   onLoadedMetadata,
   onLoadedData,
   onError,
   ...props
 }: DeferredNodeVideoProps): JSX.Element {
-  const media = useDeferredNodeMediaSrc({ src, kind: 'video', priority })
+  const media = useDeferredNodeMediaSrc({ src, kind: 'video', priority, visibilityRoot })
   const retainedSrc = media.readySrc && media.readySrc !== media.activeSrc ? media.readySrc : null
 
   return (

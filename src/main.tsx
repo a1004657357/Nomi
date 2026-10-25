@@ -22,10 +22,19 @@ import './styles/index.css'
 import { NomiAppProviders } from './NomiAppProviders'
 import { NomiColorSchemeProvider } from './theme/NomiColorSchemeProvider'
 import { primeNomiColorScheme } from './theme/colorScheme'
+import { reportVideoCodecSupport } from './media/videoCodecProbe'
+import { installRendererErrorCapture } from './desktop/rendererLog'
+
+// 没人接住的渲染层异常也要进主进程日志（诊断包里要看得到）——越早装，漏的越少。
+installRendererErrorCapture()
 
 // 预渲染钉死 color-scheme 属性（未手动选过时按本地时间「天黑自动暗」、之后用户存储），让
 // tailwind base 层的 [data-mantine-color-scheme="dark|light"] 选择器即刻命中，避免首帧主题闪烁。
 primeNomiColorScheme()
+
+// 本机能解哪些视频 codec —— 问一次，送进主进程。导入侧据此决定要不要转码；探不到主进程会
+// 回落到保守白名单（多转一次，不会让人播不了）。放在渲染层是因为这是 Chromium 这个进程的事实。
+void reportVideoCodecSupport()
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Root container not found')

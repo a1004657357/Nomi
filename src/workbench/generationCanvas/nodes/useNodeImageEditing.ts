@@ -2,14 +2,15 @@ import React from 'react'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { persistNodeImageBlob } from '../adapters/persistNodeImage'
+import { isProjectImportCancellation } from '../adapters/assetImportAdapter'
+import { withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { CropGridResult, CropGridSize } from './render/ImageCropGridOverlay'
 import { computeGridCells, computeSplitLayout, type GridCell } from './render/cropGridGeometry'
 import { removeBackgroundBlob } from '../../../lib/removeBackground'
 import { IMAGE_EDIT_PHASE, REMOVE_BACKGROUND_PHASE, removeBackgroundProgressMessage } from './localImageOpPhase'
 import { withCanvasGestureContext } from '../events/canvasGestureContext'
-import { useWorkbenchStore } from '../../workbenchStore'
 // 尺寸上下界与"卡片实际渲染多大"都从 nodeSizing 拿——这里再抄一份就是布局错位的温床。
-import { MAX_NODE_WIDTH, MIN_NODE_WIDTH, resolveNodeVisualSize } from './nodeSizing'
+import { computeMediaMetaPatch, MAX_NODE_WIDTH, MIN_NODE_WIDTH, resolveNodeVisualSize } from './nodeSizing'
 import i18n from '../../../i18n'
 
 // 裁切 / 旋转 / 网格切分统一产 PNG **Blob**，落盘换 nomi-local:// 之后才写 store。
@@ -174,7 +175,7 @@ export function useNodeImageEditing(
   // 落点走纯函数 computeSplitLayout（紧凑方块，单测锁不变量）+ exactPosition 信任落点，
   // 否则逐卡避让会把成组瓦片推散（「切完飘」的老根因）。原图零改动。
   const splitIntoTiles = React.useCallback(
-    async (imageUrl: string, grid: CropGridSize, cells: GridCell[], frameWidth: number) => {
+    async (imageUrl: string, grid: CropGridSize, cells: GridCell[], frameWidth: number, project: ProjectExecutionContext) => {
       const store = useGenerationCanvasStore.getState()
       const createdAt = Date.now()
       const baseX = Math.round(nodePositionX + visualWidth + 40)
@@ -187,6 +188,7 @@ export function useNodeImageEditing(
       const txnId = `txn_split_${createdAt}`
       let barrierPushed = false
       const inSplitTxn = <T,>(fn: () => T): T => {
+        project.assertCurrent()
         // 只有整次切图的**第一个** store 写入放行 barrier（addNode 与随后的 updateNode 各会打一个，
         // 所以按调用逐个关，不能按"第几张瓦片"关）。
         const suppressUndoBarriers = barrierPushed
@@ -210,10 +212,13 @@ export function useNodeImageEditing(
       })
       const layout = computeSplitLayout(cells, tileSizes)
       try {
+        project.assertCurrent()
         for (const [index, cell] of cells.entries()) {
           const tile = await cropBitmapRegion(source, cell)
+          project.assertCurrent()
           if (!tile) continue
-          const stored = await persistNodeImageBlob(tile.blob, nodeId, `split-${nodeId}-${createdAt}-${index}.png`)
+          const stored = await persistNodeImageBlob(tile.blob, nodeId, `split-${nodeId}-${createdAt}-${index}.png`, project)
+          project.assertCurrent()
           const slot = layout[index]
           const created = inSplitTxn(() =>
             store.addNode({
@@ -235,6 +240,12 @@ export function useNodeImageEditing(
               url: stored.url,
               createdAt,
             }
+            const mediaMeta = computeMediaMetaPatch({
+              resultType: result.type,
+              meta: created.meta || {},
+              width: tile.width,
+              height: tile.height,
+            })?.meta
             updateNode(created.id, {
               result,
               history: [result],
@@ -242,6 +253,7 @@ export function useNodeImageEditing(
               size: { width: slot.width, height: slot.height },
               meta: {
                 ...(created.meta || {}),
+                ...(mediaMeta || {}),
                 source: `image-grid-split-${grid}x${grid}`,
                 sourceNodeId: nodeId,
                 localOnly: stored.localOnly,
@@ -249,9 +261,6 @@ export function useNodeImageEditing(
                 gridSize: grid,
                 gridRow: cell.row,
                 gridColumn: cell.column,
-                imageWidth: tile.width,
-                imageHeight: tile.height,
-                imageAspectRatio: tile.width / Math.max(1, tile.height),
                 previewHeight: slot.height,
               },
             })
@@ -271,9 +280,8 @@ export function useNodeImageEditing(
           i18n.t('generationCommon.imageToolbar.tileGroupName', { grid, source: nodeTitle || i18n.t('generationCommon.imageToolbar.image') }),
         )
       })
-      // 九张摊开比原图占地大得多，多半有一半落在视口外——用批量落节点那套既有的 fit 信号
-      // 把整块揭出来（同 3D 录完 take 的做法），否则用户只看到左边两列，以为切歪了。
-      useWorkbenchStore.getState().requestCanvasFit(nodeCategoryId)
+      // 九张摊开比原图占地大，可能有一部分落在视口外：不再替用户挪画布（2026-09-25 拍板），
+      // 屏外那几张由画布边缘提示指路，点它才过去。
       return tileIds.length
     },
     [nodeCategoryId, nodeId, nodePositionX, nodePositionY, nodeTitle, updateNode, visualWidth],
@@ -288,84 +296,95 @@ export function useNodeImageEditing(
       const grid = editGrid
       cancelEdit()
       if (!imageUrl || grid == null || imageOpBusy) return
-      setImageOpBusy(true)
-      const cells = computeGridCells(confirmed.rect, confirmed.cols, confirmed.rows)
-      const isSplit = cells.length > 1
-      const createdAt = Date.now()
-      const previousStatus = nodeStatus || 'success'
-      // 进度反馈走节点既有的 running + progress（与抠图同一套：图保留、加模糊呼吸），不新造 UI。
-      // persist:false —— 这是转瞬即逝的中间态，不该把项目标脏触发存盘。
-      const reportProgress = (done: number) =>
-        updateNode(
-          nodeId,
-          {
-            status: 'running',
-            progress: {
-              runId: `image-edit-${nodeId}-${createdAt}`,
-              taskKind: 'asset',
-              phase: IMAGE_EDIT_PHASE,
-              message: i18n.t(isSplit ? 'generationCommon.imageToolbar.splitting' : 'generationCommon.imageToolbar.cropping'),
-              percent: Math.round((done / cells.length) * 100),
-              updatedAt: Date.now(),
+      await withProjectAction(async (project) => {
+        setImageOpBusy(true)
+        const cells = computeGridCells(confirmed.rect, confirmed.cols, confirmed.rows)
+        const isSplit = cells.length > 1
+        const createdAt = Date.now()
+        const previousStatus = nodeStatus || 'success'
+        // 进度反馈走节点既有的 running + progress（与抠图同一套：图保留、加模糊呼吸），不新造 UI。
+        // persist:false —— 这是转瞬即逝的中间态，不该把项目标脏触发存盘。
+        const reportProgress = (done: number) =>
+          updateNode(
+            nodeId,
+            {
+              status: 'running',
+              progress: {
+                runId: `image-edit-${nodeId}-${createdAt}`,
+                taskKind: 'asset',
+                phase: IMAGE_EDIT_PHASE,
+                message: i18n.t(isSplit ? 'generationCommon.imageToolbar.splitting' : 'generationCommon.imageToolbar.cropping'),
+                percent: Math.round((done / cells.length) * 100),
+                updatedAt: Date.now(),
+              },
             },
-          },
-          { persist: false },
-        )
-      try {
-        reportProgress(0)
-        // 切图 = 摊成 N 个节点（原图不动）；裁剪 = 原地改这张（进本节点堆叠）。
-        if (isSplit) {
-          const made = await splitIntoTiles(imageUrl, grid, cells, confirmed.rect.w)
-          if (made === 0) throw new Error('image split produced no tile')
-          updateNode(nodeId, { status: previousStatus, progress: undefined }, { persist: false })
-          return
-        }
-        const source = await decodeSourceBitmap(imageUrl)
-        let cropped: EditedTile | null = null
+            { persist: false },
+          )
         try {
-          cropped = await cropBitmapRegion(source, cells[0])
+          reportProgress(0)
+          // 切图 = 摊成 N 个节点（原图不动）；裁剪 = 原地改这张（进本节点堆叠）。
+          if (isSplit) {
+            const made = await splitIntoTiles(imageUrl, grid, cells, confirmed.rect.w, project)
+            project.assertCurrent()
+            if (made === 0) throw new Error('image split produced no tile')
+            updateNode(nodeId, { status: previousStatus, progress: undefined }, { persist: false })
+            return
+          }
+          const source = await decodeSourceBitmap(imageUrl)
+          let cropped: EditedTile | null = null
+          try {
+            project.assertCurrent()
+            cropped = await cropBitmapRegion(source, cells[0])
+          } finally {
+            source.close()
+          }
+          project.assertCurrent()
+          if (!cropped) throw new Error('image crop produced no tile')
+          reportProgress(1)
+          const stored = await persistNodeImageBlob(cropped.blob, nodeId, `crop-${nodeId}-${createdAt}.png`, project)
+          project.assertCurrent()
+          const result: GenerationNodeResult = {
+            id: `image-crop-${nodeId}-${createdAt}`,
+            type: 'image' as const,
+            url: stored.url,
+            createdAt,
+          }
+          const latest = latestNodeSnapshot()
+          const mediaMeta = computeMediaMetaPatch({
+            resultType: result.type,
+            meta: latest.meta || {},
+            width: cropped.width,
+            height: cropped.height,
+          })?.meta
+          const preferredWidth = clampNumber(visualWidth, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+          const newSize = imageGridTileNodeSize(cropped.width, cropped.height, preferredWidth)
+          updateNode(nodeId, {
+            result,
+            history: mergeNodeImageHistory(latest.result, latest.history, [result]),
+            status: 'success',
+            error: undefined,
+            progress: undefined,
+            ...(newSize && latest.meta?.userResized !== true
+              ? { size: { width: newSize.width, height: newSize.height } }
+              : {}),
+            meta: {
+              ...(latest.meta || {}),
+              ...(mediaMeta || {}),
+              source: 'image-crop',
+              localOnly: stored.localOnly,
+              ...(stored.localOnly ? {} : { uploadStatus: 'uploaded' as const }),
+              previewHeight: newSize?.previewHeight,
+            },
+          })
+        } catch (error) {
+          if (project.signal.aborted || isProjectImportCancellation(error)) return
+          // 源图读不进画布（CORS/解码失败）时别再静默——用户点了确认什么都没发生，看起来就是「卡死」。
+          updateNode(nodeId, { status: previousStatus, progress: undefined })
+          reportFeedback(i18n.t('generationCommon.imageToolbar.editFailed'))
         } finally {
-          source.close()
+          if (!project.signal.aborted) setImageOpBusy(false)
         }
-        if (!cropped) throw new Error('image crop produced no tile')
-        reportProgress(1)
-        const stored = await persistNodeImageBlob(cropped.blob, nodeId, `crop-${nodeId}-${createdAt}.png`)
-        const result: GenerationNodeResult = {
-          id: `image-crop-${nodeId}-${createdAt}`,
-          type: 'image' as const,
-          url: stored.url,
-          createdAt,
-        }
-        const preferredWidth = clampNumber(visualWidth, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
-        const newSize = imageGridTileNodeSize(cropped.width, cropped.height, preferredWidth)
-        const latest = latestNodeSnapshot()
-        updateNode(nodeId, {
-          result,
-          history: mergeNodeImageHistory(latest.result, latest.history, [result]),
-          status: 'success',
-          error: undefined,
-          progress: undefined,
-          ...(newSize && latest.meta?.userResized !== true
-            ? { size: { width: newSize.width, height: newSize.height } }
-            : {}),
-          meta: {
-            ...(latest.meta || {}),
-            source: 'image-crop',
-            localOnly: stored.localOnly,
-            ...(stored.localOnly ? {} : { uploadStatus: 'uploaded' as const }),
-            imageWidth: cropped.width,
-            imageHeight: cropped.height,
-            imageAspectRatio: cropped.width / Math.max(1, cropped.height),
-            previewHeight: newSize?.previewHeight,
-          },
-        })
-      } catch {
-        // 源图读不进画布（CORS/解码失败）时别再静默——用户点了确认什么都没发生，看起来就是「卡死」。
-        updateNode(nodeId, { status: previousStatus, progress: undefined })
-        reportFeedback(i18n.t('generationCommon.imageToolbar.editFailed'))
-      } finally {
-        setImageOpBusy(false)
-      }
+      })
     },
     [cancelEdit, editGrid, imageOpBusy, latestNodeSnapshot, nodeId, nodeResult, nodeStatus, reportFeedback, splitIntoTiles, updateNode, visualWidth],
   )
@@ -375,22 +394,113 @@ export function useNodeImageEditing(
     async (op: ImageTransformOp) => {
       const imageUrl = nodeResult?.type === 'image' ? nodeResult.url : undefined
       if (!imageUrl || imageOpBusy) return
+      await withProjectAction(async (project) => {
+        setImageOpBusy(true)
+        const createdAt = Date.now()
+        try {
+          const source = await decodeSourceBitmap(imageUrl)
+          let out: EditedTile | null = null
+          try {
+            project.assertCurrent()
+            out = await transformBitmap(source, op)
+          } finally {
+            source.close()
+          }
+          project.assertCurrent()
+          if (!out) throw new Error('image transform produced no tile')
+          const stored = await persistNodeImageBlob(out.blob, nodeId, `edit-${nodeId}-${createdAt}-${op}.png`, project)
+          project.assertCurrent()
+          const preferredWidth = clampNumber(visualWidth, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+          const newSize = imageGridTileNodeSize(out.width, out.height, preferredWidth)
+          const result: GenerationNodeResult = {
+            id: `image-${op}-${nodeId}-${createdAt}`,
+            type: 'image' as const,
+            url: stored.url,
+            createdAt,
+          }
+          const latest = latestNodeSnapshot()
+          const mediaMeta = computeMediaMetaPatch({
+            resultType: result.type,
+            meta: latest.meta || {},
+            width: out.width,
+            height: out.height,
+          })?.meta
+          updateNode(nodeId, {
+            result,
+            history: mergeNodeImageHistory(latest.result, latest.history, [result]),
+            status: 'success',
+            error: undefined,
+            ...(newSize && latest.meta?.userResized !== true
+              ? { size: { width: newSize.width, height: newSize.height } }
+              : {}),
+            meta: {
+              ...(latest.meta || {}),
+              ...(mediaMeta || {}),
+              source: `image-${op}`,
+              localOnly: stored.localOnly,
+              ...(stored.localOnly ? {} : { uploadStatus: 'uploaded' as const }),
+              previewHeight: newSize?.previewHeight,
+            },
+          })
+        } catch (error) {
+          if (project.signal.aborted || isProjectImportCancellation(error)) return
+          reportFeedback(i18n.t('generationCommon.imageToolbar.editFailed'))
+        } finally {
+          if (!project.signal.aborted) setImageOpBusy(false)
+        }
+      })
+    },
+    [imageOpBusy, latestNodeSnapshot, nodeId, nodeResult, reportFeedback, updateNode, visualWidth],
+  )
+
+  const handleRemoveBackground = React.useCallback(async () => {
+    reportFeedback('')
+    const imageUrl = nodeResult?.type === 'image' ? nodeResult.url : undefined
+    if (!imageUrl || imageOpBusy) return
+    await withProjectAction(async (project) => {
       setImageOpBusy(true)
       const createdAt = Date.now()
+      const previousStatus = nodeStatus || 'success'
       try {
-        const source = await decodeSourceBitmap(imageUrl)
-        let out: EditedTile | null = null
-        try {
-          out = await transformBitmap(source, op)
-        } finally {
-          source.close()
-        }
-        if (!out) throw new Error('image transform produced no tile')
-        const stored = await persistNodeImageBlob(out.blob, nodeId, `edit-${nodeId}-${createdAt}-${op}.png`)
-        const preferredWidth = clampNumber(visualWidth, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
-        const newSize = imageGridTileNodeSize(out.width, out.height, preferredWidth)
+        updateNode(nodeId, {
+          status: 'running',
+          progress: {
+            runId: `remove-bg-${nodeId}-${createdAt}`,
+            taskKind: 'asset',
+            phase: REMOVE_BACKGROUND_PHASE,
+            message: i18n.t('generationCommon.imageToolbar.removingBackground'),
+            percent: 0,
+            updatedAt: createdAt,
+          },
+          meta: {
+            ...(nodeMeta || {}),
+            removeBackgroundSource: imageUrl,
+          },
+        })
+        const blob = await removeBackgroundBlob(imageUrl, ({ key, current, total }) => {
+          if (project.signal.aborted) return
+          project.assertCurrent()
+          const percent = total > 0 ? Math.round((current / total) * 100) : undefined
+          updateNode(
+            nodeId,
+            {
+              progress: {
+                runId: `remove-bg-${nodeId}-${createdAt}`,
+                taskKind: 'asset',
+                phase: REMOVE_BACKGROUND_PHASE,
+                message: removeBackgroundProgressMessage(key),
+                percent,
+                updatedAt: Date.now(),
+              },
+            },
+            { persist: false },
+          )
+        })
+        project.assertCurrent()
+        const stored = await persistNodeImageBlob(blob, nodeId, `remove-bg-${nodeId}-${createdAt}.png`, project)
+        project.assertCurrent()
         const result: GenerationNodeResult = {
-          id: `image-${op}-${nodeId}-${createdAt}`,
+          id: `image-remove-bg-${nodeId}-${createdAt}`,
           type: 'image' as const,
           url: stored.url,
           createdAt,
@@ -401,100 +511,26 @@ export function useNodeImageEditing(
           history: mergeNodeImageHistory(latest.result, latest.history, [result]),
           status: 'success',
           error: undefined,
-          ...(newSize && latest.meta?.userResized !== true
-            ? { size: { width: newSize.width, height: newSize.height } }
-            : {}),
+          progress: undefined,
           meta: {
             ...(latest.meta || {}),
-            source: `image-${op}`,
+            removeBackgroundSource: imageUrl,
             localOnly: stored.localOnly,
-            ...(stored.localOnly ? {} : { uploadStatus: 'uploaded' as const }),
-            imageWidth: out.width,
-            imageHeight: out.height,
-            imageAspectRatio: out.width / Math.max(1, out.height),
-            previewHeight: newSize?.previewHeight,
+            uploadStatus: stored.localOnly ? undefined : 'uploaded',
           },
         })
-      } catch {
-        reportFeedback(i18n.t('generationCommon.imageToolbar.editFailed'))
+      } catch (error) {
+        if (project.signal.aborted || isProjectImportCancellation(error)) return
+        // removeBackground 失败（离线/CDN 不通）时静默报错 toast
+        updateNode(nodeId, {
+          status: previousStatus,
+          progress: undefined,
+        })
+        reportFeedback(i18n.t('generationCommon.whiteboard.removeBackgroundFailed'))
       } finally {
-        setImageOpBusy(false)
+        if (!project.signal.aborted) setImageOpBusy(false)
       }
-    },
-    [imageOpBusy, latestNodeSnapshot, nodeId, nodeResult, reportFeedback, updateNode, visualWidth],
-  )
-
-  const handleRemoveBackground = React.useCallback(async () => {
-    reportFeedback('')
-    const imageUrl = nodeResult?.type === 'image' ? nodeResult.url : undefined
-    if (!imageUrl || imageOpBusy) return
-    setImageOpBusy(true)
-    const createdAt = Date.now()
-    const previousStatus = nodeStatus || 'success'
-    updateNode(nodeId, {
-      status: 'running',
-      progress: {
-        runId: `remove-bg-${nodeId}-${createdAt}`,
-        taskKind: 'asset',
-        phase: REMOVE_BACKGROUND_PHASE,
-      message: i18n.t('generationCommon.imageToolbar.removingBackground'),
-        percent: 0,
-        updatedAt: createdAt,
-      },
-      meta: {
-        ...(nodeMeta || {}),
-        removeBackgroundSource: imageUrl,
-      },
     })
-    try {
-      const blob = await removeBackgroundBlob(imageUrl, ({ key, current, total }) => {
-        const percent = total > 0 ? Math.round((current / total) * 100) : undefined
-        updateNode(
-          nodeId,
-          {
-            progress: {
-              runId: `remove-bg-${nodeId}-${createdAt}`,
-              taskKind: 'asset',
-              phase: REMOVE_BACKGROUND_PHASE,
-              message: removeBackgroundProgressMessage(key),
-              percent,
-              updatedAt: Date.now(),
-            },
-          },
-          { persist: false },
-        )
-      })
-      const stored = await persistNodeImageBlob(blob, nodeId, `remove-bg-${nodeId}-${createdAt}.png`)
-      const result: GenerationNodeResult = {
-        id: `image-remove-bg-${nodeId}-${createdAt}`,
-        type: 'image' as const,
-        url: stored.url,
-        createdAt,
-      }
-      const latest = latestNodeSnapshot()
-      updateNode(nodeId, {
-        result,
-        history: mergeNodeImageHistory(latest.result, latest.history, [result]),
-        status: 'success',
-        error: undefined,
-        progress: undefined,
-        meta: {
-          ...(latest.meta || {}),
-          removeBackgroundSource: imageUrl,
-          localOnly: stored.localOnly,
-          uploadStatus: stored.localOnly ? undefined : 'uploaded',
-        },
-      })
-    } catch {
-      // removeBackground 失败（离线/CDN 不通）时静默报错 toast
-      updateNode(nodeId, {
-        status: previousStatus,
-        progress: undefined,
-      })
-      reportFeedback(i18n.t('generationCommon.whiteboard.removeBackgroundFailed'))
-    } finally {
-      setImageOpBusy(false)
-    }
   }, [imageOpBusy, latestNodeSnapshot, nodeId, nodeMeta, nodeResult, nodeStatus, reportFeedback, updateNode])
 
   return {

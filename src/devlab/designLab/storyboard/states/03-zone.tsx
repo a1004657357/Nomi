@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import type { LabState } from '../../labScreen'
 import StoryboardAnchorZone from '../../../../workbench/creation/storyboard/anchorZone/StoryboardAnchorZone'
 import StoryboardBulkBar from '../../../../workbench/creation/storyboard/StoryboardBulkBar'
@@ -91,7 +91,6 @@ function TableStageWithPlan({ plan, clip = true }: { plan: StoryboardPlan; clip?
         onToggleLockRow={NOOP}
         onOpenPreviewRow={NOOP}
         onRerunFreshRefsRow={NOOP}
-        onJumpToAnchor={NOOP}
         onSaveResultAsReference={NOOP}
         onSetResultAsFirstFrame={NOOP}
         onGenerateSelected={NOOP}
@@ -110,7 +109,7 @@ function TableStageWithPlan({ plan, clip = true }: { plan: StoryboardPlan; clip?
 const ANCHOR_RUNTIMES = [
   labAnchorRuntime(LAB_ANCHORS[0], { resultUrl: STILL_PORTRAIT, locked: true, referencedByCount: 4 }),
   labAnchorRuntime(LAB_ANCHORS[1], { resultUrl: STILL_ROOFTOP, referencedByCount: 3 }),
-  labAnchorRuntime(LAB_ANCHORS[2], { referencedByCount: 1, waitingShotCount: 1 }),
+  labAnchorRuntime(LAB_ANCHORS[2], { referencedByCount: 1 }),
   labAnchorRuntime(LAB_ANCHORS[3], { referencedByCount: 5 }),
 ]
 

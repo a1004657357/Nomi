@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resolveNodeRenderKind, isCardRenderKind, nodeHasGenerationComposer } from "./resolveRenderKind";
+import { NODE_RENDER_KINDS } from '../../project/projectCategories';
 
-const node = (over: { kind: string; renderKind?: string; categoryId?: string }) =>
+const node = (over: { kind: string; renderKind?: string; categoryId?: string; meta?: Record<string, unknown> }) =>
   over as Parameters<typeof resolveNodeRenderKind>[0];
 
 describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）", () => {
@@ -18,14 +19,58 @@ describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）
     expect(resolveNodeRenderKind(node({ kind: "asset", categoryId: "cast" }))).toBeUndefined();
   });
 
-  it("kind 专属卡压过存量脏显式值——V51→V60 曾把 shots 默认 shot-frame 盖章到画板/角色节点，画板『打开』入口消失（2026-07-29 真机复现）", () => {
-    expect(resolveNodeRenderKind(node({ kind: "whiteboard", renderKind: "shot-frame", categoryId: "shots" }))).toBe("whiteboard-card");
-    expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("character-card");
-    expect(resolveNodeRenderKind(node({ kind: "audio", renderKind: "shot-frame" }))).toBe("audio-strip");
+  it("3D 导演工作区落 scene 分类时仍保留自己的编辑器，而不是被场景卡截获", () => {
+    expect(resolveNodeRenderKind(node({ kind: "scene3d", categoryId: "scene" }))).toBeUndefined();
+    expect(resolveNodeRenderKind(node({ kind: "vibingDirector", categoryId: "scene" }))).toBeUndefined();
   });
 
-  it("无专属卡的 kind 显式 renderKind 仍然生效（image 显式 shot-frame → 媒体预览）", () => {
-    expect(resolveNodeRenderKind(node({ kind: "image", renderKind: "shot-frame", categoryId: "prop" }))).toBe("shot-frame");
+  it("显式 node.renderKind 覆盖一切", () => {
+    expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("shot-frame");
+  });
+
+  it.each(['character', 'scene'])('%s honors every declared explicit render kind without mutating the node', (kind) => {
+    for (const renderKind of NODE_RENDER_KINDS) {
+      const input = Object.freeze(node({ kind, categoryId: 'shots', renderKind, meta: { userValue: 'unchanged' } }));
+      const before = JSON.stringify(input);
+      expect(resolveNodeRenderKind(input)).toBe(renderKind);
+      expect(JSON.stringify(input)).toBe(before);
+    }
+  });
+
+  it.each([['whiteboard', 'whiteboard-card'], ['audio', 'audio-strip']])('%s keeps its functional body with the exact historical shot-frame pollution', (kind, expected) => {
+    const input = Object.freeze(node({ kind, categoryId: 'shots', renderKind: 'shot-frame', meta: { userValue: 'unchanged' } }));
+    const before = JSON.stringify(input);
+    expect(resolveNodeRenderKind(input)).toBe(expected);
+    expect(isCardRenderKind(resolveNodeRenderKind(input))).toBe(true);
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each([['whiteboard', 'whiteboard-card'], ['audio', 'audio-strip']])('%s cannot lose functionality to any stored presentation card value', (kind, expected) => {
+    for (const renderKind of NODE_RENDER_KINDS) {
+      const input = Object.freeze(node({ kind, categoryId: 'cast', renderKind, meta: { userFlag: false, userValue: 0 } }));
+      const before = JSON.stringify(input);
+      expect(resolveNodeRenderKind(input)).toBe(expected);
+      expect(JSON.stringify(input)).toBe(before);
+    }
+  });
+
+  it.each(['asset', 'skill', 'scene3d', 'vibingDirector', 'agent-artifact'])('%s retains its protected workspace even with an explicit card render kind', (kind) => {
+    expect(resolveNodeRenderKind(node({ kind, categoryId: 'cast', renderKind: 'character-card' }))).toBeUndefined();
+  });
+
+  it("分镜表语义覆盖 shots 迁移写入的 shot-frame，并走专属卡片 body", () => {
+    const renderKind = resolveNodeRenderKind(node({
+      kind: "text",
+      renderKind: "shot-frame",
+      categoryId: "shots",
+      meta: { storyboardGroup: true },
+    }));
+    expect(renderKind).toBe("storyboard-table");
+    expect(isCardRenderKind(renderKind)).toBe(true);
+  });
+
+  it("普通文本节点仍保留原有文本编辑器分发", () => {
+    expect(resolveNodeRenderKind(node({ kind: "text", categoryId: "text" }))).toBeUndefined();
   });
 
   it("无 kind 信号时按 categoryId 兜底（prop 分类的 image → prop-card）", () => {

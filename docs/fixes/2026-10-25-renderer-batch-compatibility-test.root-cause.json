@@ -1,0 +1,23 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-renderer-batch-compatibility-test",
+  "change_kind": "structural",
+  "scope_paths": ["electron/capabilityCore/rendererBatchCompatibility.test.ts"],
+  "problem_type": "Stale test owners bypass the current project issuer and confirmation funnel",
+  "symptom": "Three old renderer batch tests fail before reaching their intended assertions.",
+  "direct_cause": "They mock retired getActiveWorkbenchProjectId/applyCanvasToolCall and put the semantic-binding assertion on renderer rather than the main ingress guard.",
+  "class_root": "Exercise real ownership and preserve both approval-positive and stale-context-negative controls.",
+  "external_sources": [],
+  "internal_only_reason": "Existing projectSessionTestHarness, batchPlanPreview.confirm.test and customLocalCanvasDispatcher determine the contract; no production/dependency behavior changes.",
+  "structural_evidence": {
+    "affected_paths": ["electron/capabilityCore/rendererBatchCompatibility.test.ts"],
+    "preserved_exports": [],
+    "behavior_preservation": "Test-only alignment. Production/project guards stay byte-identical. Real coordinator and spend-confirm store/funnel remain; only external quote/mint/run/log edges are replaced. Main semantic firewall coverage is retained at its actual ingress, not removed.",
+    "verification_limits": "Single-worker offline tests; no real grant/spending/Provider/App/full suite or final independent review by this author. WebBridge is a separate commit."
+  },
+  "regression_tests": ["electron/capabilityCore/rendererBatchCompatibility.test.ts"],
+  "legacy_paths": {"status":"not-applicable","removed_paths":[],"rationale":"Retired test mocks removed; no production path changed."},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"Reuse installed tools and repository owners without dependency updates.","exit_criteria":[]},
+  "migration": "No project/source/baseline migration.",
+  "residual_risks": ["Mint/runner are mocked boundaries, not real generation acceptance", "Coordination-head integration requires coordinator review/retest"]
+}

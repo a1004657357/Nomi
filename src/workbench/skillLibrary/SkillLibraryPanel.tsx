@@ -6,7 +6,7 @@ import { groupLibraryItems } from '../library/libraryGroups'
  * 导入/导出纯走渲染层（FileReader 读包 / Blob 下载），不加系统对话框桥；创建只走 AI（复用创作区
  * 「让 AI 帮我写技能」），不做手填 manifest 表单（docs/plan/2026-06-23-skill-library-hub.md）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBooks, IconUpload, IconWand, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -42,6 +42,7 @@ type SkillLibraryContentProps = {
   showHeader?: boolean
   onClose?: () => void
   className?: string
+  componentFirst?: boolean
 }
 
 export function SkillLibraryContent({
@@ -50,6 +51,7 @@ export function SkillLibraryContent({
   showHeader = true,
   onClose,
   className,
+  componentFirst = false,
 }: SkillLibraryContentProps): JSX.Element {
   const { t, i18n } = useTranslation()
   const [source, setSource] = React.useState<Source>('builtin')
@@ -94,7 +96,7 @@ export function SkillLibraryContent({
 
   // 在创作区锁定一个技能并切到创作区（与 ActiveSkillChip 的 onSelect 同口径）。
   const gotoCreationWith = React.useCallback(
-    (skill: { key: string; name: string } | null) => {
+    (skill: { key: string } | null) => {
       setCreationActiveSkill(skill)
       setWorkspaceMode('creation')
       onClose?.()
@@ -104,19 +106,19 @@ export function SkillLibraryContent({
 
   const handleUse = React.useCallback(
     (skill: SkillListItemDto) => {
-      gotoCreationWith({ key: skill.name, name: skill.label })
+      gotoCreationWith({ key: skill.name })
       markLibraryUsed('skill', skill.directoryName)
     },
     [gotoCreationWith],
   )
 
-  const handleNewWithAi = React.useCallback(() => gotoCreationWith({ key: SKILL_AUTHOR_KEY, name: t('libraries.skill.authorName') }), [gotoCreationWith, t])
+  const handleNewWithAi = React.useCallback(() => gotoCreationWith({ key: SKILL_AUTHOR_KEY }), [gotoCreationWith])
 
   // 导出：技能包对象 → JSON Blob → 浏览器下载，不弹系统对话框。
   const handleExport = React.useCallback(
-    (skill: SkillListItemDto) => {
+    async (skill: SkillListItemDto) => {
       setFeedback({})
-      const pkg = exportPackage(skill.directoryName)
+      const pkg = await exportPackage(skill.directoryName)
       if (!pkg) {
         report(skill.directoryName, t('libraries.skill.exportNotFound'))
         return
@@ -134,9 +136,10 @@ export function SkillLibraryContent({
 
   // 删除可撤销：删前先把包抓在手里，撤销 = 重新导入（落回用户目录，目录名冲突会自动避让）。
   const handleDelete = React.useCallback(
-    (skill: SkillListItemDto) => {
+    async (skill: SkillListItemDto) => {
       setFeedback({})
-      const snapshot = exportPackage(skill.directoryName)
+      // 撤销要的包必须在删之前抓到手（导出走 async 目录，等它落定再删）。
+      const snapshot = await exportPackage(skill.directoryName)
       const res = remove(skill.directoryName)
       if (!res.ok) {
         report(skill.directoryName, res.error ?? t('libraries.skill.deleteFailed'))
@@ -224,7 +227,7 @@ export function SkillLibraryContent({
     <div
       className={cn('inline-flex bg-nomi-ink-05 rounded-full p-0.5', compact ? 'w-full' : 'shrink-0')}
       role="tablist"
-      aria-label={t('libraries.skill.sourceAria')}
+      aria-label={componentFirst ? i18n.t("canvasComponents.componentSource") : i18n.t("canvasComponents.skillSource")}
     >
       {SOURCE_OPTIONS.map((option) => {
         const activeOption = source === option.value

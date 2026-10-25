@@ -4,7 +4,8 @@ import { readCatalog } from "./catalogStore";
 import { apiKeyDecryptStatus, decryptApiKeyRecord, decryptCustomConfigWithLegacy } from "./secrets";
 import { selectExecutableModel, type BillingModelKind } from "./types";
 import type { Model, Vendor } from "./types";
-import { modelHasPublishedExecution } from "../shared/modelPublication";
+import { catalogModelAvailability, createCatalogAvailability } from "./catalogModelAvailability";
+import { orderByVendorPreference } from "../shared/contracts/vendorPreference";
 
 export function findExecutableModel(
   vendorKey: string,
@@ -33,7 +34,10 @@ export function findExecutableModel(
     }
     throw new Error(`Model is not enabled: ${modelKey}`);
   }
-  if (!modelHasPublishedExecution(model, { mappings: state.mappings })) {
+  // 「能不能用」的判据只有一处（catalogModelAvailability → shared/modelAvailability）。这里不再
+  // 自己拼 published / key 两条——本函数额外要做的只是**把明文 key 解出来**并按三态给人话。
+  const availability = catalogModelAvailability(state, model);
+  if (!availability.usable && availability.reason === "model_unpublished") {
     throw new Error(`Model is not published: ${modelKey}`);
   }
   const keyRecord = state.apiKeysByVendor[vendorKey];
@@ -66,8 +70,45 @@ export function findExecutableModelForTask(
 ): { vendor: Vendor; model: Model; apiKey: string; customConfig: Record<string, string> } {
   if (modelKey) return findExecutableModel(vendorKey, modelKey, kind);
   const state = readCatalog();
-  const model = state.models.find((item) => item.vendorKey === vendorKey && item.enabled && item.kind === kind
-    && modelHasPublishedExecution(item, { mappings: state.mappings }));
+  const availability = createCatalogAvailability(state);
+  const model = state.models.find((item) => item.vendorKey === vendorKey && item.kind === kind
+    && availability.of(item).usable);
   if (!model) throw new Error(`No enabled ${kind} model for vendor: ${vendorKey}`);
   return findExecutableModel(vendorKey, model.modelKey, kind);
+}
+
+
+/**
+ * 在**全部已启用供应商**里解出一行某类可执行模型。
+ *
+ * 为什么要有它（2026-09-17，）：视频拆解的转写腿原来写的是
+ * `findExecutableModel(brain.vendor, "", "audio")`——只在**文本大脑那一家**里找 audio 模型。
+ * 大脑是 Moonshot 时它当然找不到，于是用户拿到「没有可用的转写模型」，
+ * 哪怕 APIMart / 火山语音的转写模型就在隔壁启用着。把「谁来做转写」和「谁来做文本」
+ * 绑在一起，本来就是一个没人声明过的耦合。
+ *
+ * 顺序按供应商偏好（#682 的那份全局顺序）——挑哪一家是用户已经表达过的偏好，
+ * 不在这里另发明一套排序。偏好里没有的排在后面，彼此保持目录里的原始顺序。
+ *
+ * 返回的 vendor/model **必须**能被 `findExecutableModel` 原样解出来：报价卡上的那一行
+ * 和 runTask 真会扣费的那一行是同一行，靠的就是两边走同一个解析器。
+ */
+export function findExecutableModelAnyVendor(
+  kind: BillingModelKind,
+  orderedVendorKeys: readonly string[] = [],
+): { vendor: Vendor; model: Model; apiKey: string; customConfig: Record<string, string> } | null {
+  const state = readCatalog();
+  const enabled = new Set(state.vendors.filter((vendor) => vendor.enabled).map((vendor) => vendor.key));
+  const availability = createCatalogAvailability(state);
+  const candidates = state.models.filter((model) =>
+    model.kind === kind && enabled.has(model.vendorKey) && availability.of(model).usable);
+  for (const model of orderByVendorPreference(candidates, orderedVendorKeys, (item) => item.vendorKey)) {
+    try {
+      // 走同一个解析器：key 解不开 / 未发布这类问题在这里就被挡掉，不会把一行解不出来的模型报给用户。
+      return findExecutableModel(model.vendorKey, model.modelKey, kind);
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }

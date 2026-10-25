@@ -126,7 +126,7 @@ test('the structural floor refuses the three shapes that told the model nothing 
 
 test('an explicitly empty object is a true statement, not an empty schema', () => {
   // 「这个工具不收参数」和「随便你填」在 JSON Schema 里长得像，含义相反。
-  // `read_full_text` 是前者——它的 scope 由工具名定死了，不该再让模型选一次。
+  // `read_script` 是前者——它的 scope 由工具名定死了，不该再让模型选一次。
   const json = build(z.object({}).strict());
   assert.equal(json.type, 'object');
   assert.deepEqual(json.properties, {});
@@ -208,4 +208,12 @@ test('数值界：产物更紧算过桥，产物更松必须红', () => {
   // 而拒绝的理由来自一个它从没被告知过的约束。这正是门岗要拦的那一族。
   const loosened = lossFrom(contract, z.object({ frame: z.number().int().min(-100).max(1000) }).strict());
   assert.equal(loosened.length, 2, `更松的界必须两条都报：${JSON.stringify(loosened)}`);
+});
+
+
+test('all published lane tools assemble through the same lossless schema boundary as createSession', async () => {
+  const { modelFacingToolSpecs } = await import('../../electron/shared/agentCapabilities/modelFacingToolRegistry.js');
+  for (const spec of modelFacingToolSpecs('internal')) {
+    assert.doesNotThrow(() => toModelVisibleSchema(spec.schema, {toolName:spec.name}));
+  }
 });

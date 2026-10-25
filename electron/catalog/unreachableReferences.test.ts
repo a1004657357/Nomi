@@ -38,12 +38,12 @@ describe("unreachableReferenceLabels", () => {
           lastFrameUrl: LAST,
           referenceImageUrls: [ROLE],
           referenceVideoUrls: [VIDEO],
-          // 档案投影：渲染层把当前模式的 snake input 打好放这里，原生 body 读的就是这些键。
+          // 档案投影：渲染层把当前模式的 snake input 打好放这里，原生 body 读的就是这些键（asContentItem 中性键）。
           archetypeInput: {
-            volcengine_first_role_image_content: { type: "image_url", image_url: { url: FIRST }, role: "first_frame" },
-            volcengine_last_role_image_content: { type: "image_url", image_url: { url: LAST }, role: "last_frame" },
-            volcengine_image_contents: [{ type: "image_url", image_url: { url: ROLE }, role: "reference_image" }],
-            volcengine_video_contents: [{ type: "video_url", video_url: { url: VIDEO }, role: "reference_video" }],
+            first_image_content: { type: "image_url", image_url: { url: FIRST }, role: "first_frame" },
+            last_image_content: { type: "image_url", image_url: { url: LAST }, role: "last_frame" },
+            image_contents: [{ type: "image_url", image_url: { url: ROLE }, role: "reference_image" }],
+            video_contents: [{ type: "video_url", video_url: { url: VIDEO }, role: "reference_video" }],
           },
         },
       },

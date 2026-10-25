@@ -8,13 +8,13 @@
  * 接入地址可就地编辑 → upsertVendor 只改 baseUrlHint（seed 存在即跳过，用户改动不被启动刷回）。
  * 样张：docs/design/mockups/onboarding-panel-A.html
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { useTranslation } from 'react-i18next'
 import { IconKey, IconExternalLink } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { confirmDialog } from '../../design'
+import { confirmDialog, VendorLogoImage } from '../../design'
 import type { KnownVendor } from '../../config/knownVendors'
 import { FoldableModelCard } from './FoldableModelCard'
 import { ModelChipGroups, type ChipModel } from './ModelChipGroups'
@@ -176,7 +176,7 @@ export function VendorOnboardCard({
     <FoldableModelCard
       dataAccessEntry={isMulti ? MODEL_ACCESS_ENTRY.knownMultiCredential : MODEL_ACCESS_ENTRY.knownSingleKey}
       glyph={
-        directory.logo ? <img src={directory.logo} alt="" className="w-full h-full object-contain" /> : directory.glyph
+        directory.logo ? <VendorLogoImage src={directory.logo} className="w-full h-full" /> : directory.glyph
       }
       glyphTone={directory.logo ? 'logo' : 'ink'}
       name={vendorName}

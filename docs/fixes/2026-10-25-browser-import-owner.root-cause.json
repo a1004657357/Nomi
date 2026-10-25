@@ -1,0 +1,321 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-browser-import-owner",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "浏览器传输和参考槽没有共享导入准入声明",
+  "symptom": "11 个参考选择器手写 accept，浏览器两个内存预算写在独立实现中，新增入口与 owner 脱离。",
+  "direct_cause": "浏览器独有的整段 base64 传输约束和窄类型参考槽未在产品准入表登记。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "electron/shared/contracts/mediaImportPolicy.ts",
+    "electron/shared/contracts/mediaImportPolicy.test.ts",
+    "electron/browser/media/browserMediaValidation.ts",
+    "electron/browser/media/browserViewMedia.ts",
+    "scripts/media-import-owner-baseline.json",
+    "electron/browser/media/browserCaptureSource.ts",
+    "src/workbench/assets/AssetLibraryPanel.tsx",
+    "src/workbench/assets/AssetMentionSuggestionList.tsx",
+    "src/workbench/generationCanvas/components/CanvasToolbar.tsx",
+    "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+    "src/workbench/generationCanvas/nodes/director/panels/ai/AiSceneBar.tsx",
+    "src/workbench/generationCanvas/nodes/PanoramaUploadFallback.tsx",
+    "src/workbench/generationCanvas/nodes/render/AudioStripNode.tsx",
+    "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+    "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+    "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+    "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardDrawingTool.tsx"
+  ],
+  "entry_points": [
+    "electron/browser/media/browserCaptureSource.ts::BROWSER_MEDIA_MAX_BYTES",
+    "electron/browser/media/browserMediaValidation.ts::BROWSER_MEDIA_MAX_BYTES",
+    "electron/browser/media/browserViewMedia.ts::BROWSER_MEDIA_MAX_BYTES",
+    "electron/browser/media/browserViewMedia.ts::BROWSER_PROMPT_IMAGE_MAX_BYTES",
+    "src/workbench/assets/AssetLibraryPanel.tsx::acceptAttrForSurface",
+    "src/workbench/assets/AssetMentionSuggestionList.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/components/CanvasToolbar.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/director/panels/ai/AiSceneBar.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/PanoramaUploadFallback.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/render/AudioStripNode.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx::acceptAttrForSurface",
+    "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardDrawingTool.tsx::acceptAttrForSurface"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留现有用户功能和项目内容。",
+    "规则只有既有共享 owner；不扩大违规上限或删除检查。",
+    "原网页媒体 200 MiB 与提示词图片 16 MiB 预算保持不变。",
+    "参考槽的媒体类型不扩大；底层格式事实仍来自 mediaTypes。",
+    "手写 accept 清零，棘轮只从 8 下调至 0。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/shared/contracts/mediaImportPolicy.ts",
+    "tests": [
+      "electron/shared/contracts/mediaImportPolicy.test.ts",
+      "electron/browser/media/browserViewMedia.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/browser/media/browserCaptureSource.ts",
+      "symbol": "BROWSER_MEDIA_MAX_BYTES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/media/browserMediaValidation.ts",
+      "symbol": "BROWSER_MEDIA_MAX_BYTES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/media/browserViewMedia.ts",
+      "symbol": "BROWSER_MEDIA_MAX_BYTES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/media/browserViewMedia.ts",
+      "symbol": "BROWSER_PROMPT_IMAGE_MAX_BYTES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/AssetLibraryPanel.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/AssetMentionSuggestionList.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CanvasToolbar.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/panels/ai/AiSceneBar.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/PanoramaUploadFallback.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/AudioStripNode.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "symbol": "acceptAttrForSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardDrawingTool.tsx",
+      "symbol": "acceptAttrForSurface"
+    }
+  ],
+  "door_reduction": {
+    "before": 5,
+    "after": 16,
+    "why_not": "保留所有真实消费者；分散入口统一接入既有 owner，不通过删除功能减少入口。新纳管的入口使共享 owner 的读取门数增加，不冒充入口已减少。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "electron/shared/contracts/mediaImportPolicy.ts",
+      "symbol": "MEDIA_IMPORT_SURFACES",
+      "responsibility": "浏览器传输和参考槽没有共享导入准入声明"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/browser/media/browserCaptureSource.ts",
+      "entry_point": "BROWSER_MEDIA_MAX_BYTES",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/media/browserMediaValidation.ts",
+      "entry_point": "BROWSER_MEDIA_MAX_BYTES",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/media/browserViewMedia.ts",
+      "entry_point": "BROWSER_MEDIA_MAX_BYTES",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/media/browserViewMedia.ts",
+      "entry_point": "BROWSER_PROMPT_IMAGE_MAX_BYTES",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/assets/AssetLibraryPanel.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/assets/AssetMentionSuggestionList.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/CanvasToolbar.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/director/panels/ai/AiSceneBar.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/PanoramaUploadFallback.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/AudioStripNode.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardDrawingTool.tsx",
+      "entry_point": "acceptAttrForSurface",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/contracts/mediaImportPolicy.ts",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "修复 owner 接线并保留错误可见性，不创建并行实现。",
+    "artifacts": [
+      "electron/shared/contracts/mediaImportPolicy.ts",
+      "electron/shared/contracts/mediaImportPolicy.test.ts",
+      "electron/browser/media/browserMediaValidation.ts",
+      "electron/browser/media/browserViewMedia.ts",
+      "scripts/media-import-owner-baseline.json",
+      "electron/browser/media/browserCaptureSource.ts",
+      "electron/browser/media/browserMediaValidation.ts",
+      "electron/browser/media/browserViewMedia.ts",
+      "electron/browser/media/browserViewMedia.ts",
+      "src/workbench/assets/AssetLibraryPanel.tsx",
+      "src/workbench/assets/AssetMentionSuggestionList.tsx",
+      "src/workbench/generationCanvas/components/CanvasToolbar.tsx",
+      "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "src/workbench/generationCanvas/nodes/director/panels/ai/AiSceneBar.tsx",
+      "src/workbench/generationCanvas/nodes/PanoramaUploadFallback.tsx",
+      "src/workbench/generationCanvas/nodes/render/AudioStripNode.tsx",
+      "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+      "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+      "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardDrawingTool.tsx"
+    ]
+  },
+  "regression_tests": [
+    "electron/shared/contracts/mediaImportPolicy.test.ts",
+    "electron/browser/media/browserViewMedia.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/shared/contracts/mediaImportPolicy.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用锁定依赖，没有升级或新增三方依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

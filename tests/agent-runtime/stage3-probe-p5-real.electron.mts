@@ -1,4 +1,4 @@
-// 阶段 3 前置探针 **P5 ③**：真实模型三次调用，看扁平版 `nomi_storyboard_write` 的**首调**
+// 阶段 3 前置探针 **P5 ③**：真实模型三次调用，看分镜写动词（20 动词起 `draft_shots`）的**首调**
 // 有没有命中正确的 operation；顺带用「带 / 不带这个工具」两次请求的 prompt_tokens 之差，
 // 量出它在真实 tokenizer 下的 token 成本（① 的估计值只是字符启发式）。
 //
@@ -17,8 +17,8 @@ import { join } from 'node:path';
 import type { HookHandler, LaneSnapshot } from '@earendil-works/pi-agent-core';
 
 import { createCanvasLaneTools, type CanvasLanePort } from '../../electron/agentLane/laneCanvasTools.js';
-// 阶段 5a：说明书那一半搬到能力契约旁边（两个 profile 共用），执行那一半留在 lane。
-import { canvasModelToolSpecs } from '../../electron/shared/agentCapabilities/canvasModelTools.js';
+// PR A：说明书那一半是注册表里的动词声明（两个 profile 共用），执行那一半留在 lane。
+import { specsForCapability } from '../../electron/shared/agentCapabilities/modelFacingToolRegistry.js';
 import { composeLaneSystemPrompt } from '../../electron/agentLane/lanePromptSections.js';
 
 /** P5 探针量的是「工具多了模型还听不听话」，不喂技能——空串是一个**说出口的决定**，不是遗漏。 */
@@ -30,7 +30,7 @@ import { PROBE_CONTEXT, openProbeLane, type ProbeCleanup } from './stage3ProbeHa
 
 const VENDOR = process.env.NOMI_PROBE_VENDOR || 'apimart';
 const MODEL = process.env.NOMI_PROBE_MODEL || 'deepseek-v4-flash';
-const STORYBOARD_TOOL = 'nomi_storyboard_write';
+const STORYBOARD_TOOL = 'draft_shots';
 const IDENTITY_PROMPT = [
   'You are Nomi, the assistant inside a local-first AI video workbench.',
   'The user is writing a short film. Use the tools to act on the storyboard and canvas; reply in the user\'s language.',
@@ -136,7 +136,7 @@ async function runTask(config: NomiModelConfig, task: TaskSpec, tools: LaneToolD
   try {
     const probe = await openProbeLane(scope, { fetch: globalThis.fetch,
       projectDir: join(app.getPath('temp'), `nomi-p5-${task.id}-${Date.now()}`),
-      systemPrompt: composeLaneSystemPrompt(IDENTITY_PROMPT, canvasModelToolSpecs(), NO_SKILL_SECTION),
+      systemPrompt: composeLaneSystemPrompt(IDENTITY_PROMPT, [...specsForCapability('canvas.read'), ...specsForCapability('canvas.write')], NO_SKILL_SECTION),
       model: config, tools,
     }, { beforeTool });
     probe.harness.hooks.on('before_request', async () => { requests += 1; return undefined; });

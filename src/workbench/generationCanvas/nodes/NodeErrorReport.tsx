@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { GenerationStatusBar } from './GenerationStatusBar'
 import { MODEL_ACCESS_ENTRY } from '../../../../electron/shared/contracts/modelAccessCapabilities'
 import { useTranslation } from 'react-i18next'
-import { IconChevronDown, IconChevronRight, IconRefresh, IconReplace, IconSettings, IconWand, IconX } from '@tabler/icons-react'
+import { IconListCheck, IconListDetails, IconRefresh, IconReplace, IconSettings, IconWand, IconX } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { WorkbenchButton } from '../../../design'
 import { isKnownVendor } from '../../../config/knownVendors'
@@ -11,16 +11,27 @@ import { getDesktopBridge } from '../../../desktop/bridge'
 import { setPendingCustomCallIntent } from '../../../ui/onboarding/customCallIntent'
 import { isComfyuiVendorKey } from '../model/comfyuiVendor'
 import { nodeSelectedModelAddress } from './controls/parameterControlModel'
-import { classifyGenerationError } from '../runner/generationRunController'
+import { classifyGenerationError, confirmAndRunNode } from '../runner/generationRunController'
+import { releaseUnknownSubmissionForNode } from '../../production/releaseUnknownSubmission'
+import { productionRunApi } from '../../production/productionRunApi'
 import { narrateErrorActionLabel, narrateModelKind, type GenerationErrorAction } from '../../observability/narrate'
 import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
+import { CopyDetailsButton, ProviderMessageNote, TechnicalDetailsBlock, TechnicalDetailsToggle } from './NodeFailureDetails'
 import { stageForGenerationError } from '../../../ui/community/feedbackTypes'
+import { builtinVendorKeyOfKey } from '../../../../electron/shared/builtinVendorIdentity'
+import { revealNotificationTarget } from '../../../ui/notificationPolicy'
+import { productionMetaOf } from '../model/productionMeta'
+import { withProjectAction } from '../../project/projectCanvasReadSurface'
 
 const ACTION_ICON: Record<GenerationErrorAction, typeof IconRefresh> = {
   retry: IconRefresh,
   'switch-model': IconReplace,
   'open-model-access': IconSettings,
   'fix-model-kind': IconWand,
+  // 「查看任务」去的是任务中心：和任务中心按钮同一个动作，用同一个图标。
+  reconcile: IconListCheck,
+  'view-task': IconListDetails,
+  'release-regenerate': IconRefresh,
 }
 
 /**
@@ -58,8 +69,12 @@ export function NodeErrorReport({
   const customCallTarget = React.useMemo(() => {
     const { modelKey, vendorKey } = nodeSelectedModelAddress(meta)
     if (!modelKey || !vendorKey || !CUSTOM_CALL_HINT_KINDS.has(report.kind)) return null
-    if (isKnownVendor(vendorKey)) return null
-    if (vendorKey === 'dreamina' || vendorKey === 'codex-local' || isComfyuiVendorKey(vendorKey)) return null
+    // #831：兄弟连接（`apimart--mini`）也是内置家，先解析回 root 再问「认不认得」——
+    // 不解析的话，APIMart 特价组报错时会多冒一个「自定义调用」入口（它根本没有自定义脚本）。
+    const rootVendorKey = builtinVendorKeyOfKey(vendorKey)
+    if (isKnownVendor(rootVendorKey)) return null
+    // 本地运行时两家没有「地址 + Key」形态，长不出兄弟连接（见门岗豁免名单）。
+    if (rootVendorKey === 'dreamina' || rootVendorKey === 'codex-local' || isComfyuiVendorKey(vendorKey)) return null
     return { vendorKey, modelKey, label: modelKey }
   }, [meta, report.kind])
 
@@ -73,7 +88,10 @@ export function NodeErrorReport({
     [customCallTarget],
   )
   const [showRaw, setShowRaw] = React.useState(false)
-  const [copied, setCopied] = React.useState(false)
+  // 「我核对过了」：点下去先在卡里展开一段确认（不弹系统对话框），确认后只释放占用、再走正常的付费确认卡。
+  const [confirmingRelease, setConfirmingRelease] = React.useState(false)
+  const [releaseBusy, setReleaseBusy] = React.useState(false)
+  const [releaseFailed, setReleaseFailed] = React.useState(false)
   const rootRef = React.useRef<HTMLDivElement>(null)
 
   const handleRetry = React.useCallback(
@@ -113,6 +131,33 @@ export function NodeErrorReport({
     event.stopPropagation()
     window.dispatchEvent(new CustomEvent('nomi-open-model-catalog'))
   }, [])
+
+  const releaseRunId = productionMetaOf({ meta })?.runId
+  const handleReleaseContinue = React.useCallback((event: React.MouseEvent) => {
+    event.stopPropagation()
+    const nodeId = rootRef.current?.closest('[data-node-id]')?.getAttribute('data-node-id')
+    if (!nodeId || !releaseRunId || releaseBusy) return
+    setReleaseBusy(true)
+    setReleaseFailed(false)
+    withProjectAction((project) => {
+      void releaseUnknownSubmissionForNode(project.binding.projectId, releaseRunId, nodeId, productionRunApi)
+        .then((released) => {
+          setConfirmingRelease(false)
+          // 放行只是释放占用；真正的生成要用户在这一镜正常的付费确认卡上点（confirmAndRunNode 弹卡，不点就不发）。
+          if (released) void confirmAndRunNode(nodeId, { initiator: 'user' })
+        })
+        .catch(() => setReleaseFailed(true))
+        .finally(() => setReleaseBusy(false))
+    })
+  }, [releaseBusy, releaseRunId])
+
+  const handleReconcile = React.useCallback((event: React.MouseEvent) => {
+    event.stopPropagation()
+    const runId = productionMetaOf({ meta })?.runId
+    withProjectAction((project) => {
+      void revealNotificationTarget({ projectId: project.binding.projectId, ...(runId ? { runId } : {}), taskCenter: true })
+    })
+  }, [meta])
 
   /**
    * 一键改对类型：改 kind 的同时按新 kind 重建调用通道（electron 侧 retypeModel 单事务），改完直接重跑。
@@ -161,25 +206,15 @@ export function NodeErrorReport({
     'switch-model': handleSwitchModel,
     'open-model-access': handleOpenModelAccess,
     'fix-model-kind': kindFixTarget ? handleFixModelKind : undefined,
+    reconcile: handleReconcile,
+    'view-task': handleReconcile,
+    // 只有制作里的镜（有 runId）才放得了行；放行是把 Run 里那次未知尝试记掉，没有 Run 就没东西可记。
+    'release-regenerate': releaseRunId ? (event: React.MouseEvent) => { event.stopPropagation(); setConfirmingRelease(true) } : undefined,
   }
   const primaryAction = actionHandlers[report.primary] ? report.primary : 'open-model-access'
-  const secondaryAction = report.secondary !== primaryAction && actionHandlers[report.secondary] ? report.secondary : null
+  const secondaryAction = report.secondary && report.secondary !== primaryAction && actionHandlers[report.secondary] ? report.secondary : null
   // 「改成图片」要点出改成**哪个**类型，否则按钮只是「改类型」——用户还得自己再想一步。
   const actionLabelParams = kindFixTarget ? { kind: narrateModelKind(kindFixTarget.requested) } : undefined
-
-  const handleCopy = React.useCallback(
-    async (event: React.MouseEvent) => {
-      event.stopPropagation()
-      try {
-        await navigator.clipboard.writeText(report.raw)
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 1200)
-      } catch {
-        /* read-only env */
-      }
-    },
-    [report.raw],
-  )
 
   const handleFeedback = React.useCallback((event: React.MouseEvent) => {
     event.stopPropagation()
@@ -187,13 +222,17 @@ export function NodeErrorReport({
     window.dispatchEvent(new CustomEvent('nomi-open-feedback-share', {
       detail: {
         intent: 'problem',
+        surface: 'generation',
         stage: stageForGenerationError(report.kind),
         errorKind: report.kind,
+        // 那句人话由**生成域自己的 owner** 给（`classifyGenerationError` 已经算好放在 report 里）。
+        // 反馈面不做第六张错误码→人话表，理由见 src/ui/community/feedbackSummary.ts 的头注释。
+        summary: report.providerMessage ? `${report.reason}：${report.providerMessage}` : report.reason,
         provider: vendorKey,
         model: modelKey,
       },
     }))
-  }, [meta, report.kind])
+  }, [meta, report.kind, report.providerMessage, report.reason])
 
   return (
     <div
@@ -259,22 +298,10 @@ export function NodeErrorReport({
             break-words 不能省：上游原话常是一整串没有空格的 JSON/URL（如方舟的
             `{"code":"InputImageSensitiveContentDetected.PrivacyInformation",…}`），窄节点上会横向
             溢出被切掉右半截（同一次走查截图抓到）。 */}
-        {report.providerMessage ? (
-          <p className="mt-2 select-text cursor-text break-words rounded-nomi-sm bg-nomi-ink-05 p-2 text-caption leading-relaxed text-nomi-ink-60">
-            <span className="text-nomi-ink-40">{t('generationCommon.error.providerMessage')}</span>
-            {report.providerMessage}
-          </p>
-        ) : null}
+        {report.providerMessage ? <ProviderMessageNote text={report.providerMessage} /> : null}
       </div>
 
-      {showRaw ? (
-        <pre
-          className={cn(NODE_SCROLL_REGION_CLASS_NAME, 'mb-2 max-h-[88px] select-text overflow-auto whitespace-pre-wrap break-all rounded-nomi-sm bg-nomi-ink-05 p-2 font-nomi-mono text-micro text-nomi-ink-60')}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {report.raw}
-        </pre>
-      ) : null}
+      {showRaw ? <TechnicalDetailsBlock raw={report.raw} /> : null}
 
       {/* 主动作按类型走（narrate 的 ACTION_BY_KIND）：确定性失败给「换个模型/去模型接入」，
           偶发失败才给「重试」。以前一律红「重试」，和「重试还会是同样结果」的文案自相矛盾。
@@ -282,7 +309,21 @@ export function NodeErrorReport({
           flex-wrap + 每颗 shrink-0 whitespace-nowrap：不加的话 flex 会压缩次要按钮，把文案**从词中间
           断开**成「换个模/型」「复制详/情」（2026-08-11 走查截图实拍）。几何断言抓不到它——没有溢出、
           没有越界，只是难看得像坏了。窄处该做的是整颗换行，不是把字劈两半（AssistantErrorCard 同款处理）。 */}
-      <div className="flex flex-wrap items-center gap-2">
+      {confirmingRelease ? (
+        <div data-release-confirm className="mb-1 grid gap-2" onPointerDown={(event) => event.stopPropagation()}>
+          <p className="text-caption leading-snug text-nomi-ink-80">{t('generationCommon.observability.releaseConfirm.message')}</p>
+          {releaseFailed ? <p className="text-micro text-workbench-danger">{t('generationCommon.observability.releaseConfirm.failed')}</p> : null}
+          <div className="flex items-center gap-2">
+            <WorkbenchButton size="sm" onClick={handleReleaseContinue} disabled={releaseBusy} className="shrink-0 whitespace-nowrap bg-workbench-danger text-nomi-paper border-0 hover:bg-workbench-danger-soft">
+              {t('generationCommon.observability.releaseConfirm.continue')}
+            </WorkbenchButton>
+            <button type="button" onClick={(event) => { event.stopPropagation(); setConfirmingRelease(false); setReleaseFailed(false) }} className="shrink-0 whitespace-nowrap text-caption text-nomi-ink-40 hover:text-nomi-ink">
+              {t('generationCommon.observability.releaseConfirm.cancel')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      <div className={cn('flex flex-wrap items-center gap-2', confirmingRelease && 'hidden')}>
         {(() => {
           const PrimaryIcon = ACTION_ICON[primaryAction]
           const label = narrateErrorActionLabel(primaryAction, 'primary', actionLabelParams)
@@ -307,25 +348,12 @@ export function NodeErrorReport({
             {narrateErrorActionLabel(secondaryAction, 'secondary', actionLabelParams)}
           </button>
         ) : null}
-        <button type="button" onClick={handleCopy} className="shrink-0 whitespace-nowrap text-caption text-nomi-ink-40 hover:text-nomi-ink">
-          {copied ? t('generationCommon.error.copied') : t('generationCommon.error.copyDetails')}
-        </button>
+        <CopyDetailsButton raw={report.raw} />
         <button type="button" onClick={handleFeedback} className="shrink-0 whitespace-nowrap text-caption text-nomi-ink-40 hover:text-nomi-ink">
           {t('generationCommon.error.feedback')}
         </button>
         <div className="min-w-0 flex-1" />
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            setShowRaw((value) => !value)
-          }}
-          aria-expanded={showRaw}
-          className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-micro text-nomi-ink-40 hover:text-nomi-ink-60"
-        >
-          {t('generationCommon.error.technicalDetails')}
-          {showRaw ? <IconChevronDown size={13} stroke={1.6} /> : <IconChevronRight size={13} stroke={1.6} />}
-        </button>
+        <TechnicalDetailsToggle open={showRaw} onToggle={() => setShowRaw((value) => !value)} />
       </div>
     </div>
   )

@@ -1,0 +1,983 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-custom-desktop-i18n",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "新增桌面提示未接共享双语 owner",
+  "symptom": "新增桌面错误与窗口标题超过翻译棘轮；插值值中的美元替换符及后续占位符会被错误解释。",
+  "direct_cause": "29 个定制模块直接写中文，旧 desktopT 多轮字符串 replace 还会重解释参数。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "electron/desktopIntegrationIpc.ts",
+    "electron/runtime.ts",
+    "electron/submissionLedger.ts",
+    "electron/vendorSubmissionRateLimiter.ts",
+    "electron/ai/codexImagegenPolicy.ts",
+    "electron/ai/codexImagegenRunner.ts",
+    "electron/ai/vibingDirectorTools.ts",
+    "electron/assets/archiveOutputCollection.ts",
+    "electron/assets/glbValidation.ts",
+    "electron/assets/projectAssetStore.ts",
+    "electron/blender/blenderRunner.ts",
+    "electron/blender/directorCli.ts",
+    "electron/blender/vibingDirectorAssets.ts",
+    "electron/blender/vibingDirectorCatalog.ts",
+    "electron/blender/vibingDirectorRunner.ts",
+    "electron/browser/core/browserAllowlist.ts",
+    "electron/browser/core/browserViewUtils.ts",
+    "electron/catalog/agnesPublicAssetProbe.ts",
+    "electron/catalog/comfyuiLocal.ts",
+    "electron/catalog/providerAdapterContract.ts",
+    "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+    "electron/jimengWeb/ipc.ts",
+    "electron/jimengWeb/runner.ts",
+    "electron/jimengWeb/seedanceBridge.ts",
+    "electron/pavoWeb/bridge.ts",
+    "electron/pavoWeb/runner.ts",
+    "electron/tasks/codexImageTask.ts",
+    "electron/tasks/generationBudget.ts",
+    "electron/webBridge/registry.ts",
+    "electron/desktopStrings.ts",
+    "electron/locales/customIntegrations.ts",
+    "electron/customDesktopStrings.test.ts"
+  ],
+  "entry_points": [
+    "electron/agentLane/laneDesktopRuntime.ts::desktopT",
+    "electron/ai/codexImagegenPolicy.ts::desktopT",
+    "electron/ai/codexImagegenRunner.ts::desktopT",
+    "electron/ai/onboarding/modelListProbe.ts::desktopT",
+    "electron/ai/streamTextTask.ts::desktopT",
+    "electron/ai/vibingDirectorTools.ts::desktopT",
+    "electron/assets/archiveOutputCollection.ts::desktopT",
+    "electron/assets/generatedMediaDecode.ts::desktopT",
+    "electron/assets/glbValidation.ts::desktopT",
+    "electron/assets/projectAssetStore.ts::desktopT",
+    "electron/audio/synchronousAudioResponse.ts::desktopT",
+    "electron/audioTaskRunner.ts::desktopT",
+    "electron/blender/blenderRunner.ts::desktopT",
+    "electron/blender/directorCli.ts::desktopT",
+    "electron/blender/vibingDirectorAssets.ts::desktopT",
+    "electron/blender/vibingDirectorCatalog.ts::desktopT",
+    "electron/blender/vibingDirectorRunner.ts::desktopT",
+    "electron/browser/core/browserAllowlist.ts::desktopT",
+    "electron/browser/core/browserViewUtils.ts::desktopT",
+    "electron/browser/media/browserMediaValidation.ts::desktopT",
+    "electron/browser/media/browserViewMedia.ts::desktopT",
+    "electron/capabilityCore/core.ts::desktopT",
+    "electron/catalog/agnesPublicAssetProbe.ts::desktopT",
+    "electron/catalog/apimartHailuo23.ts::desktopT",
+    "electron/catalog/apimartMinimaxH3.ts::desktopT",
+    "electron/catalog/apimartModelIds.ts::desktopT",
+    "electron/catalog/assetLocalization.ts::desktopT",
+    "electron/catalog/comfyuiLocal.ts::desktopT",
+    "electron/catalog/comfyuiWorkflowImport.ts::desktopT",
+    "electron/catalog/comfyuiWorkflowOutput.ts::desktopT",
+    "electron/catalog/customCallIpc.ts::desktopT",
+    "electron/catalog/customCallRunner.ts::desktopT",
+    "electron/catalog/dreaminaLoginIpc.ts::desktopT",
+    "electron/catalog/kieGptImage25.ts::desktopT",
+    "electron/catalog/providerAdapterContract.ts::desktopT",
+    "electron/catalog/rendererCatalogMutation.ts::desktopT",
+    "electron/catalog/runwayImage.ts::desktopT",
+    "electron/catalog/runwayOfficial.ts::desktopT",
+    "electron/catalog/validateCandidateCredential.ts::desktopT",
+    "electron/desktopIntegrationIpc.ts::desktopT",
+    "electron/experience/experiencePolicy.ts::desktopT",
+    "electron/export/exportJobs.ts::desktopT",
+    "electron/export/ffmpegRunner.ts::desktopT",
+    "electron/gate8/isolatedProductionAcceptanceHarness.ts::desktopT",
+    "electron/integrationCertification/credentialElicitationHttp.ts::desktopT",
+    "electron/integrationCertification/credentialElicitationRuntime.ts::desktopT",
+    "electron/integrationCertification/httpConnector.ts::desktopT",
+    "electron/integrationCertification/httpModelDiscovery.ts::desktopT",
+    "electron/jimengWeb/ipc.ts::desktopT",
+    "electron/jimengWeb/runner.ts::desktopT",
+    "electron/jimengWeb/seedanceBridge.ts::desktopT",
+    "electron/localSpeech/localSpeechErrors.ts::desktopT",
+    "electron/main.ts::desktopT",
+    "electron/networkOutboundMessage.ts::desktopT",
+    "electron/pavoWeb/bridge.ts::desktopT",
+    "electron/pavoWeb/runner.ts::desktopT",
+    "electron/productionRun/productionRunDriverOps.ts::desktopT",
+    "electron/review/technicalCheck.ts::desktopT",
+    "electron/runtime.ts::desktopT",
+    "electron/submissionLedger.ts::desktopT",
+    "electron/tasks/codexImageTask.ts::desktopT",
+    "electron/tasks/generationBudget.ts::desktopT",
+    "electron/tasks/taskAdmission.ts::desktopT",
+    "electron/tasks/taskResultQuery.ts::desktopT",
+    "electron/update/autoUpdater.ts::desktopT",
+    "electron/vendorSubmissionRateLimiter.ts::desktopT",
+    "electron/video/deconstructVideo.ts::desktopT",
+    "electron/webBridge/registry.ts::desktopT",
+    "electron/workspace/workspaceIpc.ts::desktopT"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留现有用户功能和项目内容。",
+    "规则只有既有共享 owner；不扩大违规上限或删除检查。",
+    "202 条中文逐字保留；中英文占位符集合一致。",
+    "插值单次执行，参数作为字面值，不递归展开或解释美元替换符。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/desktopStrings.ts",
+    "tests": [
+      "electron/customDesktopStrings.test.ts",
+      "electron/pavoWeb/bridge.test.ts",
+      "electron/assets/glbValidation.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/agentLane/laneDesktopRuntime.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/codexImagegenPolicy.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/codexImagegenRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/onboarding/modelListProbe.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/streamTextTask.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/assets/archiveOutputCollection.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/assets/generatedMediaDecode.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/assets/glbValidation.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/assets/projectAssetStore.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/audio/synchronousAudioResponse.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/audioTaskRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/blenderRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/directorCli.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/vibingDirectorAssets.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/vibingDirectorCatalog.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/vibingDirectorRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/core/browserAllowlist.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/core/browserViewUtils.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/media/browserMediaValidation.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/browser/media/browserViewMedia.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/core.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/agnesPublicAssetProbe.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/apimartHailuo23.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/apimartMinimaxH3.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/apimartModelIds.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/assetLocalization.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/comfyuiLocal.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/comfyuiWorkflowImport.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/comfyuiWorkflowOutput.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/customCallIpc.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/customCallRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/dreaminaLoginIpc.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/kieGptImage25.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/providerAdapterContract.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/rendererCatalogMutation.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/runwayImage.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/runwayOfficial.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/validateCandidateCredential.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/desktopIntegrationIpc.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/experience/experiencePolicy.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/export/exportJobs.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/export/ffmpegRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/credentialElicitationHttp.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/credentialElicitationRuntime.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/httpConnector.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/httpModelDiscovery.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/ipc.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/runner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/localSpeech/localSpeechErrors.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/main.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/networkOutboundMessage.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/pavoWeb/runner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/productionRun/productionRunDriverOps.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/review/technicalCheck.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/runtime.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/submissionLedger.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/codexImageTask.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/generationBudget.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskAdmission.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskResultQuery.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/update/autoUpdater.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendorSubmissionRateLimiter.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/video/deconstructVideo.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "read",
+      "path": "electron/workspace/workspaceIpc.ts",
+      "symbol": "desktopT"
+    }
+  ],
+  "door_reduction": {
+    "before": 41,
+    "after": 69,
+    "why_not": "保留所有真实消费者；分散入口统一接入既有 owner，不通过删除功能减少入口。新纳管的入口使共享 owner 的读取门数增加，不冒充入口已减少。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "electron/desktopStrings.ts",
+      "symbol": "desktopT",
+      "responsibility": "新增桌面提示未接共享双语 owner"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/agentLane/laneDesktopRuntime.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/ai/codexImagegenPolicy.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/ai/codexImagegenRunner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/ai/onboarding/modelListProbe.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/ai/streamTextTask.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/assets/archiveOutputCollection.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/assets/generatedMediaDecode.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/assets/glbValidation.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/assets/projectAssetStore.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/audio/synchronousAudioResponse.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/audioTaskRunner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/blender/blenderRunner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/blender/directorCli.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/blender/vibingDirectorAssets.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/blender/vibingDirectorCatalog.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/blender/vibingDirectorRunner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/core/browserAllowlist.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/core/browserViewUtils.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/media/browserMediaValidation.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/browser/media/browserViewMedia.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/capabilityCore/core.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/agnesPublicAssetProbe.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/apimartHailuo23.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/apimartMinimaxH3.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/apimartModelIds.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/assetLocalization.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/comfyuiLocal.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/comfyuiWorkflowImport.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/comfyuiWorkflowOutput.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/customCallIpc.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/customCallRunner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/dreaminaLoginIpc.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/kieGptImage25.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/providerAdapterContract.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/rendererCatalogMutation.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/runwayImage.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/runwayOfficial.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/catalog/validateCandidateCredential.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/desktopIntegrationIpc.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/experience/experiencePolicy.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/export/exportJobs.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/export/ffmpegRunner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/integrationCertification/credentialElicitationHttp.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/integrationCertification/credentialElicitationRuntime.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/integrationCertification/httpConnector.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/integrationCertification/httpModelDiscovery.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/jimengWeb/ipc.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/jimengWeb/runner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/localSpeech/localSpeechErrors.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/main.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/networkOutboundMessage.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/pavoWeb/runner.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/productionRun/productionRunDriverOps.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/review/technicalCheck.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/runtime.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/submissionLedger.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/tasks/codexImageTask.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/tasks/generationBudget.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/tasks/taskAdmission.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/tasks/taskResultQuery.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/update/autoUpdater.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/vendorSubmissionRateLimiter.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/video/deconstructVideo.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/webBridge/registry.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/workspace/workspaceIpc.ts",
+      "entry_point": "desktopT",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/desktopStrings.ts",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "修复 owner 接线并保留错误可见性，不创建并行实现。",
+    "artifacts": [
+      "electron/desktopIntegrationIpc.ts",
+      "electron/runtime.ts",
+      "electron/submissionLedger.ts",
+      "electron/vendorSubmissionRateLimiter.ts",
+      "electron/ai/codexImagegenPolicy.ts",
+      "electron/ai/codexImagegenRunner.ts",
+      "electron/ai/vibingDirectorTools.ts",
+      "electron/assets/archiveOutputCollection.ts",
+      "electron/assets/glbValidation.ts",
+      "electron/assets/projectAssetStore.ts",
+      "electron/blender/blenderRunner.ts",
+      "electron/blender/directorCli.ts",
+      "electron/blender/vibingDirectorAssets.ts",
+      "electron/blender/vibingDirectorCatalog.ts",
+      "electron/blender/vibingDirectorRunner.ts",
+      "electron/browser/core/browserAllowlist.ts",
+      "electron/browser/core/browserViewUtils.ts",
+      "electron/catalog/agnesPublicAssetProbe.ts",
+      "electron/catalog/comfyuiLocal.ts",
+      "electron/catalog/providerAdapterContract.ts",
+      "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+      "electron/jimengWeb/ipc.ts",
+      "electron/jimengWeb/runner.ts",
+      "electron/jimengWeb/seedanceBridge.ts",
+      "electron/pavoWeb/bridge.ts",
+      "electron/pavoWeb/runner.ts",
+      "electron/tasks/codexImageTask.ts",
+      "electron/tasks/generationBudget.ts",
+      "electron/webBridge/registry.ts",
+      "electron/desktopStrings.ts",
+      "electron/locales/customIntegrations.ts",
+      "electron/customDesktopStrings.test.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/customDesktopStrings.test.ts",
+    "electron/pavoWeb/bridge.test.ts",
+    "electron/assets/glbValidation.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/customDesktopStrings.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用锁定依赖，没有升级或新增三方依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

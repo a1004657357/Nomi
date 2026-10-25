@@ -57,6 +57,8 @@ import { AGNES_VENDOR_SEED, AGNES_STATUS_MAPPING } from "./agnesVendor";
 import { AGNES_IMAGE_MODELS } from "./agnesImages";
 import { AGNES_VIDEO_MODELS } from "./agnesVideos";
 import { AGNES_TEXT_MODELS } from "./agnesTexts";
+import { PIXSTAG_VENDOR_SEED, PIXSTAG_STATUS_MAPPING, PIXSTAG_VIDEO_QUERY_OP } from "./pixstagVendor";
+import { PIXSTAG_VIDEO_MODELS } from "./pixstagVideos";
 import { MODELSCOPE_VENDOR_SEED } from "./modelscopeVendor";
 import { MODELSCOPE_IMAGE_MODELS, MODELSCOPE_IMAGE_QUERY, MODELSCOPE_IMAGE_STATUS } from "./modelscopeImages";
 import { MODELSCOPE_TEXT_MODELS } from "./modelscopeTexts";
@@ -73,12 +75,23 @@ import { CODEX_LOCAL_VENDOR_SEED, CODEX_IMAGE_CURATED_MODELS, CODEX_IMAGE_CURATE
 import { VOLCENGINE_IMAGE_MODELS } from "./volcengineImages";
 import { VOLCENGINE_AUDIO_MODELS } from "./volcengineAudios";
 import { VOLCENGINE_SEEDANCE_QUERY_OP, VOLCENGINE_SEEDANCE_STATUS_MAPPING, VOLCENGINE_VIDEO_MODELS } from "./volcengineVideos";
+import { CODEX_IMG2_MODEL_SEED, CODEX_VENDOR_SEED } from "./codexImagegen";
+import {
+  JIMENG_WEB_IMAGE_MODEL_SEED,
+  JIMENG_WEB_LEGACY_BASE_URLS,
+  JIMENG_WEB_SEEDANCE_MODEL_SEED,
+  JIMENG_WEB_VENDOR_SEED,
+} from "./jimengWeb";
+import { PAVO_WEB_AGNES_FLASH_MODEL_SEED, PAVO_WEB_VENDOR_SEED } from "./pavoWeb";
 import { modelHasPublishedExecution } from "../shared/modelPublication";
 import { GEMINI_OMNI_11_MAPPINGS, GEMINI_OMNI_11_MODEL_SEED } from "./kieGeminiOmni11";
 import { KIE_SUNO_MUSIC_MAPPINGS, KIE_SUNO_MUSIC_MODEL_SEED, KIE_SUNO_SFX_MAPPING, KIE_SUNO_SFX_MODEL_SEED } from "./kieSunoAudio";
 import { MINIMAX_OFFICIAL_MODELS, MINIMAX_VENDOR_SEED } from "./minimaxOfficial";
 import { ELEVENLABS_MODELS, ELEVENLABS_VENDOR_SEED } from "./elevenlabs";
+import { LOCAL_SPEECH_CURATED_MAPPINGS, LOCAL_SPEECH_CURATED_MODELS, LOCAL_SPEECH_VENDOR_SEED } from "./localSpeech";
 import { MESHY_MODELS, MESHY_VENDOR_SEED } from "./meshyOfficial";
+import { HIGGSFIELD_MODELS } from "./higgsfieldModels";
+import { HIGGSFIELD_VENDOR_SEED } from "./higgsfieldVendor";
 import { FAL_OFFICIAL_MODELS, FAL_VENDOR_SEED } from "./falOfficial";
 import { RUNWAY_OFFICIAL_MODELS, RUNWAY_VENDOR_SEED } from "./runwayOfficial";
 
@@ -242,6 +255,17 @@ const AGNES_CURATED_MAPPINGS: CuratedMapping[] = [
   ),
 ];
 
+/** Pixstag（MiniMax v2 线缆聚合）curated 模型 + mapping。视频异步族：共用 query op + status mapping。 */
+const PIXSTAG_CURATED_MODELS: CuratedModel[] = PIXSTAG_VIDEO_MODELS.map((m) => ({
+  modelKey: m.modelKey, labelZh: m.labelZh, kind: "video" as const, archetypeId: m.archetypeId,
+}));
+const PIXSTAG_CURATED_MAPPINGS: CuratedMapping[] = PIXSTAG_VIDEO_MODELS.flatMap((m) =>
+  m.mappings.map((mp) => ({
+    id: mp.id, taskKind: mp.taskKind, modelKey: m.modelKey, name: mp.name,
+    create: mp.create, query: PIXSTAG_VIDEO_QUERY_OP, statusMapping: PIXSTAG_STATUS_MAPPING,
+  })),
+);
+
 /** 魔搭社区（官方原生）curated 模型 + mapping。图片：async create→poll；文本：免费 LLM(无 mapping，直连 chat)。 */
 const MODELSCOPE_CURATED_MODELS: CuratedModel[] = [
   // 免费文本大脑（Qwen3 系，真实验证 chat+tool_use 双通）：补 Issue #9，给没付费用户免费大脑。
@@ -284,6 +308,37 @@ const VOLCENGINE_SPEECH_CURATED_MAPPINGS: CuratedMapping[] = VOLCENGINE_AUDIO_MO
   })),
 );
 
+/** Codex 本地 Img2 入口：只种可见模型身份，不种 HTTP mapping。 */
+const CODEX_CURATED_MODELS: CuratedModel[] = [
+  { modelKey: CODEX_IMG2_MODEL_SEED.modelKey, labelZh: CODEX_IMG2_MODEL_SEED.labelZh, kind: CODEX_IMG2_MODEL_SEED.kind, archetypeId: "gpt-image-2" },
+];
+
+/** 即梦 Web 扩展桥：只种可见模型身份，不种 HTTP mapping。runtime 走本地 Seedance bridge。 */
+const JIMENG_WEB_CURATED_MODELS: CuratedModel[] = [
+  {
+    modelKey: JIMENG_WEB_IMAGE_MODEL_SEED.modelKey,
+    labelZh: JIMENG_WEB_IMAGE_MODEL_SEED.labelZh,
+    kind: JIMENG_WEB_IMAGE_MODEL_SEED.kind,
+    archetypeId: JIMENG_WEB_IMAGE_MODEL_SEED.archetypeId,
+  },
+  {
+    modelKey: JIMENG_WEB_SEEDANCE_MODEL_SEED.modelKey,
+    labelZh: JIMENG_WEB_SEEDANCE_MODEL_SEED.labelZh,
+    kind: JIMENG_WEB_SEEDANCE_MODEL_SEED.kind,
+    archetypeId: JIMENG_WEB_SEEDANCE_MODEL_SEED.archetypeId,
+  },
+];
+
+/** Pavo 网页桥：只声明已在官网公共工作台核实的 Flash 视频模型。 */
+const PAVO_WEB_CURATED_MODELS: CuratedModel[] = [
+  {
+    modelKey: PAVO_WEB_AGNES_FLASH_MODEL_SEED.modelKey,
+    labelZh: PAVO_WEB_AGNES_FLASH_MODEL_SEED.labelZh,
+    kind: PAVO_WEB_AGNES_FLASH_MODEL_SEED.kind,
+    archetypeId: PAVO_WEB_AGNES_FLASH_MODEL_SEED.archetypeId,
+  },
+];
+
 const officialCuratedModels = <T extends CuratedModel & { mappings: unknown }>(models: readonly T[]): CuratedModel[] =>
   models.map(({ modelKey, labelZh, kind, archetypeId, meta }) => ({ modelKey, labelZh, kind, archetypeId, meta }));
 
@@ -297,6 +352,8 @@ const MINIMAX_OFFICIAL_CURATED_MODELS = officialCuratedModels(MINIMAX_OFFICIAL_M
 const MINIMAX_OFFICIAL_CURATED_MAPPINGS = officialCuratedMappings(MINIMAX_OFFICIAL_MODELS);
 const ELEVENLABS_CURATED_MODELS = officialCuratedModels(ELEVENLABS_MODELS);
 const ELEVENLABS_CURATED_MAPPINGS = officialCuratedMappings(ELEVENLABS_MODELS);
+const HIGGSFIELD_CURATED_MODELS = officialCuratedModels(HIGGSFIELD_MODELS);
+const HIGGSFIELD_CURATED_MAPPINGS = officialCuratedMappings(HIGGSFIELD_MODELS);
 const MESHY_CURATED_MODELS = officialCuratedModels(MESHY_MODELS);
 const MESHY_CURATED_MAPPINGS = officialCuratedMappings(MESHY_MODELS);
 const FAL_CURATED_MODELS = officialCuratedModels(FAL_OFFICIAL_MODELS);
@@ -320,6 +377,10 @@ const CURATED_VENDOR_CONTRACTS: readonly { vendorKey: string; models: CuratedMod
   { vendorKey: KIE_VENDOR_SEED.key, models: KIE_CURATED_MODELS, mappings: KIE_CURATED_MAPPINGS },
   { vendorKey: APIMART_VENDOR_SEED.key, models: APIMART_CURATED_MODELS, mappings: APIMART_CURATED_MAPPINGS },
   { vendorKey: AGNES_VENDOR_SEED.key, models: AGNES_CURATED_MODELS, mappings: AGNES_CURATED_MAPPINGS },
+  { vendorKey: PIXSTAG_VENDOR_SEED.key, models: PIXSTAG_CURATED_MODELS, mappings: PIXSTAG_CURATED_MAPPINGS },
+  { vendorKey: CODEX_VENDOR_SEED.key, models: CODEX_CURATED_MODELS, mappings: [] },
+  { vendorKey: JIMENG_WEB_VENDOR_SEED.key, models: JIMENG_WEB_CURATED_MODELS, mappings: [] },
+  { vendorKey: PAVO_WEB_VENDOR_SEED.key, models: PAVO_WEB_CURATED_MODELS, mappings: [] },
   { vendorKey: MODELSCOPE_VENDOR_SEED.key, models: MODELSCOPE_CURATED_MODELS, mappings: MODELSCOPE_CURATED_MAPPINGS },
   { vendorKey: VOLCENGINE_VENDOR_SEED.key, models: VOLCENGINE_CURATED_MODELS, mappings: VOLCENGINE_CURATED_MAPPINGS },
   { vendorKey: VOLCENGINE_SPEECH_VENDOR_SEED.key, models: VOLCENGINE_SPEECH_CURATED_MODELS, mappings: VOLCENGINE_SPEECH_CURATED_MAPPINGS },
@@ -335,6 +396,9 @@ const CURATED_VENDOR_CONTRACTS: readonly { vendorKey: string; models: CuratedMod
   { vendorKey: MESHY_VENDOR_SEED.key, models: MESHY_CURATED_MODELS, mappings: MESHY_CURATED_MAPPINGS },
   { vendorKey: FAL_VENDOR_SEED.key, models: FAL_CURATED_MODELS, mappings: FAL_CURATED_MAPPINGS },
   { vendorKey: RUNWAY_VENDOR_SEED.key, models: RUNWAY_CURATED_MODELS, mappings: RUNWAY_CURATED_MAPPINGS },
+  // 本地转写：transcribe taskKind 的第三个 provider（前两个是 APIMart Whisper / ElevenLabs Scribe）。
+  { vendorKey: LOCAL_SPEECH_VENDOR_SEED.key, models: LOCAL_SPEECH_CURATED_MODELS, mappings: LOCAL_SPEECH_CURATED_MAPPINGS },
+  { vendorKey: HIGGSFIELD_VENDOR_SEED.key, models: HIGGSFIELD_CURATED_MODELS, mappings: HIGGSFIELD_CURATED_MAPPINGS },
 ];
 
 /**
@@ -369,6 +433,23 @@ const RETIRED_APIMART_IMAGE_MAPPING_IDS: readonly string[] = ["seed-apimart-imag
 // `deepseek-v3.1-250821` 早期误种；`deepseek-v3.2-think` 2026-09-06 实测退役（仍列在目录里但调用 400 ——
 // 教训同 imagen-4.0-apimart：目录列表不是可用性证据）。证据与回归见 apimartTextMigration.test.ts。
 const RETIRED_APIMART_TEXT_MODEL_KEYS: readonly string[] = ["deepseek-v3.1-250821", "deepseek-v3.2-think"];
+/**
+ * Sora 2 退役（2026-09-28 用户拍板，随 0.23.0 发出）：OpenAI 官方文档写明「The Sora 2 models and Videos API were
+ * shut down on September 24, 2026」，APIMart 文档里也已经没有 Sora 2——两家的 Sora 2 都只剩必死的请求。
+ * 两条目录都撤：APIMart `sora-2`（标准 / Pro 两个变体是同一行）与 RunningHub `rhart-video-s-official`。
+ * 旧项目里用过它的节点照样能打开：记录不在了，生成时 findExecutableModel 报「Model is retired」→
+ * 节点显示「这个模型已经下线了」+「换个模型」（classifyError 的 model-retired 那一档）。
+ *
+ * ⚠️ 与 APIMART_VIDEO_MODELS / RUNNINGHUB_VIDEO_CURATED_MODELS 互斥：curated 里必须**同时**删掉，否则
+ * reconcileModels 每次启动又插回来、和这里的 prune 来回抖。
+ */
+const RETIRED_APIMART_SORA_MODEL_KEYS: readonly string[] = ["sora-2"];
+const RETIRED_APIMART_SORA_MAPPING_IDS: readonly string[] = [
+  "seed-apimart-sora-2-text_to_video",
+  "seed-apimart-sora-2-image_to_video",
+];
+const RETIRED_RUNNINGHUB_VIDEO_MODEL_KEYS: readonly string[] = ["rhart-video-s-official"];
+const RETIRED_RUNNINGHUB_VIDEO_MAPPING_IDS: readonly string[] = ["seed-rh-sora2-t2v", "seed-rh-sora2-i2v"];
 
 const RETIRED_APIMART_VIDEO_MAPPING_IDS: readonly string[] = [
   "seed-apimart-seedance-2-apimart-fast-text_to_video",
@@ -420,11 +501,49 @@ function seedVendor(vendors: Vendor[], seed: VendorSeed, now: string): boolean {
   vendors.push({
     key: seed.key, name: seed.name, enabled,
     baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: seed.authHeader,
+    ...(seed.authScheme ? { authScheme: seed.authScheme } : {}),
     // 本地素材吞入声明（仅 Replicate 等声明了 assetIngestion 的 vendor 带；resolveAssetIngestionWithFallback 据此把本地图传文件 API）。
     ...(seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
     createdAt: now, updatedAt: now,
   });
   return true;
+}
+
+/** 3456 曾由 Fimer 与 Nomi 共用；只迁移这两个历史默认值，保留用户显式配置的其他地址。 */
+function reconcileJimengWebVendorUrl(vendors: Vendor[], now: string): boolean {
+  const index = vendors.findIndex((vendor) => vendor.key === JIMENG_WEB_VENDOR_SEED.key);
+  if (index < 0) return false;
+  const current = String(vendors[index].baseUrlHint || "").trim().replace(/\/+$/, "");
+  if (!JIMENG_WEB_LEGACY_BASE_URLS.some((legacyUrl) => legacyUrl === current)) return false;
+  vendors[index] = {
+    ...vendors[index],
+    baseUrlHint: JIMENG_WEB_VENDOR_SEED.baseUrl,
+    updatedAt: now,
+  };
+  return true;
+}
+
+/** Collapse only the two upstream Flash seed IDs into the pre-existing custom IDs. */
+function reconcileAgnesFlashMappingIds(mappings: Mapping[], now: string): boolean {
+  let changed = false;
+  for (const taskKind of ["text_to_video", "image_to_video"] as const) {
+    const legacyId = `seed-agnes-video-2-5-flash-${taskKind}`;
+    const upstreamId = `seed-agnes-video-2.5-flash-${taskKind}`;
+    const owned = (mapping: Mapping) => mapping.vendorKey === AGNES_VENDOR_SEED.key
+      && mapping.modelKey === "agnes-video-2.5-flash" && mapping.taskKind === taskKind;
+    const upstreamIndex = mappings.findIndex((mapping) => mapping.id === upstreamId && owned(mapping));
+    if (upstreamIndex < 0) continue;
+    const upstream = mappings[upstreamIndex];
+    const legacyIndex = mappings.findIndex((mapping) => mapping.id === legacyId && owned(mapping));
+    if (legacyIndex < 0) mappings[upstreamIndex] = { ...upstream, id: legacyId, updatedAt: now };
+    else {
+      const legacy = mappings[legacyIndex];
+      mappings[legacyIndex] = { ...legacy, enabled: legacy.enabled && upstream.enabled, updatedAt: now };
+      mappings.splice(upstreamIndex, 1);
+    }
+    changed = true;
+  }
+  return changed;
 }
 
 /**
@@ -535,6 +654,9 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
     if (seedVendor(vendors, seed, now)) changed = true;
   }
 
+  if (reconcileJimengWebVendorUrl(vendors, now)) changed = true;
+  if (reconcileAgnesFlashMappingIds(mappings, now)) changed = true;
+
   // 退役 curated 记录清理（变体合并迁移：删 Seedance 旧变体模型 + mapping 孤儿，picker 收成 1 项）。
   if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_VIDEO_MODEL_KEYS)) changed = true;
   if (pruneRetiredMappings(mappings, RETIRED_APIMART_VIDEO_MAPPING_IDS)) changed = true;
@@ -543,14 +665,22 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_IMAGE_MODEL_KEYS)) changed = true;
   if (pruneRetiredMappings(mappings, RETIRED_APIMART_IMAGE_MAPPING_IDS)) changed = true;
   // Explicit one-time migration: keep user configuration, including manual re-enabling afterwards.
+  // 2026-09-21：这里原来连 `enabled: false` 一起写——和上面那行「种子不碰 enabled（那是用户数据）」
+  // 自相矛盾，也和后台对账是同一个毛病：把「供应商不再列出」当成「替用户停用」。现在只落旁注，
+  // 停不停用由用户在模型设置里自己决定（`unlisted` 在界面上如实显示）。
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
     if (model.vendorKey === APIMART_VENDOR_SEED.key && RETIRED_APIMART_TEXT_MODEL_KEYS.includes(model.modelKey) && model.unlisted === undefined) {
-      models[index] = { ...model, enabled: false, unlisted: true, meta: { ...(model.meta as Record<string, unknown> || {}), catalogLifecycle: "legacy" }, updatedAt: now };
+      models[index] = { ...model, unlisted: true, meta: { ...(model.meta as Record<string, unknown> || {}), catalogLifecycle: "legacy" }, updatedAt: now };
       changed = true;
     }
   }
   if (pruneRetiredModels(models, KIE_VENDOR_SEED.key, RETIRED_KIE_VIDEO_MODEL_KEYS)) changed = true;
+  // Sora 2 退役（上游 2026-09-24 关停）：两家的行与 mapping 都摘，对老装机同样生效。
+  if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_SORA_MODEL_KEYS)) changed = true;
+  if (pruneRetiredMappings(mappings, RETIRED_APIMART_SORA_MAPPING_IDS)) changed = true;
+  if (pruneRetiredModels(models, RUNNINGHUB_VENDOR_SEED.key, RETIRED_RUNNINGHUB_VIDEO_MODEL_KEYS)) changed = true;
+  if (pruneRetiredMappings(mappings, RETIRED_RUNNINGHUB_VIDEO_MAPPING_IDS)) changed = true;
 
   // 模型 insert + 对账（两家各跑同一套逻辑）。
   for (const contract of CURATED_VENDOR_CONTRACTS) {
@@ -580,6 +710,17 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
 
   if (!changed) return { state, changed: false };
   return { state: { ...state, vendors, models, mappings }, changed: true };
+}
+
+/**
+ * 这家**内置目录里**有哪些模型（curated 登记表里的 modelKey；不在表里的家返回空集）。
+ * 「用户自己加的模型」与「代码拥有的模型」只靠这张表分得开——`meta` 上的任何字段渲染层都写得动，
+ * 拿来判身份就是让用户自己给自己的行盖章。`certificationOwnership` 靠它判「标记落在谁身上」。
+ */
+export function builtinCatalogModelKeys(vendorKey: string): ReadonlySet<string> {
+  return new Set(CURATED_VENDOR_CONTRACTS
+    .filter((contract) => contract.vendorKey === vendorKey)
+    .flatMap((contract) => contract.models.map((model) => model.modelKey)));
 }
 
 /**

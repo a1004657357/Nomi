@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { setSubmitOutboundDepsForTests } from "./vendor/vendorOutboundGuard";
 
 vi.mock("./catalog/profileHttpRequest", async (importOriginal) => ({
   ...await importOriginal<typeof import("./catalog/profileHttpRequest")>(),
@@ -34,7 +35,15 @@ const ttsModel = { modelKey: "gpt-4o-mini-tts", vendorKey: "apimart", labelZh: "
 const whisperModel = { modelKey: "whisper-1", vendorKey: "apimart", labelZh: "Whisper", kind: "audio", enabled: true, createdAt: "", updatedAt: "" } as Model;
 
 describe("runAudioTask（音频同步执行路径）", () => {
+  beforeEach(() => {
+    setSubmitOutboundDepsForTests({
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      readEnvironment: async () => ({ syntheticResolver: false, syntheticSample: "" }),
+      isApplicationProxyActive: () => false,
+    });
+  });
   afterEach(() => {
+    setSubmitOutboundDepsForTests(null);
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });

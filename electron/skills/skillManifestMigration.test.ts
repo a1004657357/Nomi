@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { migrateLegacySkillManifest, rewriteSkillMarkdown } from "./skillManifestMigration";
-import { discoverSkillRecordsFromRoots } from "./skillStore";
+import { parseSkillFrontmatter } from "./skillFrontmatter";
+// 迁移跑在 pi 读盘**之前**（`laneSkillCatalog.mts` 的 migrateLegacyManifests），所以经目录层验它。
+import { discoverSkillRecords } from "../agentLane/laneSkillCatalog.mjs";
 
 // 全程只在临时目录里跑：迁移会重写 SKILL.md，绝不允许碰用户真实技能库。
 const tmpDirs: string[] = [];
@@ -52,13 +54,27 @@ describe("rewriteSkillMarkdown", () => {
     expect(rewritten).not.toContain("legacy.skill");
   });
 
-  it("moves inputs and examples into the body instead of carrying them as dead metadata", () => {
+  it("keeps inputs and examples readable in the body", () => {
     const rewritten = rewriteSkillMarkdown(LEGACY_MARKDOWN, "legacy-skill", JSON.parse(LEGACY_MANIFEST));
     expect(rewritten).toContain("## 输入");
     expect(rewritten).toContain("**brief**（必填）：一段话");
     expect(rewritten).toContain("## 示例");
     expect(rewritten).toContain("**示例一**：怎么用");
     expect(rewritten).toContain("方法论。");
+  });
+
+  it("preserves structured canvas inputs, recipe bindings and existing frontmatter", () => {
+    const markdown = '---\nname: legacy-skill\ndescription: d\nlicense: AGPL-3.0-only\nmetadata:\n  source: local\n  nomi:\n    selectable-in-workbench: true\n---\n\nBody\n';
+    const canvas = { recipeIds: ["image.multiview.grid9"], defaultRecipeId: "image.multiview.grid9" };
+    const rewritten = rewriteSkillMarkdown(markdown, "legacy-skill", { ...JSON.parse(LEGACY_MANIFEST), canvas });
+    const front = parseSkillFrontmatter(rewritten);
+    const metadata = front.values.metadata as { source: string; nomi: Record<string, unknown> };
+    expect(front.values.license).toBe("AGPL-3.0-only");
+    expect(metadata.source).toBe("local");
+    expect(metadata.nomi.canvas).toEqual(canvas);
+    expect(metadata.nomi.inputs).toEqual([{ name: "brief", description: "一段话", required: true }]);
+    expect(metadata.nomi["selectable-in-workbench"]).toBe(true);
+    expect(metadata.nomi.permissions).toBeUndefined();
   });
 
   it("drops permissions, which never granted anything", () => {
@@ -91,11 +107,11 @@ describe("migrateLegacySkillManifest", () => {
     expect(fs.readFileSync(path.join(dir, "SKILL.md"), "utf8")).toBe(migrated);
   });
 
-  it("carries every field that still has a consumer through the discovery path", () => {
+  it("carries every field that still has a consumer through the discovery path", async () => {
     const root = mkSkill({ "SKILL.md": LEGACY_MARKDOWN, "skill.json": LEGACY_MANIFEST });
-    const { records, diagnostics } = discoverSkillRecordsFromRoots([{ path: root, origin: "user" }]);
+    const { records, diagnostics } = await discoverSkillRecords([{ path: root, origin: "user" }]);
 
-    expect(diagnostics.map((d) => d.type)).toEqual(["warning"]);
+    expect(diagnostics.map((d) => [d.type, d.code])).toEqual([["warning", "legacy_manifest"]]);
     expect(records).toHaveLength(1);
     const record = records[0];
     expect(record.name).toBe("legacy-skill");
@@ -113,15 +129,15 @@ describe("migrateLegacySkillManifest", () => {
     expect(record.audience).toBe("internal");
   });
 
-  it("never touches built-in roots", () => {
+  it("never touches built-in roots", async () => {
     const root = mkSkill({ "SKILL.md": LEGACY_MARKDOWN, "skill.json": LEGACY_MANIFEST });
-    discoverSkillRecordsFromRoots([{ path: root, origin: "builtin" }]);
+    await discoverSkillRecords([{ path: root, origin: "builtin" }]);
     expect(fs.existsSync(path.join(root, "legacy-skill", "skill.json"))).toBe(true);
   });
 
-  it("loads the skill anyway when the old manifest is unreadable, and says so", () => {
+  it("loads the skill anyway when the old manifest is unreadable, and says so", async () => {
     const root = mkSkill({ "SKILL.md": LEGACY_MARKDOWN, "skill.json": "{ not json" });
-    const { records, diagnostics } = discoverSkillRecordsFromRoots([{ path: root, origin: "user" }]);
+    const { records, diagnostics } = await discoverSkillRecords([{ path: root, origin: "user" }]);
     expect(diagnostics.some((d) => d.type === "error" && d.message.includes("migration failed"))).toBe(true);
     expect(records).toHaveLength(1);
     expect(records[0].description).toBe("frontmatter 那份描述");

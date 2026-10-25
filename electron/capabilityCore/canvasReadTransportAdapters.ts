@@ -1,3 +1,5 @@
+import { safeTransportFailure } from "./transportFailure";
+import { CAPABILITY_TRANSPORT_PUBLIC_ERROR_CODES } from "../shared/surfacePortBinding";
 import { CANVAS_READ_CAPABILITY, type CanvasReadResult } from "../shared/agentCapabilities/canvasRead";
 import type { IpcMainInvokeEvent } from "electron";
 import type { RuntimeToolCall, RuntimeToolDecision } from "../shared/agentCapabilities/transportContracts";
@@ -5,7 +7,7 @@ import type { CapabilityExecutorRegistry } from "./capabilityExecutorRegistry";
 import {
   SurfacePortError,
   type CanvasReadSurfaceRegistry,
-  type CapturedCanvasReadPort,
+  type ProjectSurfaceSession,
 } from "./canvasReadSurfaceRegistry";
 import type {
   CapturedCanvasReadSnapshotPort,
@@ -29,29 +31,12 @@ export function isCanvasReadTransportMethod(method: string): boolean {
   return true;
 }
 
-const PUBLIC_FAILURE_CODES = new Set([
-  "capability_invocation_unverified",
-  "capability_authority_invalid",
-  "capability_input_invalid",
-  "capability_policy_stale",
-  "capability_output_invalid",
-  "capability_timeout",
-  "capability_cancelled",
-  "capability_execution_failed",
-  "project_identity_unavailable",
-  "project_binding_stale",
-  "surface_port_suspended",
-  "surface_port_unavailable",
-  "surface_port_stale",
-  "surface_owner_mismatch",
-]);
+// C4：放行清单从 owner 派生。这一份以前少了 `capability_receipt_unresolved` 与
+// `capability_target_stale`——两者都会被静默换成 `capability_execution_failed`。
+const PUBLIC_FAILURE_CODES = CAPABILITY_TRANSPORT_PUBLIC_ERROR_CODES;
 
 function safeFailure(error: unknown): Extract<RuntimeToolDecision, { ok: false }> {
-  const candidate =
-    error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-  const code =
-    typeof candidate === "string" && PUBLIC_FAILURE_CODES.has(candidate) ? candidate : "capability_execution_failed";
-  return { ok: false, code, message: code };
+  return safeTransportFailure(error, { allowedCodes: PUBLIC_FAILURE_CODES, fallbackCode: "capability_execution_failed" });
 }
 
 export function createMcpCanvasReadTransportAdapter(
@@ -124,7 +109,7 @@ export type PiCanvasReadIpcCapture = Readonly<{
 function createUnavailablePiCanvasReadTransportAdapter(): PiCanvasReadTransportAdapter {
   return Object.freeze({
     async tryExecute(call) {
-      if (call.toolName !== CANVAS_READ_CAPABILITY.aliases.pi && call.toolName !== "nomi_canvas_read") return null;
+      if (call.toolName !== CANVAS_READ_CAPABILITY.aliases.pi) return null;
       return { ok: false, code: "surface_port_unavailable", message: "surface_port_unavailable" };
     },
     dispose() {},
@@ -159,10 +144,10 @@ export function createPiCanvasReadIpcCapture(
         });
       }
       if (admission.surfaceBinding === undefined) return createUnavailablePiCanvasReadTransportAdapter();
-      const capturedPort = input.surfaceCapture.captureCanvasReadPort(event, admission.surfaceBinding);
+      const session = input.surfaceCapture.openBoundProjectSession(event, admission.surfaceBinding);
       return createPiCanvasReadTransportAdapter({
         registry: input.registry,
-        capturedPort,
+        session,
         requestId,
         executor: input.executor,
       });
@@ -173,19 +158,19 @@ export function createPiCanvasReadIpcCapture(
 export function createPiCanvasReadTransportAdapter(
   input: Readonly<{
     registry: CanvasReadSurfaceRegistry;
-    capturedPort: CapturedCanvasReadPort;
+    session: ProjectSurfaceSession;
     requestId: string;
     executor: Pick<CapabilityExecutorRegistry, "execute">;
   }>,
 ): PiCanvasReadTransportAdapter {
   const factory = createRendererCanvasReadVerifiedInvocationFactory({
     registry: input.registry,
-    capturedPort: input.capturedPort,
+    session: input.session,
     requestId: input.requestId,
   });
   return Object.freeze({
     async tryExecute(call, signal) {
-      if (call.toolName !== CANVAS_READ_CAPABILITY.aliases.pi && call.toolName !== "nomi_canvas_read") return null;
+      if (call.toolName !== CANVAS_READ_CAPABILITY.aliases.pi) return null;
       try {
         const invocation = await factory.mint({ toolCallId: call.toolCallId, input: call.args });
         const result = await input.executor.execute(invocation, { signal });
@@ -215,7 +200,7 @@ export function createCapturedPiCanvasReadTransportAdapter(
   let disposed = false;
   return Object.freeze({
     async tryExecute(call, signal) {
-      if (call.toolName !== CANVAS_READ_CAPABILITY.aliases.pi && call.toolName !== "nomi_canvas_read") return null;
+      if (call.toolName !== CANVAS_READ_CAPABILITY.aliases.pi) return null;
       try {
         const invocation = await factory.mint({ toolCallId: call.toolCallId, input: call.args });
         const result = await input.executor.execute(invocation, { signal });

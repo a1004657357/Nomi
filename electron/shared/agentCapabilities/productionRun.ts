@@ -12,9 +12,10 @@ const productionOutputSchema = z.unknown();
 export const PRODUCTION_RUN_READ_CAPABILITY = {
   id: "production.run.read",
   version: 1,
-  aliases: { pi: "get_production_run" },
+  // Run 家族不上模型面（设计正本 §5.3）：这些名字只是宿主传输的方法词表。
+  aliases: { method: "get_production_run" },
   additionalAliases: {
-    pi: Object.freeze(["subscribe_production_run", "read_production_artifact", "read_production_artifact_content"]),
+    method: Object.freeze(["subscribe_production_run", "read_production_artifact", "read_production_artifact_content"]),
   },
   inputSchema: productionInputSchema,
   outputSchema: productionOutputSchema,
@@ -24,14 +25,13 @@ export const PRODUCTION_RUN_READ_CAPABILITY = {
   exposure: "internal_only",
   requiredScope: "production:read",
   targetKind: "production",
-  projections: { pi: { description: "Read the current ProductionRun projection or resumable progress." } },
 } as const satisfies CapabilityContract<unknown, unknown>;
 
 export const PRODUCTION_RUN_WRITE_CAPABILITY = {
   id: "production.run.write",
   version: 1,
-  aliases: { pi: "start_production_run" },
-  additionalAliases: { pi: Object.freeze(["control_production_run", "decide_production_gate"]) },
+  aliases: { method: "start_production_run" },
+  additionalAliases: { method: Object.freeze(["control_production_run", "decide_production_gate"]) },
   inputSchema: productionInputSchema,
   outputSchema: productionOutputSchema,
   effect: "reversible_write",
@@ -40,15 +40,14 @@ export const PRODUCTION_RUN_WRITE_CAPABILITY = {
   exposure: "internal_only",
   requiredScope: "production:write",
   targetKind: "production",
-  projections: { pi: { description: "Create a draft or control a ProductionRun without submitting paid work." } },
 } as const satisfies CapabilityContract<unknown, unknown>;
 
 export const PRODUCTION_ARTIFACT_WRITE_CAPABILITY = {
   id: "production.artifact.write",
   version: 1,
-  aliases: { pi: "revise_production_artifact" },
+  aliases: { method: "revise_production_artifact" },
   additionalAliases: {
-    pi: Object.freeze(["review_production_artifact", "materialize_production_storyboard"]),
+    method: Object.freeze(["review_production_artifact", "materialize_production_storyboard"]),
   },
   inputSchema: productionInputSchema,
   outputSchema: productionOutputSchema,
@@ -58,7 +57,6 @@ export const PRODUCTION_ARTIFACT_WRITE_CAPABILITY = {
   exposure: "internal_only",
   requiredScope: "production:artifact:write",
   targetKind: "production",
-  projections: { pi: { description: "Revise, review, or materialize a versioned production artifact." } },
 } as const satisfies CapabilityContract<unknown, unknown>;
 
 export const ARTIFACT_REVIEW_DECISIONS = ["approved", "changes_requested", "rejected"] as const;

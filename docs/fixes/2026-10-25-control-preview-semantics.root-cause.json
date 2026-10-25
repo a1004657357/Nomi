@@ -1,0 +1,157 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-control-preview-semantics",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "预览展示与操作语义混合",
+  "symptom": "两个预览把装饰品牌/占位图标认成操作；新翻译动作名称过长。",
+  "direct_cause": "富媒体展示整体包在同一个按钮里，且新 UI 名称没有同步原有字数/动作词约束。",
+  "class_root": "展示内容和用户可执行操作没有清晰的语义边界。",
+  "affected_population": [
+    "Director 打开操作",
+    "分镜视频播放/双击放大",
+    "canvasComponents 动作名称"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+    "src/i18n/locales/canvasComponents.ts",
+    "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts"
+  ],
+  "entry_points": [
+    "src/i18n/locales/canvasComponents.ts::zhCanvasComponents",
+    "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx::openDirector",
+    "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx::setPlaying",
+    "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx::openLightbox"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用原组件、原回调和既有文案/图标检查，没有新增依赖或第三方行为假设。",
+  "invariants": [
+    "完整预览、品牌、用户简述和统计保留；打开操作仍是同一点击区域的原生按钮、原回调，并保留键盘焦点。",
+    "视频单击 260ms 区分、键盘播放、双击放大、懒加载和实际比例不变。",
+    "只精简显示动作名称，保留全部插值；不改用户数据、提示词、模型参数、权限或生成重试。",
+    "不增加图标/文案忽略项，不修改视觉截图基线；原图标一致性和动作长度限制不变。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "symbol": "zhCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "openDirector"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "symbol": "setPlaying"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "symbol": "openLightbox"
+    }
+  ],
+  "door_reduction": {
+    "before": 4,
+    "after": 4,
+    "why_not": "保留原打开、播放和放大回调；收敛的是展示/操作的 DOM 语义，不能为了门数而合并不同用户动作。"
+  },
+  "generality_proof": "新增用例在旧组件上 4 失败/1 通过；修复后连同既有 Director 回归 8/8 通过。测试执行实际组件 SSR、核对中英文/原数据，并执行生产视频回调的键盘、单击定时、双击和 pointer 路径。",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "openDirector",
+      "responsibility": "保留原项目上下文检查和打开回调，展示部分不再充当操作标签"
+    },
+    {
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "symbol": "zhCanvasComponents",
+      "responsibility": "动作名称与插值的共享显示资源"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "entry_point": "zhCanvasComponents",
+      "disposition": "enforced",
+      "evidence": "实际 Git 修改前与工作树 AST 数门；真实组件 SSR 与回调执行，原检查不豁免。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "entry_point": "openDirector",
+      "disposition": "enforced",
+      "evidence": "实际 Git 修改前与工作树 AST 数门；真实组件 SSR 与回调执行，原检查不豁免。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "entry_point": "setPlaying",
+      "disposition": "enforced",
+      "evidence": "实际 Git 修改前与工作树 AST 数门；真实组件 SSR 与回调执行，原检查不豁免。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "entry_point": "openLightbox",
+      "disposition": "enforced",
+      "evidence": "实际 Git 修改前与工作树 AST 数门；真实组件 SSR 与回调执行，原检查不豁免。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "媒体预览、节点摘要及复合卡片都可能把展示内容当动作。",
+    "same_class_scan": [
+      "两个实际预览控制和原有文案模块的 AST 前后比较",
+      "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts",
+      "check:icon-semantics",
+      "check:controls"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+    "invariant": "完整展示保留，操作有独立原生按钮/可访问名及一个操作图标。",
+    "failure_mode": "混入装饰图标、改变操作回调/比例/原数据时源驱动和真实组件回归失败。",
+    "exception_policy": "none",
+    "strategy": "修复实际 DOM 与显示资源，不改检查器规则来放行。",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "src/i18n/locales/canvasComponents.ts",
+      "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts",
+    "src/workbench/generationCanvas/nodes/VibingDirectorEditor.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "不删用户功能或生产文件；移除视频占位层被播放圆标覆盖的第二个装饰图标。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "没有新增或升级依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不修改项目、素材、Cookie、账号或 Provider；本轮无真实生成。",
+  "residual_risks": [
+    "最终截图检查、整合类型检查和旧翻译字符化用例的具体期望对齐尚须完成。",
+    "其他恢复词典引出的动作名违规由另一小批修复，不在本合同中假报全局通过。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/controlPreviewSemantics.test.ts"
+  }
+}

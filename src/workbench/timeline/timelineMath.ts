@@ -15,6 +15,14 @@ import { nearestLegalStart } from './timelinePlacement'
 
 const DEFAULT_TIMELINE_SCALE = 1
 const DEFAULT_TIMELINE_FPS = 30
+export const TIMELINE_UNDO_LIMIT = 30
+
+/** Preserve the latest 30 edits without mutating the caller's undo stack. */
+export function pushTimelineUndo(stack: TimelineState[], previous: TimelineState): TimelineState[] {
+  const next = [...stack, previous]
+  if (next.length > TIMELINE_UNDO_LIMIT) next.shift()
+  return next
+}
 export const TIMELINE_FIT_MARGIN = 0.08
 
 /**
@@ -76,6 +84,8 @@ function normalizeClip(input: unknown, fallbackType: TimelineTrackType): Timelin
     ...(raw.framing && typeof raw.framing === 'object'
       ? { framing: resolveClipFraming({ framing: raw.framing as Partial<ClipFraming> }) }
       : {}),
+    ...(normalizeString(raw.shotId) ? { shotId: normalizeString(raw.shotId) } : {}),
+    ...(normalizeString(raw.revisionId) ? { revisionId: normalizeString(raw.revisionId) } : {}),
   }
 }
 

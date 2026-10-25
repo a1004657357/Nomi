@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { CapabilityContract } from "./capabilityContract";
 import { jsonTolerantArray } from "./jsonArgTolerance";
+import { cameraMoveParamsObjectSchema, stagingReferenceParamsSchema, storyboardPlanParamsSchema } from "./canvasModelShapes";
 
 const canonicalIdSchema = z.string().trim().min(1);
 export const CANVAS_WRITE_MAX_PROMPT_CHARS = 262_144;
@@ -30,16 +31,16 @@ export const canvasNodeKindSchema = z.enum([
 
 export const plannedNodeSchema = z
   .object({
-    clientId: z.string().trim().min(1),
-    kind: canvasNodeKindSchema,
-    title: z.string().trim().min(1),
+    clientId: z.string().trim().min(1).describe("Stable client id for this planned canvas node."),
+    kind: canvasNodeKindSchema.describe("Canvas node kind from the canonical node vocabulary."),
+    title: z.string().trim().min(1).describe("Short user-visible node title."),
     prompt: z
       .string()
       .max(CANVAS_WRITE_MAX_PROMPT_CHARS)
       .describe("Generation prompt in the user's language; empty for agent-artifact."),
-    position: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
-    categoryId: z.string().trim().min(1).optional(),
-    modelKey: z.string().trim().min(1).optional(),
+    position: z.object({ x: z.number().finite().describe("Canvas x coordinate."), y: z.number().finite().describe("Canvas y coordinate.") }).describe("Optional canvas position.").optional(),
+    categoryId: z.string().trim().min(1).describe("Optional canvas category id.").optional(),
+    modelKey: z.string().trim().min(1).describe("Catalog model key from list_models.").optional(),
     vendor: z
       .string()
       .trim()
@@ -55,30 +56,31 @@ export const plannedNodeSchema = z
       .min(1)
       .optional()
       .describe("Legacy alias of vendor; if both are present they must identify the same catalog vendor."),
-    modeId: z.string().trim().min(1).optional(),
+    modeId: z.string().trim().min(1).describe("Optional mode id from list_models.").optional(),
     variantId: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe("Optional model-archetype variant (for example standard, fast, or mini), paired with modelKey."),
-    params: z.record(canvasNodeMetaValueSchema).optional(),
-    referenceSheet: z.boolean().optional(),
-    storyboardKeyframe: z.boolean().optional(),
-    staticFeatures: z.string().optional(),
-    dynamicFeatures: z.string().optional(),
+    params: z.record(canvasNodeMetaValueSchema).describe("Scalar generation parameters for the selected model.").optional(),
+    referenceSheet: z.boolean().describe("Whether this node is a reusable reference sheet.").optional(),
+    storyboardKeyframe: z.boolean().describe("Whether this node is a storyboard keyframe.").optional(),
+    staticFeatures: z.string().describe("Stable visual features to preserve.").optional(),
+    dynamicFeatures: z.string().describe("Motion or temporal features for the shot.").optional(),
     // 值有类型，键名开放。`z.record(z.unknown())` 发布出去是 `{"additionalProperties":{}}`
     // ——「随便你」，而执行侧只认标量：模型据此塞进来的嵌套对象会一路走到落盘才炸。
-    metadata: z.record(canvasNodeMetaValueSchema).optional(),
+    metadata: z.record(canvasNodeMetaValueSchema).describe("Additional scalar node metadata.").optional(),
     // agent-artifact（AI 手艺产物）专用：Agent 直接把文件内容交给画布，不调模型生成。
     // 渲染层负责把 content 落盘为项目资产并回填 meta.artifact.url。仅 kind=agent-artifact 可用
     //（superRefine 强制）；fileType 限定文本类（glb 二进制不走文本通道）。
     artifact: z
       .object({
-        fileType: z.enum(["svg", "html", "markdown", "table", "text"]),
-        content: z.string().max(CANVAS_WRITE_MAX_PROMPT_CHARS),
+        fileType: z.enum(["svg", "html", "markdown", "table", "text"]).describe("Text asset format."),
+        content: z.string().max(CANVAS_WRITE_MAX_PROMPT_CHARS).describe("Exact hand-authored file content."),
       })
       .strict()
+      .describe("Hand-authored file payload for an agent-artifact node.")
       .optional(),
   })
   .strict()
@@ -108,8 +110,8 @@ export const plannedNodeSchema = z
 
 export const plannedEdgeSchema = z
   .object({
-    sourceClientId: z.string().trim().min(1),
-    targetClientId: z.string().trim().min(1),
+    sourceClientId: z.string().trim().min(1).describe("Source node client id."),
+    targetClientId: z.string().trim().min(1).describe("Target node client id."),
     mode: z
       .enum(["reference", "first_frame", "last_frame", "style_ref", "character_ref", "composition_ref"])
       .optional()
@@ -173,8 +175,13 @@ export const storyboardPlanActionInputSchema = z
   .object({
     operation: z.literal("propose_storyboard_plan"),
     title: z.string().trim().min(1),
-    anchors: jsonTolerantArray(z.array(z.record(z.unknown())).max(24)),
-    shots: jsonTolerantArray(z.array(z.record(z.unknown())).min(1).max(24)),
+    // 整片默认画幅（行级用 shots[].params.aspect_ratio 覆盖）。这个 envelope 是 `.strict()` 的，
+    // 少这一行 = 规划师在顶层写的整片画幅在主进程边界就被拒收。刻意不带 `.describe()`：
+    // 它会随共享契约广播到对外 MCP 的 tools/list，而 check:mcp-payload 是零余量的 shrink-only
+    // 棘轮（同 select.kind 一栏的理由）。散文写在 lane 的工具指引里，对 MCP 载荷是 0 字节。
+    aspectRatio: z.string().trim().min(1).optional(),
+    anchors: storyboardPlanParamsSchema.shape.anchors,
+    shots: storyboardPlanParamsSchema.shape.shots,
   })
   .strict();
 
@@ -200,8 +207,8 @@ const storyboardPatchShotsInputSchema = z
         // （实测 28047 / max 28047，零余量）。散文写在 lane 的工具 description 与示例里
         // ——那两处只进内部模型面，对 MCP 载荷是 0 字节。这不是省略，是把话说在
         // 不会顶穿别人预算的那一层。
-        kind: z.enum(["all", "indexes"]),
-        indexes: jsonTolerantArray(z.array(z.number().int().min(1).max(24)).min(1).max(24)).optional(),
+        kind: z.enum(["all", "indexes"]).describe("Select all shots or explicit one-based indexes."),
+        indexes: jsonTolerantArray(z.array(z.number().int().min(1).max(24)).min(1).max(24)).describe("One-based shot indexes when kind is indexes.").optional(),
       })
       .strict()
       .superRefine((value, context) => {
@@ -222,13 +229,25 @@ const storyboardPatchShotsInputSchema = z
       }),
     patch: z
       .object({
-        prompt: nonBlankPromptSchema.optional(),
-        promptAppend: nonBlankPromptSchema.optional(),
-        shotKind: z.enum(["image", "video"]).optional(),
-        durationSec: z.number().int().min(1).max(60).optional(),
-        aspectRatio: z.string().trim().min(1).optional(),
-        modelKey: z.string().trim().min(1).optional(),
-        modelVendor: z.string().trim().min(1).optional(),
+        prompt: nonBlankPromptSchema.describe("Replace the selected shot prompt.").optional(),
+        promptAppend: nonBlankPromptSchema.describe("Append text to the selected shot prompt.").optional(),
+        imagePrompt: nonBlankPromptSchema.describe("Static image prompt.").optional(),
+        videoPrompt: nonBlankPromptSchema.describe("Motion and action progression prompt.").optional(),
+        scene: z.string().max(8000).describe("Scene and location.").optional(),
+        shotSize: z.string().max(2000).describe("Shot size.").optional(),
+        cameraAngle: z.string().max(2000).describe("Camera angle.").optional(),
+        cameraMove: z.string().max(2000).describe("Camera movement.").optional(),
+        characters: z.string().max(8000).describe("Characters on screen.").optional(),
+        performance: z.string().max(8000).describe("Acting and action chain.").optional(),
+        dialogue: z.string().max(8000).describe("Spoken dialogue.").optional(),
+        props: z.string().max(8000).describe("Visible props.").optional(),
+        sound: z.string().max(8000).describe("Sound and music.").optional(),
+        notes: z.string().max(8000).describe("Continuity and production notes.").optional(),
+        shotKind: z.enum(["image", "video"]).describe("Selected shot media kind.").optional(),
+        durationSec: z.number().int().min(1).max(60).describe("Selected shot duration in seconds.").optional(),
+        aspectRatio: z.string().trim().min(1).describe("Selected shot aspect ratio.").optional(),
+        modelKey: z.string().trim().min(1).describe("Selected shot model key.").optional(),
+        modelVendor: z.string().trim().min(1).describe("Selected shot model vendor.").optional(),
       })
       .strict()
       .refine((patch) => Object.keys(patch).length > 0, {
@@ -253,29 +272,29 @@ const arrangeStoryboardActionInputSchema = z
 export const stagingReferenceActionInputSchema = z
   .object({
     operation: z.literal("create_staging_reference"),
-    shotClientId: canonicalIdSchema.optional(),
-    characters: jsonTolerantArray(z.array(z.record(z.unknown())).max(6)).optional(),
-    layout: z.string().trim().min(1).optional(),
-    camera: z.record(z.unknown()).optional(),
-    environment: z.string().trim().min(1).optional(),
-    crowd: z.record(z.unknown()).optional(),
-    sceneTemplate: z.string().trim().min(1).optional(),
-    props: jsonTolerantArray(z.array(z.record(z.unknown())).max(12)).optional(),
-    customBlocking: z.string().trim().min(1).optional(),
+    shotClientId: canonicalIdSchema.describe("Target shot, keyframe, or video node client id.").optional(),
+    characters: stagingReferenceParamsSchema.shape.characters.describe("Characters and poses in the staging reference."),
+    layout: z.string().trim().min(1).describe("Character layout vocabulary.").optional(),
+    camera: stagingReferenceParamsSchema.shape.camera.describe("Reference camera framing."),
+    environment: z.string().trim().min(1).describe("Lighting environment.").optional(),
+    crowd: stagingReferenceParamsSchema.shape.crowd.describe("Optional background crowd grid."),
+    sceneTemplate: z.string().trim().min(1).describe("Gray-model scene template.").optional(),
+    props: stagingReferenceParamsSchema.shape.props.describe("Gray-model props in the reference.").optional(),
+    customBlocking: z.string().trim().min(1).describe("Free-form staging composition instruction.").optional(),
   })
   .strict();
 
 export const cameraMoveActionInputSchema = z
   .object({
     operation: z.literal("create_camera_move"),
-    shotClientId: canonicalIdSchema,
-    move: z.string().trim().min(1).optional(),
-    customMove: z.string().trim().min(1).optional(),
-    speed: z.string().trim().min(1).optional(),
-    shot: z.string().trim().min(1).optional(),
-    subjectPose: z.string().trim().min(1).optional(),
-    sceneTemplate: z.string().trim().min(1).optional(),
-    props: jsonTolerantArray(z.array(z.record(z.unknown())).max(12)).optional(),
+    shotClientId: canonicalIdSchema.describe("Target shot, keyframe, or video node client id.").optional(),
+    move: z.string().trim().min(1).describe("Canonical camera move vocabulary.").optional(),
+    customMove: z.string().trim().min(1).describe("Free-form camera movement instruction.").optional(),
+    speed: z.string().trim().min(1).describe("Camera move speed.").optional(),
+    shot: z.string().trim().min(1).describe("Camera framing.").optional(),
+    subjectPose: z.string().trim().min(1).describe("Subject pose vocabulary.").optional(),
+    sceneTemplate: z.string().trim().min(1).describe("Gray-model scene template.").optional(),
+    props: cameraMoveParamsObjectSchema.shape.props.describe("Gray-model props in the camera move reference.").optional(),
   })
   .strict();
 
@@ -402,6 +421,7 @@ const stagingReferenceActionPiInputSchema = stagingReferenceActionInputSchema
   });
 const cameraMoveActionPiInputSchema = cameraMoveActionInputSchema
   .omit({ operation: true })
+  .extend({ shotClientId: canonicalIdSchema.describe("Target shot, keyframe, or video node client id.") })
   .superRefine((value, context) => {
     if (!value.move && !value.customMove) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "move or customMove is required" });
@@ -419,19 +439,6 @@ export type CanvasWriteOperation = CanvasWriteInput["operation"];
 export const CANVAS_WRITE_OPERATIONS: readonly CanvasWriteOperation[] = Object.freeze(
   canvasWriteSemanticInputUnion.options.map((option) => option.shape.operation.value as CanvasWriteOperation),
 );
-
-/**
- * Storyboard writes are semantically canvas capabilities but their durable
- * owner is the renderer's creation/storyboard store.  Keep this predicate at
- * the capability boundary so Host proposal registration and turn execution
- * agree on the same canonical operation set.
- */
-export function isRendererOwnedStoryboardProposal(toolName: string, args: unknown): boolean {
-  const operation = canvasWriteOperationForAlias(toolName)
-    ?? (toolName === "nomi_canvas_plan" && args && typeof args === "object" && !Array.isArray(args)
-      ? (args as Record<string, unknown>).operation : undefined);
-  return typeof operation === "string" && Object.prototype.hasOwnProperty.call(CANVAS_WRITE_CAPABILITY.operationPlanReview, operation);
-}
 
 export function canvasWritePiInputSchemaForAlias(alias: string): z.ZodTypeAny | undefined {
   switch (alias) {
@@ -456,28 +463,6 @@ export function canvasWritePiInputSchemaForAlias(alias: string): z.ZodTypeAny | 
   }
 }
 
-export function canvasWritePiDescriptionForAlias(alias: string): string | undefined {
-  switch (alias) {
-    case "set_node_prompt":
-      return "Propose an exact, reversible prompt update to one generation canvas node.";
-    case "create_canvas_nodes":
-      return "Propose a reversible batch of canvas nodes and their reference edges in one call.";
-    case "connect_canvas_edges":
-      return "Propose reversible reference edges between existing canvas nodes.";
-    case "tidy_canvas":
-      return "Propose an undoable layout cleanup for one canvas category.";
-    case "propose_storyboard_plan":
-      return "Save a structured storyboard plan for review in the creation area.";
-    case "arrange_storyboard_to_timeline":
-      return "Arrange the selected storyboard shots into the timeline in story order.";
-    case "create_staging_reference":
-      return "Create a staging reference and attach it to the selected shot.";
-    case "create_camera_move":
-      return "Create a camera-move reference and attach it to the selected video shot.";
-    default:
-      return undefined;
-  }
-}
 
 const reconciliationSchema = z.object({ ok: z.boolean(), deviationCount: z.number().int().nonnegative() }).strict();
 const skippedEdgeSchema = z
@@ -553,7 +538,7 @@ export const canvasWriteResultSchema = z.union([
       proposalId: canonicalIdSchema,
       operation: z.literal("patch_shots"),
       changedShotIndexes: z.array(z.number().int().min(1)).max(24),
-      changedFields: z.array(z.string().trim().min(1)).max(8),
+      changedFields: z.array(z.string().trim().min(1)).max(20),
       result: z.unknown(),
       reconciliation: reconciliationSchema,
     })
@@ -618,13 +603,16 @@ export function canvasWriteOperationForAlias(alias: string): CanvasWriteOperatio
 export const CANVAS_WRITE_CAPABILITY = {
   id: "canvas.write",
   version: 1,
+  // `pi` surface 上只放模型可见的三个动词（`verbs/canvasVerbs.ts`）；operation 值不是别名，
+  // 它们是 schema 里的枚举（`CANVAS_WRITE_OPERATIONS`）。
+  // 模型可见动词：arrange_canvas / make_artifact / stage_shot（都不能造生成类节点——那只归 draft_shots）。
   aliases: {
-    pi: CANVAS_WRITE_ALIASES.setNodePrompt,
+    pi: "arrange_canvas",
     mcp: "nomi_canvas_edit",
     ui: "nomi_canvas_plan",
   },
   additionalAliases: {
-    pi: Object.freeze(Object.values(CANVAS_WRITE_OPERATION_ALIASES)),
+    pi: Object.freeze(["make_artifact", "stage_shot"]),
   },
   inputSchema: canvasWriteSemanticInputSchema,
   outputSchema: canvasWriteResultSchema,
@@ -652,14 +640,6 @@ export const CANVAS_WRITE_CAPABILITY = {
   exposure: "mcp_safe",
   requiredScope: "canvas:write",
   targetKind: "canvas",
-  projections: {
-    pi: {
-      description: "Propose an exact, reversible prompt update to one generation canvas node.",
-    },
-    mcp: {
-      description: "Propose a validated, reversible canvas edit from current intent.",
-    },
-  },
 } as const satisfies CapabilityContract<CanvasWriteInput, CanvasWriteResult>;
 
 /** Node-authoring workflow, published once per active tool instead of in every node field. */

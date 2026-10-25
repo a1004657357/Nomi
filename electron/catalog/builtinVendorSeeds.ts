@@ -10,11 +10,18 @@ import { COMFYUI_VENDOR_SEED } from "./comfyuiLocal";
 import { CODEX_LOCAL_VENDOR_SEED } from "./codexImages";
 import { LOCAL_TEXT_VENDOR_SEED } from "../localRuntime/localTextVendorSeed";
 import { ANTIGRAVITY_VENDOR_SEED } from "./antigravityTexts";
+import { PIXSTAG_VENDOR_SEED } from "./pixstagVendor";
+import { CODEX_VENDOR_SEED } from "./codexImagegen";
+import { JIMENG_WEB_VENDOR_SEED } from "./jimengWeb";
+import { PAVO_WEB_VENDOR_SEED } from "./pavoWeb";
 import { MINIMAX_VENDOR_SEED } from "./minimaxOfficial";
 import { ELEVENLABS_VENDOR_SEED } from "./elevenlabs";
+import { LOCAL_SPEECH_VENDOR_SEED } from "./localSpeech";
 import { MESHY_VENDOR_SEED } from "./meshyOfficial";
+import { HIGGSFIELD_VENDOR_SEED } from "./higgsfieldVendor";
 import { FAL_VENDOR_SEED } from "./falOfficial";
 import { RUNWAY_VENDOR_SEED } from "./runwayOfficial";
+import { codeDeclaredFallbackOrigins } from "../vendor/vendorBaseFallback";
 import type { HttpOperation, Vendor } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -25,14 +32,23 @@ import type { HttpOperation, Vendor } from "./types";
 
 export type CredentialMode = "direct-key" | "certification";
 
+/** 一条代码拥有的探测端点声明（端点 + 成功判据 + 出处）。两种探针共用这个形状。 */
+export type ProbeDeclaration = {
+  request: Pick<HttpOperation, "method" | "path" | "body">;
+  successPath: string;
+  source: { url: string; checkedAt: string };
+};
+
 export type VendorSeed = {
   key: string;
   name: string;
-  baseUrl: string;
+  baseUrl: string | null;
   /** 官方 host 迁移时仅修复仍指向旧内置 host 的存量记录；用户自定义 relay 永不覆盖。 */
   legacyBaseUrls?: readonly string[];
   authType: Vendor["authType"];
   authHeader?: string | null;
+  /** Authorization 方案词（缺省 Bearer）；见 catalog/types.ts 的 Vendor.authScheme。 */
+  authScheme?: Vendor["authScheme"];
   authQueryParam?: string | null;
   providerKind?: Vendor["providerKind"];
   enabled?: boolean;
@@ -44,21 +60,36 @@ export type VendorSeed = {
    * promotion.
    */
   credentialMode?: CredentialMode;
-  /** Paid only by the weekly radar, never by application reconciliation. */
-  livenessProbe?: {
-    request: Pick<HttpOperation, "method" | "path" | "body">;
-    successPath: string;
-    source: { url: string; checkedAt: string };
-  };
+  /**
+   * **每周雷达**的逐模型存活探针：「这个模型这周还活着吗」。
+   *
+   * 它按定义是一次**真实的最小生成**（apimart: `POST /api/v1/chat/completions`，`max_tokens:1`），
+   * 也只该由 `scripts/model-liveness.ts` 那条每周任务付钱 —— 一个模型一次，刻意的、有预算的。
+   *
+   * ⚠️ 它**不是**「这把 key 能不能用」的判据，那是下面的 `credentialProbe`。两个问题不同：
+   * 逐模型存活必须真发一次生成才答得了，凭据有效性不必；合用一个声明位，就等于让后者继承
+   * 前者的价格——2026-09-22 之前正是如此（原委见 `credentialProbePolicy.ts` 文件头）。
+   */
+  livenessProbe?: ProbeDeclaration;
+  /**
+   * 「这把 key 现在能不能用」的代码拥有的探测端点（2026-09-22  新增）。
+   *
+   * `cost` 是这条声明的一部分，由 `credentialProbePolicy.ts` **单点**消费（为什么、以及缺省
+   * 为什么是 `paid`，见那个文件的文件头）：
+   *   · `cost: 'free'`  —— 有出处地证明过零费用（`source` 必须指得到官方文档原文）；
+   *   · `cost: 'paid'`（也是**缺省**）—— 它会花钱，发之前必须先经确认面问一句。
+   */
+  credentialProbe?: ProbeDeclaration & { cost?: "free" | "paid" };
   /**
    * 该家的 key 该拿什么当判据（**种子声明，不是按路由猜**）。
+   *
+   * ⚠️ 种子带 `credentialProbe` 的（apimart / higgsfield）按那条声明走，根本不读本字段。
    *
    * 为什么需要它：`GET /v1/models` 既不充分也不必要，两个方向的反例都在我们自己的证据里——
    * apimart 对合法 key 恒 401（electron/vendor/vendorBaseFallback.ts 实测注释），minimax 回 200
    * 却连最小生成 canary 都跑不通（认证账本 blocker 原文）。详见
    * docs/research/2026-09-10-vendor-key-publish-class/prior-art.md 第 ④ 节。
    *
-   *  · `liveness-probe`：种子带 `livenessProbe`，一次零成本探测即判（apimart）。
    *  · `model-list`    ：上游确有 OpenAI 兼容模型列表端点，且它对合法 key 会放行。
    *                      ⚠️ 现役无人声明这一档。第一个声明它的人请连带补上
    *                      `electron/ai/onboarding/vendorHealth.ts` 的清标记分支：那里探测成功后
@@ -84,14 +115,15 @@ export type VendorSeed = {
   bespokeExecution?: { capability: string; path: string };
 };
 
-/** key 判据的三种形态（详见 `VendorSeed.keyValidation`）。 */
-export type KeyValidationStrategy = "liveness-probe" | "model-list" | "first-use";
+/** key 判据的两种形态（详见 `VendorSeed.keyValidation`）。种子带 `credentialProbe` 时按它走，不经这里。 */
+export type KeyValidationStrategy = "model-list" | "first-use";
 
 /** 顺序 = 原 seedBuiltins 的播种顺序（保持既有装机行为一致）。 */
 export const BUILTIN_VENDOR_SEEDS: readonly VendorSeed[] = [
   KIE_VENDOR_SEED,
   APIMART_VENDOR_SEED,
   AGNES_VENDOR_SEED, // Agnes AI 公开模型目录；以账户实际额度为准
+  PIXSTAG_VENDOR_SEED,
   MODELSCOPE_VENDOR_SEED,
   VOLCENGINE_VENDOR_SEED,
   VOLCENGINE_SPEECH_VENDOR_SEED,
@@ -103,10 +135,15 @@ export const BUILTIN_VENDOR_SEEDS: readonly VendorSeed[] = [
   COMFYUI_VENDOR_SEED, // 本地 ComfyUI（无鉴权本地后端，默认关、用户显式启用）
   LOCAL_TEXT_VENDOR_SEED, // 本地文本模型（Ollama / LM Studio / LocalAI，无鉴权，默认关、用户显式连）
   CODEX_LOCAL_VENDOR_SEED, // Codex 本地生图（实验，默认关）
+  CODEX_VENDOR_SEED,
+  JIMENG_WEB_VENDOR_SEED,
+  PAVO_WEB_VENDOR_SEED,
   ANTIGRAVITY_VENDOR_SEED, // 官方本机 CLI；完整能力验证前默认关闭
   MINIMAX_VENDOR_SEED,
   ELEVENLABS_VENDOR_SEED,
   MESHY_VENDOR_SEED,
+  LOCAL_SPEECH_VENDOR_SEED, // 本地转写（离线 whisper.cpp sidecar；无鉴权、不花钱，首次用时才下引擎与权重）
+  HIGGSFIELD_VENDOR_SEED, // Higgsfield 官方直连（Soul 2 / Soul Cinema / DoP；74 个转售模型不接）
 ];
 
 /** Return the immutable code-owned seed for a vendor key, if one exists. */
@@ -138,15 +175,15 @@ export function isBuiltinDirectKeyVendor(vendorKey: string): boolean {
 }
 
 /**
- * 这家的 key 该怎么验（**唯一分派点**）。内置种子自己说了算；没有内置种子的行（自定义供应商、
- * 用户自建中转、认证晋升出来的候选）返回 undefined，由调用方回落到 OpenAI 兼容的 `/v1/models`
- * —— 那对「用户自己填地址的兼容端点」确实是成立的判据，对内置 curated 家则不是。
+ * 这家的凭据判据是不是**代码拥有**的（= 有内置种子）。
+ *
+ * 2026-09-22（）：原来这里叫 `credentialValidationStrategy`，既回答「怎么验」也被
+ * 当成「有没有内置判据」用。「怎么验、验它花不花钱」已经收进唯一 owner
+ * `credentialProbePolicy.ts`——判据只该在那一处成立，这里如果再派发一次就是第二份判断，
+ * 而两份判断里会漂的那一份正好是**钱**。所以这里只剩下发布侧真正要问的那个是非题。
  */
-export function credentialValidationStrategy(vendorKey: string): KeyValidationStrategy | undefined {
-  const seed = builtinVendorSeed(vendorKey);
-  if (!seed) return undefined;
-  if (seed.livenessProbe) return "liveness-probe";
-  return seed.keyValidation ?? "first-use";
+export function hasBuiltinCredentialJudgement(vendorKey: string): boolean {
+  return Boolean(builtinVendorSeed(vendorKey));
 }
 
 /**
@@ -171,9 +208,15 @@ export function builtinVendorScopeMatches(vendor: Vendor): boolean {
   // a freshly seeded APIMart row remains eligible after Settings persists it.
   const vendorProviderKind = vendor.providerKind ?? "openai-compatible";
   const seedProviderKind = seed.providerKind ?? "openai-compatible";
-  return normalize(vendor.baseUrlHint, true) === normalize(seed.baseUrl, true)
+  // 换到这家代码里登记的官方备用域（APIMart 的国内线路）仍是同一条内置连接：
+  // 名单只有一份，就是凭据守卫认的那张（vendorBaseFallback 的 FAMILIES）。
+  let baseOrigin = "";
+  try { baseOrigin = new URL(String(vendor.baseUrlHint ?? "")).origin; } catch { /* 解析不出来 = 不是官方线路 */ }
+  return (normalize(vendor.baseUrlHint, true) === normalize(seed.baseUrl, true)
+      || codeDeclaredFallbackOrigins(seed.key).includes(baseOrigin))
     && normalize(vendor.authType) === normalize(seed.authType)
     && normalize(vendor.authHeader) === normalize(seed.authHeader)
+    && normalize(vendor.authScheme) === normalize(seed.authScheme)
     && normalize(vendor.authQueryParam) === normalize(seed.authQueryParam)
     && normalize(vendorProviderKind) === normalize(seedProviderKind)
     && JSON.stringify(vendor.assetIngestion ?? null) === JSON.stringify(seed.assetIngestion ?? null);
@@ -193,7 +236,7 @@ export function builtinVendorScopeMatches(vendor: Vendor): boolean {
  */
 const HOST_TO_BUILTIN_VENDOR_KEY: ReadonlyMap<string, string> = new Map(
   BUILTIN_VENDOR_SEEDS.flatMap((seed) => {
-    if (!/^https?:\/\//i.test(seed.baseUrl)) return [];
+    if (!seed.baseUrl || !/^https?:\/\//i.test(seed.baseUrl)) return [];
     let hostname: string;
     try {
       hostname = new URL(seed.baseUrl).hostname.toLowerCase();

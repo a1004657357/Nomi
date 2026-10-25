@@ -1,61 +1,95 @@
-// P4 S5 — 多镜占位节点的三态视觉（排队中 / 生成中 / 已停 / 失败）。
+// P4 S5 — 制作（Agent 付费卡 / 多镜批次）落到画布的节点上，**只属于制作**的小标：等你确认 / 还没生成 / 排队中 / 已停。
+// 每一段都有自己的标记（`data-shot-placeholder-state`）：没点就不叫排队中（付费卡① 第 12 条），在等用户就说在等用户。
 //
-// 真相源 = Run 的 jobs[]（deriveShotPlaceholderState 纯派生），经 ProductionCanvasLandingHost 的 poll 喂进
-// landing store。占位只在「节点属某多镜 Run（meta.productionRunId）且还没回填 result」时渲染——一旦 result 到
-// （attach-shot-result 逐个冒），占位退场、露出真片。禁「永远等待生成」假进度：无对应 job 显「排队中」不显生成中。
+// 「生成中」与「失败」不在这里画（2026-09-25）：那两段写进节点自己的运行记录（主进程画布落地投影 →
+// materialize-shots → 节点 runs[0]），由普通生成那一套 NodeGeneratingOverlay / NodeErrorReport 画——
+// 一个节点「在生成 / 生成完」只有一份真相、一套画法。以前这里自己轮询一份 Run 快照另画「整卡模糊 + N 字标」，
+// 供应商早出片了它还在转（用户原话：「没有复用逻辑，视频早就生产出来了，他这里一直显示生成中」）。
 //
-// 状态色一律根层 token（#128 后）：已停 = --nomi-warning（非 danger，预算/急停是可继续的中止，不是错误）；
-// 失败 = 复用 NodeErrorReport 的 danger 视觉语言（重试钮本切片**只留位不接线**，返工链是 S6）。
-import React from 'react'
+// 排队中 / 已停没有普通生成的对应物，所以留在这里；判定读中立层 `deriveProductionShotState`（与主进程投影
+// 同一个函数，两端不会一个说在生成、一个说已停）。节点已有结果或自己在跑（普通生成 / 制作投影的生成中）时不画。
+//
+// 状态色一律根层 token（#128 后）：已停 = --nomi-warning（非 danger，等你再确认 / 急停是可继续的中止，不是错误）。
+//
+// 已停时说哪句话、给不给「继续」按钮，只看 Run 在停下那一刻记下的原因（stoppedReason，2026-09-29）：以前一律从
+// needs_attention 猜成预算用完，今天没有价格，点进去额度全是 0。2026-10-01 起停下原因里没有「预算」了：
+// 上一版记成预算的旧数据读出来是中性的「已停」（unknown）；批过的镜离用户上一次点头太久、没人续，停在
+// consent_expired，说「这镜还没开拍，需要你再确认一次」，那颗「继续」就是确认（付费卡① 第 13 条）。
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconAlertTriangle, IconClock, IconPlayerPause, IconRefresh } from '@tabler/icons-react'
+import { IconClock, IconPlayerPause } from '@tabler/icons-react'
 
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useProductionCanvasLandingStore } from '../../production/productionCanvasLandingStore'
-import { deriveShotPlaceholderState, shotIdForNode } from '../../production/shotPlaceholderState'
-import { reworkProductionShot, resumeProductionBatch } from '../../production/productionShotActions'
-import { GeneratingOverlay } from './render/CardCommon'
-import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
+import { deriveProductionShotState, productionShotIdForNode, type ProductionShotState } from '../../../../electron/shared/productionShotPhase'
+import { resumeProductionBatch } from '../../production/productionShotActions'
+import { productionRunIdOf } from '../../production/productionShotOwnership'
+import type { TranslationKey } from '../../../i18n/translationKey'
 
-/** 该节点是否属某多镜 Run 的占位（meta.productionRunId）。非占位 → 组件早退，零开销。 */
-function productionRunIdOf(node: GenerationCanvasNode): string | null {
-  const meta = node.meta as Record<string, unknown> | undefined
-  return typeof meta?.productionRunId === 'string' && meta.productionRunId ? meta.productionRunId : null
+type StoppedCopy = {
+  message: TranslationKey
+  /** 这一种停法下「继续」有没有用：没用就不摆按钮（选中节点单独生成 / 去任务面板，文案里说清）。 */
+  action: { label: TranslationKey; kind: 'resume-consent' | 'resume-manual' } | null
 }
+
+/** 停下的原因 → 这一镜上说的话与能做的事。穷尽：新长一个原因而这里没表态，编译就过不去。 */
+function stoppedCopyOf(reason: Extract<ProductionShotState, { phase: 'stopped' }>['stoppedReason']): StoppedCopy {
+  switch (reason) {
+    case 'consent_expired':
+      return { message: 'generationCommon.production.canvasLanding.stoppedConsentExpired', action: { label: 'generationCommon.production.canvasLanding.resume', kind: 'resume-consent' } }
+    case 'user_paused':
+      return { message: 'generationCommon.production.canvasLanding.stoppedManual', action: { label: 'generationCommon.production.canvasLanding.continueRemaining', kind: 'resume-manual' } }
+    case 'failed':
+      return { message: 'generationCommon.production.canvasLanding.stoppedAfterFailure', action: null }
+    case 'restart_recovery':
+      return { message: 'generationCommon.production.canvasLanding.stoppedForRecovery', action: null }
+    case 'user_cancelled':
+      return { message: 'generationCommon.production.canvasLanding.stoppedCancelled', action: null }
+    case 'unknown':
+      return { message: 'generationCommon.production.canvasLanding.stoppedUnknown', action: { label: 'generationCommon.production.canvasLanding.resume', kind: 'resume-manual' } }
+    default:
+      return ((value: never) => value)(reason)
+  }
+}
+
 
 export function ProductionShotPlaceholder({ node, reportFeedback }: { reportFeedback: (message: string) => void; node: GenerationCanvasNode }): JSX.Element | null {
   const { t } = useTranslation()
   const runId = productionRunIdOf(node)
-  // 只在这个 Run 是 store 当前缓存的那个时派生（避免读到别的项目/Run 的态）。
-  const state = useProductionCanvasLandingStore((store) =>
-    runId && store.run?.runId === runId ? deriveShotPlaceholderState(store.run, node.id) : null,
-  )
-  // 返工/续拍要拿到 projectId（Run 归属项目）+ 该节点的 shotId（shots[].nodeId 单一真相）。
-  const projectId = useProductionCanvasLandingStore((store) => (runId && store.run?.runId === runId ? store.projectId : null))
-  const shotId = useProductionCanvasLandingStore((store) => (runId && store.run?.runId === runId ? shotIdForNode(store.run, node.id) : undefined))
-  const stoppedReason = state?.stoppedReason
+  // 只在这个 Run 是 store 缓存里的那一份时派生（避免读到别的项目/Run 的态）。
+  const state = useProductionCanvasLandingStore((store) => {
+    const run = runId ? store.runs[runId] : undefined
+    return run ? deriveProductionShotState(run, productionShotIdForNode(run, node.id)) : null
+  })
+  const projectId = useProductionCanvasLandingStore((store) => (runId && store.runs[runId] ? store.projectId : null))
   const [busy, setBusy] = React.useState(false)
+  // 这一下点击续哪几镜的同意、怎么接着拍，由主进程定——渲染层只说「继续」。
   const runResume = React.useCallback(() => {
     if (!projectId || !runId || busy) return
     setBusy(true)
-    void resumeProductionBatch(projectId, runId, stoppedReason === 'budget' ? 'budget' : 'manual', reportFeedback).finally(() => setBusy(false))
-  }, [busy, projectId, runId, stoppedReason, reportFeedback])
-  const runRework = React.useCallback(() => {
-    if (!projectId || !runId || busy) return
-    setBusy(true)
-    void reworkProductionShot(projectId, runId, shotId, reportFeedback).finally(() => setBusy(false))
-  }, [busy, projectId, runId, shotId, reportFeedback])
+    void resumeProductionBatch(projectId, runId, reportFeedback).finally(() => setBusy(false))
+  }, [busy, projectId, runId, reportFeedback])
 
-  // 非占位节点 / 已回填 result（占位退场）/ 派生为 done → 不渲染任何占位（露出真片）。
-  if (!runId || !state || state.phase === 'done') return null
-  if (node.result?.url) return null
+  if (!runId || !state || node.result?.url) return null
+  // 节点自己在跑（制作投影的「生成中」或用户手动的一次）：那一段由 NodeGeneratingOverlay 画，这里不叠第二层。
+  if (node.status === 'running' || node.status === 'queued') return null
 
-  if (state.phase === 'generating') {
-    // 生成中：复用现成 GeneratingOverlay 视觉语言（云任务默认遮罩），带 data 锚点供走查。
+  if (state.phase === 'awaiting_confirmation' || state.phase === 'not_generated' || state.phase === 'removed') {
+    // 在等用户点头 / 从没被批过 / 用户在卡上去掉了：中性小标，不转圈、不说排队（它们不在任何队列里）。
+    const label = t(state.phase === 'awaiting_confirmation'
+      ? 'generationCommon.production.canvasLanding.awaitingConfirmation'
+      : state.phase === 'removed'
+        ? 'generationCommon.production.canvasLanding.removedNotGenerated'
+        : 'generationCommon.production.canvasLanding.notGenerated')
     return (
-      <div className="absolute inset-0 z-[4]" data-shot-placeholder-state="generating" data-production-shot-node={node.id}>
-        <GeneratingOverlay />
+      <div
+        className="absolute left-2 top-2 z-[4] inline-flex items-center gap-1 rounded-full bg-nomi-paper/85 px-2 py-0.5 text-micro text-nomi-ink-60 shadow-nomi-sm"
+        data-shot-placeholder-state={state.phase}
+        data-production-shot-node={node.id}
+        aria-label={label}
+      >
+        {label}
       </div>
     )
   }
@@ -78,34 +112,30 @@ export function ProductionShotPlaceholder({ node, reportFeedback }: { reportFeed
     )
   }
 
-  if (state.phase === 'stopped') {
-    // 已停（预算触顶 / 用户急停）：warning 底（非 danger），一句人话 + 提额/继续入口占位（S6 接线）。
-    const message = state.stoppedReason === 'budget'
-      ? t('generationCommon.production.canvasLanding.stoppedBudget')
-      : t('generationCommon.production.canvasLanding.stoppedManual')
-    const actionLabel = state.stoppedReason === 'budget'
-      ? t('generationCommon.production.canvasLanding.raiseBudget')
-      : t('generationCommon.production.canvasLanding.continueRemaining')
-    return (
-      <div
-        role="status"
-        data-shot-placeholder-state="stopped"
-        data-production-shot-node={node.id}
-        className={cn(
-          'absolute inset-0 z-[4] flex flex-col items-center justify-center gap-2 rounded-nomi p-4 text-center',
-          'bg-[color-mix(in_oklch,var(--nomi-warning)_6%,var(--nomi-paper))]',
-          'border border-[color-mix(in_oklch,var(--nomi-warning)_28%,transparent)]',
-        )}
-      >
-        <IconPlayerPause size={18} stroke={1.6} className="text-nomi-warning" aria-hidden="true" />
-        <span className="text-caption leading-snug text-nomi-ink-80">{message}</span>
-        {/* P4 S6：提额续拍 / 急停继续接活。data-* 用 active 值供走查；busy 期间禁重复点。 */}
+  if (state.phase !== 'stopped') return null
+  // 已停：warning 底（非 danger），一句人话 + 这种停法下真能用的入口（没有就不摆）。
+  const copy = stoppedCopyOf(state.stoppedReason)
+  return (
+    <div
+      role="status"
+      data-shot-placeholder-state="stopped"
+      data-production-shot-node={node.id}
+      className={cn(
+        'absolute inset-0 z-[4] flex flex-col items-center justify-center gap-2 rounded-nomi p-4 text-center',
+        'bg-[color-mix(in_oklch,var(--nomi-warning)_6%,var(--nomi-paper))]',
+        'border border-[color-mix(in_oklch,var(--nomi-warning)_28%,transparent)]',
+      )}
+    >
+      <IconPlayerPause size={18} stroke={1.6} className="text-nomi-warning" aria-hidden="true" />
+      <span className="text-caption leading-snug text-nomi-ink-80" data-shot-stop-reason={state.stoppedReason}>{t(copy.message)}</span>
+      {/* P4 S6：再确认一次 / 急停后接着拍。data-* 用 active 值供走查；busy 期间禁重复点。 */}
+      {copy.action ? (
         <button
           type="button"
           disabled={busy || !projectId}
           onClick={runResume}
           onPointerDown={(event) => event.stopPropagation()}
-          data-production-shot-action={stoppedReason === 'budget' ? 'resume-budget' : 'resume-manual'}
+          data-production-shot-action={copy.action.kind}
           className={cn(
             'rounded-nomi-sm border px-2.5 py-1 text-caption',
             busy || !projectId
@@ -113,54 +143,9 @@ export function ProductionShotPlaceholder({ node, reportFeedback }: { reportFeed
               : 'border-[color-mix(in_oklch,var(--nomi-warning)_36%,transparent)] bg-nomi-paper text-nomi-ink hover:bg-[color-mix(in_oklch,var(--nomi-warning)_8%,var(--nomi-paper))]',
           )}
         >
-          {actionLabel}
+          {t(copy.action.label)}
         </button>
-      </div>
-    )
-  }
-
-  // failed：复用 NodeErrorReport 的 danger 视觉语言（这里内联一版精简的，重试钮只留位不接线 = S6）。
-  return (
-    <div
-      role="alert"
-      data-shot-placeholder-state="failed"
-      data-production-shot-node={node.id}
-      className={cn(
-        'absolute inset-0 z-[4] flex flex-col rounded-nomi p-4',
-        'bg-[color-mix(in_oklch,var(--nomi-danger)_5%,var(--nomi-paper))]',
-        'border border-[color-mix(in_oklch,var(--nomi-danger)_24%,transparent)]',
-      )}
-    >
-      <div className="flex items-start gap-2">
-        <IconAlertTriangle size={16} stroke={1.6} className="mt-[1px] shrink-0 text-nomi-danger" aria-hidden="true" />
-        <span className="min-w-0 flex-1 text-body font-bold leading-snug text-nomi-ink">
-          {t('generationCommon.production.canvasLanding.failedTitle')}
-        </span>
-      </div>
-      <div className={cn(NODE_SCROLL_REGION_CLASS_NAME, 'mt-2 min-h-0 flex-1 overflow-y-auto')}>
-        <p className="break-words text-caption leading-relaxed text-nomi-ink-60">
-          {state.failureMessage || t('generationCommon.production.canvasLanding.failedFallback')}
-        </p>
-      </div>
-      {/* P4 S6：失败镜返工钮接活（同 Run 新 Job + 锚参考继承 + 单镜确认，一功能一个家）。busy 期间禁重复点。 */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy || !projectId}
-          onClick={runRework}
-          onPointerDown={(event) => event.stopPropagation()}
-          data-production-shot-action="rework"
-          className={cn(
-            'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-nomi-sm border px-2.5 py-1 text-caption',
-            busy || !projectId
-              ? 'cursor-not-allowed border-nomi-line bg-nomi-paper text-nomi-ink-40'
-              : 'border-nomi-line bg-nomi-paper text-nomi-ink hover:bg-nomi-ink-05',
-          )}
-        >
-          <IconRefresh size={13} stroke={1.6} aria-hidden="true" />
-          {t('generationCommon.production.canvasLanding.retry')}
-        </button>
-      </div>
+      ) : null}
     </div>
   )
 }

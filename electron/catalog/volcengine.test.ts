@@ -41,6 +41,13 @@ describe("火山 Seedream 接入（真实 API 形状锁·同步）", () => {
     expect(deriveVendorKeyFromBaseUrl("https://relay.example.com/v1")).toBe("relay-example-com");
   });
 
+  it("keeps subscription credentials separate from the same host's metered API", () => {
+    expect(deriveVendorKeyFromBaseUrl("https://ark.cn-beijing.volces.com/api/plan/v3/")).toBe("volcengine-agent-plan");
+    expect(deriveVendorKeyFromBaseUrl("https://ark.cn-beijing.volces.com/api/v3")).toBe("volcengine");
+    expect(deriveVendorKeyFromBaseUrl("https://api.kimi.com/coding/v1")).toBe("kimi-code");
+    expect(deriveVendorKeyFromBaseUrl("https://api.kimi.com/v1")).not.toBe("kimi-code");
+  });
+
   it("Seedream 全 family（5.0 pro/5.0 lite/4.5/4.0）：同步 create（无 query），结果在 data.0.url", () => {
     expect(VOLCENGINE_IMAGE_MODELS).toHaveLength(4);
     expect(VOLCENGINE_IMAGE_MODELS.map((m) => m.modelKey)).toEqual([
@@ -121,14 +128,14 @@ describe("火山 Seedance 接入（官方 Video Generation API 形状锁·异步
   it("图生 create：content 由文本 + 当前模式 content item 占位符组成", () => {
     const i2v = VOLCENGINE_VIDEO_MODELS[0].mappings.find((m) => m.id.endsWith("image_to_video"))!;
     const content = ((i2v.create.body as { content: unknown[] }).content) as Array<Record<string, unknown> | string>;
+    // 键随档案声明走（asContentItem 槽，2026-09-12 从 volcengine_* 特判泛化成中性键）。
     expect(content).toEqual([
       { type: "text", text: "{{request.prompt}}" },
-      "{{request.params.volcengine_first_image_content}}",
-      "{{request.params.volcengine_first_role_image_content}}",
-      "{{request.params.volcengine_last_role_image_content}}",
-      "{{request.params.volcengine_image_contents}}",
-      "{{request.params.volcengine_video_contents}}",
-      "{{request.params.volcengine_audio_contents}}",
+      "{{request.params.first_image_content}}",
+      "{{request.params.last_image_content}}",
+      "{{request.params.image_contents}}",
+      "{{request.params.video_contents}}",
+      "{{request.params.audio_contents}}",
     ]);
   });
 

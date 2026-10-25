@@ -4,6 +4,7 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
+import { auditFileSizes, listSourceFiles } from './check-file-sizes.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const temporaryRoots = []
@@ -50,5 +51,36 @@ describe('native TypeScript file-size gate', () => {
       'electron/harness/runtime/pi/host.d.cts': 801,
     })
     expect(result.status, result.stderr).toBe(0)
+  })
+})
+
+describe('file-size gate source discovery', () => {
+  test('includes tracked and untracked source without losing Unicode, spaces or newlines', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-file-size-discovery-'))
+    temporaryRoots.push(root)
+    execFileSync('git', ['init', '-q', root])
+    const write = (relative, content = 'export const value = 1;\n') => {
+      const target = path.join(root, relative)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, content)
+    }
+    write('.gitignore', 'src/ignored.ts\n')
+    for (const file of ['src/tracked.ts', 'src/untracked.ts', 'src/ignored.ts', 'src/example.test.ts',
+      'src/example.d.mts', 'src/i18n/locales/data.ts', 'electron/中文 空格.mts', 'electron/line\nbreak.cts', 'src/deleted.ts']) write(file)
+    execFileSync('git', ['add', '--', '.gitignore', 'src/tracked.ts', 'electron/中文 空格.mts', 'src/deleted.ts'], { cwd: root })
+    fs.unlinkSync(path.join(root, 'src/deleted.ts'))
+    expect(listSourceFiles({ root })).toEqual([
+      'electron/line\nbreak.cts', 'electron/中文 空格.mts', 'src/tracked.ts', 'src/untracked.ts',
+    ])
+  })
+
+  test('rejects an untracked oversized production module', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-untracked-size-'))
+    temporaryRoots.push(root)
+    execFileSync('git', ['init', '-q', root])
+    fs.mkdirSync(path.join(root, 'electron'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'electron/new.mts'), '// fixture\n'.repeat(801))
+    expect(listSourceFiles({ root })).toEqual(['electron/new.mts'])
+    expect(auditFileSizes({ root }).errors).toEqual([expect.stringContaining('electron/new.mts: 801')])
   })
 })

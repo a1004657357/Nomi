@@ -71,13 +71,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "i2v": "image_to_video"
     }
   },
-  "sora-2": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
   "veo-3.1": {
     "defaultModeId": "t2v",
     "modes": {
@@ -150,6 +143,15 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "ref": "image_to_video"
     }
   },
+  "minimax-h3-pixstag": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
   "wan-2.7": {
     "defaultModeId": "t2v",
     "modes": {
@@ -196,6 +198,13 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "regenerate": "text_to_video"
     }
   },
+  "higgsfield-dop": {
+    "defaultModeId": "i2v",
+    "modes": {
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video"
+    }
+  },
   "volcengine-seedance-2": {
     "defaultModeId": "t2v",
     "modes": {
@@ -215,6 +224,24 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
     }
   },
   "dreamina-seedance-2": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video",
+      "multimodal": "image_to_video"
+    }
+  },
+  "dreamina-seedance-2.5": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video",
+      "multimodal": "image_to_video"
+    }
+  },
+  "jimeng-web-seedance-2": {
     "defaultModeId": "t2v",
     "modes": {
       "t2v": "text_to_video",
@@ -264,13 +291,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "image": "image_to_video"
     }
   },
-  "rh-sora-2": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
-    }
-  },
   "agnes-video": {
     "defaultModeId": "t2v",
     "modes": {
@@ -293,6 +313,13 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "text": "text_to_video",
       "keyframe": "image_to_video",
       "reference": "image_to_video"
+    }
+  },
+  "jimeng-web-image": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "edit": "image_edit"
     }
   },
   "minimax-music-3": {
@@ -632,6 +659,50 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
     "modes": {
       "t2i": "text_to_image",
       "edit": "image_edit"
+    }
+  },
+  "nomi-local-speech": {
+    "defaultModeId": "transcribe",
+    "modes": {
+      "transcribe": "transcribe"
+    }
+  },
+  "higgsfield-soul-2": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image"
+    }
+  },
+  "higgsfield-soul-cinema": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image"
+    }
+  },
+  "gpt-image-2.5-flare": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "gpt-image-2.5-sunburst": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "imagen-4-fast": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image"
+    }
+  },
+  "imagen-4-ultra": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image"
     }
   }
 };

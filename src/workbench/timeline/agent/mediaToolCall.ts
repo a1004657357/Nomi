@@ -1,7 +1,6 @@
 import type { DesktopAssetDto } from '../../../desktop/bridge'
 import { getDesktopBridge } from '../../../desktop/bridge'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
-import { resolveCapabilityProjectId } from '../../capability/capabilityProjectBinding'
+import { requireCapabilityProjectId } from '../../capability/capabilityProjectBinding'
 import { workbenchAdoptionPorts } from '../../adoption/adoptionStorePorts'
 import type { TimelineClip, TimelineState } from '../timelineTypes'
 import { ASSET_SOURCE_USAGE_LIMIT } from '../../../../electron/shared/agentCapabilities/assetRead'
@@ -171,15 +170,16 @@ function loadElementMetadata(asset: ProjectMediaAsset): Promise<MediaTechnicalMe
   if (asset.kind === 'image') {
     return new Promise((resolve) => {
       const image = document.createElement('img')
-      let timeout: number | undefined
+      // 闹钟在 `finish` 之后声明：`finish` 只会被闹钟或事件回调调用，那时它早就赋好了值。
+      // 这样它就是 const，也不用再写一句「有没有闹钟」的判断（prefer-const）。
       const finish = (extra: MediaTechnicalMetadata = {}) => {
-        if (timeout !== undefined) window.clearTimeout(timeout)
+        window.clearTimeout(timeout)
         image.onload = null
         image.onerror = null
         image.removeAttribute('src')
         resolve({ ...stored, ...extra })
       }
-      timeout = window.setTimeout(() => finish(), 10_000)
+      const timeout = window.setTimeout(() => finish(), 10_000)
       image.onload = () => finish({ width: image.naturalWidth, height: image.naturalHeight })
       image.onerror = () => finish()
       image.src = asset.renderUrl
@@ -187,16 +187,16 @@ function loadElementMetadata(asset: ProjectMediaAsset): Promise<MediaTechnicalMe
   }
   return new Promise((resolve) => {
     const media = document.createElement(asset.kind === 'video' ? 'video' : 'audio')
-    let timeout: number | undefined
+    // 同上：闹钟在 `finish` 之后声明，于是它是 const。
     const finish = (extra: MediaTechnicalMetadata = {}) => {
-      if (timeout !== undefined) window.clearTimeout(timeout)
+      window.clearTimeout(timeout)
       media.onloadedmetadata = null
       media.onerror = null
       media.removeAttribute('src')
       media.load()
       resolve({ ...stored, ...extra })
     }
-    timeout = window.setTimeout(() => finish(), 10_000)
+    const timeout = window.setTimeout(() => finish(), 10_000)
     media.preload = 'metadata'
     media.onloadedmetadata = () => finish({
       ...(Number.isFinite(media.duration) && media.duration > 0 ? { durationSeconds: media.duration } : {}),
@@ -319,15 +319,11 @@ const defaultRuntime: MediaToolRuntime = {
 }
 
 /**
- * 素材库按 projectId 在主进程寻址——不需要项目正开着。所以已校验的 lease projectId 优先，
- * 没给才回退 GUI 当前项目（应用内调用者）。解析规则住在 capabilityProjectBinding.ts。
+ * 素材库按 projectId 在主进程寻址——不需要项目正开着。项目只认调用方显式带来的
+ * （lease 或 coordinator 按已验证 binding 下发），不回退 GUI 当前项目。解析规则住在 capabilityProjectBinding.ts。
  */
 function scopeProjectId(boundProjectId?: unknown): string {
-  return resolveCapabilityProjectId(
-    boundProjectId,
-    getDesktopActiveProjectId,
-    'project_scope_required: an active project is required for media tools',
-  )
+  return requireCapabilityProjectId(boundProjectId, 'project_scope_required: an active project is required for media tools')
 }
 
 async function mediaAssets(runtime: MediaToolRuntime, boundProjectId?: unknown): Promise<ProjectMediaAsset[]> {

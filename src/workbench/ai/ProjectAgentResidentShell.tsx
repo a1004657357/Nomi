@@ -8,9 +8,13 @@ import { libraryGroup } from '../library/libraryGroups'
 // 之前这里是 760 行：投影、嗅探、弹层、队列行、审批按钮全在一个组件里，
 // 「宿主真相怎么变成一行收据」这件事只能靠截图证明。拆开之后那部分是纯函数、有单测；
 // 这里剩下的都是**只有真实运行时才有的东西**（DOM 尺寸、事件桥、文件选择器）。
-import React from 'react'
+import React, { type JSX } from 'react'
+import { openFeedbackFor } from '../../ui/community/FeedbackButton'
+import { withProjectAction } from '../project/projectCanvasReadSurface'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../utils/cn'
+import { DesignModal } from '../../design'
+import { SystemPromptSection } from './systemPrompt/SystemPromptSection'
 import { STORYBOARD_PLANNER_SKILL } from '../generationCanvas/agent/storyboardLauncher'
 import { useWorkbenchStore } from '../workbenchStore'
 import { useComposerAttachments, COMPOSER_ATTACHMENT_ACCEPT } from './composer/useComposerAttachments'
@@ -18,27 +22,36 @@ import { useResidentActivityStore } from './residentActivity'
 import { TimelineAgentReceiptEffect } from './resident/TimelineAgentReceiptEffect'
 import { useTimelinePlanPreview } from './resident/timelineAgentSurface'
 import type { ResidentSurface } from './resident/residentShellDisplay'
-import { AgentPanelV4Panel } from './v4/AgentPanelV4Panel'
+import { AgentPanelV4Panel, type V4InterventionHandlers } from './v4/AgentPanelV4Panel'
+import { planConfirmDecision } from './v4/agentPanelV4Intervention'
 import { flowScrollMemoryFor } from './v4/agentPanelV4ScrollMemory'
-import { V4Intervention } from './v4/AgentPanelV4Cards'
+import { V4Intervention, V4Queue } from './v4/AgentPanelV4Cards'
+import { laneClient } from './lane/laneClient'
+import { discardRecoveredAgentDraft, takeRecoveredAgentDraft, settleProjectAgentAttachment } from './projectAgentDraftRecovery'
+import { laneConversationOf } from '../../../electron/shared/agentLane/laneConversation'
 import { V4CollapsedDock } from './v4/AgentPanelV4Dock'
 import { useV4DockStatus } from './v4/agentPanelV4DockStatus'
 import { AgentPanelV4Composer, V4ModelPopover, V4PermissionPopover, V4SkillPopover, type V4CommandRow } from './v4/AgentPanelV4Composer'
 import { useAgentPanelV4Data } from './v4/useAgentPanelV4Data'
 import { useAgentPanelV4Actions } from './v4/useAgentPanelV4Actions'
+import { LaneCommandFailure, laneFailureText } from './lane/laneCommandFailure'
 import { useAgentPanelSpendConfirm } from './v4/useAgentPanelSpendConfirm'
+import { assertAnnouncedCardRendered } from './v4/missingInterventionCard'
 import { useAgentPanelAutoMode } from './v4/useAgentPanelAutoMode'
 import { V4AutoModeBanner } from './v4/AgentPanelV4AutoMode'
-import NodeGenerationComposer from '../generationCanvas/nodes/NodeGenerationComposer'
+import { V4SandboxNotice } from './v4/AgentPanelV4SandboxNotice'
+import { v4SandboxNoticeText } from './v4/agentPanelV4SandboxReason'
+import NodeGenerationComposer from '../generationCanvas/nodes/LazyNodeGenerationComposer'
 import { NodeWriteAccessProvider } from '../generationCanvas/nodes/nodeWriteAccess'
 import { useShotVerifyFeedback } from './resident/useShotVerifyFeedback'
 import { adoptLaneTaskCandidate } from './lane/laneTaskCandidateActions'
 import { useV4Labels } from './v4/agentPanelV4Labels'
 import { usePromptLibrary } from '../promptLibrary/usePromptLibrary'
+import { skillDisplayTitle } from '../skillLibrary/skillDisplay'
 import { useUserPrompts } from '../promptLibrary/useUserPrompts'
 import { promptDisplayTitle } from '../promptLibrary/promptDisplay'
 import { filterPrompts } from '../api/promptLibraryApi'
-import type { ComposerPopover } from './v4/agentPanelV4Types'
+import type { ComposerPopover, QueueRowData, V4Chip } from './v4/agentPanelV4Types'
 import { buildV4ModelRows } from './v4/agentPanelV4ModelRows'
 import { useAgentTraceDirectory } from '../../desktop/useAgentTraceDirectory'
 
@@ -91,6 +104,34 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
 
   const data = useAgentPanelV4Data(surface)
   const actions = useAgentPanelV4Actions(surface, data)
+  const connectionFailure = data.connectionFailure
+  const connectionError = connectionFailure && !connectionFailure.ok
+    ? laneFailureText(new LaneCommandFailure(connectionFailure.code, connectionFailure.diagnostic), t)
+    : null
+  const panelError = connectionError || actions.error
+  const recoveredDrafts = useWorkbenchStore(state => state.projectAgentRecoveredDrafts)
+  const admitting = useWorkbenchStore(state => Boolean(state.projectAgentAdmissionId))
+  const conversation = laneConversationOf(data.snapshot)
+  const project = laneClient.context()
+  const recovered = recoveredDrafts.filter(entry => entry.projectUuid === project?.binding.immutableProjectUuid
+    && entry.conversation.sessionId === conversation?.sessionId && entry.conversation.laneName === conversation.laneName)
+  const queue: readonly QueueRowData[] = [...data.queue, ...recovered.map(entry => ({
+    title: entry.displayText || entry.text || (entry.skill ? data.skillLabel(entry.skill.key) : '') || t('agentPanelV4.queueUntitled'), status: 'draft' as const,
+    actions: [t('agentPanelV4.recoveredDraftTakeBack')], destructiveAction: t('agentPanelV4.recoveredDraftDiscard'),
+    actionsDisabled: admitting,
+  }))]
+  const recoveryAction = (index: number, discard: boolean) => {
+    const entry = recovered[index - data.queue.length]
+    const current = laneClient.conversation()
+    if (!entry || !project || !conversation || !current || current.workspaceId !== data.snapshot.workspaceId
+      || current.laneName !== conversation.laneName || current.sessionId !== conversation.sessionId) return
+    if (discard) discardRecoveredAgentDraft(entry.id, project.binding.immutableProjectUuid, conversation)
+    else takeRecoveredAgentDraft(entry.id, project.binding.immutableProjectUuid, conversation)
+  }
+  const queueHandlers = {
+    onAction: (index: number, action: string) => index < data.queue.length ? actions.queueAction(index, action) : recoveryAction(index, false),
+    onDestructiveAction: (index: number) => index < data.queue.length ? actions.queueInterrupt(index) : recoveryAction(index, true),
+  }
   // 付费确认卡（2026-09-11 P1）。它是介入槽的**第二个数据源**：lane 的工具审批答的是
   // 「要不要让我做这件事」，这一张答的是「要不要花这笔钱」——后者住在 ProductionRun 域里，
   // `LanePendingApproval` 上根本没有报价字段。两者同时在时钱优先：钱撤不回来。
@@ -98,15 +139,19 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
   // 卡体是画布节点那张生成框**整件**，但写入面换成卡自己的账本（`spend.writeAccess`）：
   // 用户还没答应花这笔钱，画布上那个草稿节点就不该被改；改动在按下「生成」那一刻
   // 才由主进程落进候选、再投影回画布（单向，没有拉锯）。见 nodeWriteAccess 顶部注释。
+  // 「生成剩下 N 张」在一张一张走时卡体只给看（`inert`）：这一叠在点下去那一刻已经落进候选，此刻再改就是
+  // 「卡上看到的」≠「发出去的」；写口那头同样关着（`spend.writeAccess.canWrite`）。
   const spendComposer = spend.pending && spend.node ? (
-    <NodeWriteAccessProvider value={spend.writeAccess}>
-      <NodeGenerationComposer
-        node={spend.node}
-        visualSize={spend.node.size ?? { width: 340, height: 192 }}
-        host="panel"
-        onFeedback={() => undefined}
-      />
-    </NodeWriteAccessProvider>
+    <div className="contents" inert={spend.batchRunning}>
+      <NodeWriteAccessProvider value={spend.writeAccess}>
+        <NodeGenerationComposer
+          node={spend.node}
+          visualSize={spend.node.size ?? { width: 340, height: 192 }}
+          host="panel"
+          onFeedback={() => undefined}
+        />
+      </NodeWriteAccessProvider>
+    </div>
   ) : null
   // 切到「全自动」要先问一句（换档本身可撤销，所以它就是介入槽的可撤销档）。
   const autoMode = useAgentPanelAutoMode(actions.permission, actions.setPermission)
@@ -118,13 +163,58 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
   // 答完档位它就回到原处，价格一个字都没变。
   // lane 的工具审批排最后，因为档位恰恰决定它以后还问不问。
   const activeSlot = autoMode.slot ?? spend.slot ?? data.slot
+  // 三条 announce 面各自都说得出「我这里有没有一条在等」。任何一条说有、而槽里最终什么都没画，
+  // 在开发/测试里当场抛（`missingInterventionCard.ts`）；打包版里那条链已各自渲成会说话的卡。
+  // 它拦的是**下一条**静默分支：新接一个 announce 面而忘了接渲染，CI 当场红。
+  assertAnnouncedCardRendered({ announcer: 'agent-panel-intervention-slot', announced: Boolean(data.primaryPending) || Boolean(spend.pending), rendered: activeSlot })
   const spendSlotHandlers = {
     onConfirm: spend.confirm,
     onReject: spend.discard,
     onPage: spend.setPage,
-    onScope: spend.setScope,
+    // 次动作 =「去掉这张 / 这段」：这一镜不生成，卡上剩下的照旧等人（付费卡逐镜）。
+    onAlternate: spend.remove,
+    // 整叠的动作 =「生成剩下 N 张 / 段」：卡上还没决定的每一张各点一次「生成这张」（2026-10-01）。
+    onBatch: spend.confirmRemaining,
   }
   const autoModeSlotHandlers = { onConfirm: autoMode.confirm, onReject: autoMode.cancel }
+  // 计划行的两根线（勾选 / 收起）与「这张卡是谁给的」无关——三个数据源都可能带清单，
+  // 所以在最外层一次补齐。它们在 `V4Intervention` 上是**必填 prop**：以前是可选的，
+  // 宿主一根都没接，用户点了半天以为界面坏了（2026-09-11 实测）。
+  const planSlotHandlers = {
+    onPlanToggle: data.plan.toggleRow,
+    onCollapsePlan: data.plan.toggleCollapsed,
+    planCollapsed: data.plan.collapsed,
+  }
+  /**
+   * 计划卡的「确认」。
+   *
+   * 卡标题上印着的承诺是「不勾就是不做」，但 lane 的审批协议只有准 / 不准两个答案，
+   * 没有「按这份清单改一改再准」。所以取消过勾选之后的确认 = 一次带话的 deny：
+   * 那句话一字不改成为模型看到的 tool result（见 `laneClient.deny` 注释），
+   * 模型据此重开一张只含留下那几条的计划。一条都不留 = 整张不要，那就是不带话的 deny。
+   *
+   * 不做成「照样全批」——那才是真正的欺骗：用户明明取消了三镜，钱照花。
+   */
+  const confirmLaneSlot = (): void => {
+    const decision = planConfirmDecision(data.plan.unchecked, data.plan.kept)
+    if (decision.action === 'approve') { actions.approve(); return }
+    actions.reject(decision.keptRows.length
+      ? t('agentPanelV4.planKeepOnly', { kept: decision.keptRows.map((row) => `\n· ${row}`).join('') })
+      : undefined)
+  }
+  // 面板与收起坞共用同一份写口。两处各抄一遍的代价已经付过：收起坞那份长期少了 onAlternate。
+  const slotHandlers: V4InterventionHandlers = autoMode.slot
+    ? { ...autoModeSlotHandlers, ...planSlotHandlers }
+    : spend.slot
+      ? { ...spendSlotHandlers, ...planSlotHandlers }
+      : {
+        onConfirm: confirmLaneSlot,
+        onReject: actions.reject,
+        onEscalate: actions.stopAsking,
+        onAnswer: actions.answerQuestion,
+        onAlternate: () => window.dispatchEvent(new Event('nomi-open-model-catalog')),
+        ...planSlotHandlers,
+      }
   const autoModeBanner = autoMode.bannerVisible ? (
     <V4AutoModeBanner
       label={t('agentPanelV4.permission.project')}
@@ -135,6 +225,16 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
       onDismiss={autoMode.dismissBanner}
     />
   ) : null
+  // 命令沙箱没起来时的那一行交代。它和「全自动」提醒共用 composer 上沿那一格：
+  // 两条同时在的时候先印沙箱那条——它解释的是**另一条为什么不作数**（开着全自动仍逐条问），
+  // 顺序反过来读起来就是自相矛盾。
+  const sandboxInactive = data.snapshot.active.sandboxInactive
+  const composerBanner = sandboxInactive || autoModeBanner ? (
+    <>
+      {sandboxInactive ? <V4SandboxNotice text={v4SandboxNoticeText(sandboxInactive, t)} /> : null}
+      {autoModeBanner}
+    </>
+  ) : null
   const shotVerifyFeedback = useShotVerifyFeedback(surface, actions.send)
   /**
    * 「他读到哪儿了」得活在这棵子树之外（定稿 §11.2：点角标 = 原宽**原状态**还原）。
@@ -144,7 +244,12 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
    * 按线程记：位置属于那条对话，换项目/换线程各记各的，切回来还在原处。
    */
   const flowScroll = flowScrollMemoryFor(surface, data.activeThreadId)
+  const historyConversation = laneConversationOf(data.snapshot)
+  const historyIdentity = data.snapshot.workspaceId && historyConversation
+    ? JSON.stringify([data.snapshot.workspaceId, historyConversation.laneName, historyConversation.sessionId, surface]) : undefined
   const [popover, setPopover] = React.useState<ComposerPopover | null>(null)
+  // 系统提示词编辑器（2026-09-14 从设置 → AI 策略搬来）：权限弹层底部那一行打开，Mantine 弹窗承载。
+  const [systemPromptOpen, setSystemPromptOpen] = React.useState(false)
   // 2026-09-10 走查反馈：弹层只有 Escape 和原按钮 toggle 两条关闭路径，点面板其他地方
   // 不关。补 outside-close：pointerdown 落在弹层本体 / 触发钮 / NomiSelect 传送门之外
   // 即收起。触发钮要豁免——否则「pointerdown 先关 + click 再 toggle」会把它重新打开。
@@ -163,7 +268,7 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
   }, [popover])
   const [threadsOpen, setThreadsOpen] = React.useState(false)
   const [commandQuery, setCommandQuery] = React.useState('')
-  const attachmentApi = useComposerAttachments({ attachments, setAttachments, onError: () => undefined })
+  const attachmentApi = useComposerAttachments({ attachments, setAttachments, settleAttachment: settleProjectAgentAttachment, onError: () => undefined })
   const promptLibrary = usePromptLibrary(popover === 'skill')
   const userPromptLibrary = useUserPrompts(popover === 'skill')
   const timelinePlanPreviewPortal = useTimelinePlanPreview(
@@ -180,6 +285,8 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
     const launch = (displayPrompt?: string): void => {
       void actions.send([t('agentResident.storyboardRequest'), displayPrompt].filter(Boolean).join('\n\n'), {
         skillKey: STORYBOARD_PLANNER_SKILL.key,
+        // 这是用户亲手点「拆分镜」：结果方案照常替他打开（Agent 自己决定建的方案才不打开）。
+        openStoryboardResult: true,
         ...(displayPrompt ? { displayText: displayPrompt } : {}),
       })
     }
@@ -312,14 +419,14 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
     const query = commandQuery.trim()
     const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
     const skillRows: V4CommandRow[] = data.skills
-      .filter((skill) => skill.curation?.kind !== 'effect' && (!query || `${skill.curation?.title[locale] ?? skill.label} ${skill.name}`.toLowerCase().includes(query.toLowerCase())))
+      .filter((skill) => skill.curation?.kind !== 'effect' && (!query || `${skillDisplayTitle(skill, i18n.language)} ${skill.name}`.toLowerCase().includes(query.toLowerCase())))
       // 自己导进来的排在内置前面。用户刚把一个技能弄进 Nomi，下一秒来这里找它——
       // 让他先滚过四个他没装过的内置技能才看见自己那个，是把「我刚做的事」排在最后。
       .sort((a, b) => (a.origin === b.origin ? 0 : a.origin === 'user' ? -1 : 1))
       .map((skill) => ({
         id: `skill:${skill.name}`,
         group: libraryGroup(skill, i18n.language),
-        name: skill.curation?.title[locale] ?? skill.label,
+        name: skillDisplayTitle(skill, i18n.language),
         command: `/${skill.name}`,
         desc: skill.curation?.summary[locale] ?? skill.description ?? skill.stageLabels.join(' · '),
         cover: skill.cover,
@@ -362,7 +469,7 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
               // 技能与提示词互斥：一次对话只装一套说法。两个都挂上时模型收到两段
               // 互相打架的系统提示，产出会比不装还差。
               actions.setSelectedLibraryPrompt(null)
-              setActiveSkill(activeSkill?.key === key ? null : { key, name: row.name })
+              setActiveSkill(activeSkill?.key === key ? null : { key })
             } else {
               const id = row.id.slice('prompt:'.length)
               const prompt = [...promptLibrary.items, ...userPromptLibrary.items].find((item) => item.id === id)
@@ -374,9 +481,18 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
         />
       )
       : popover === 'permission'
-        ? <V4PermissionPopover permission={actions.permission} onSelect={(tier) => { autoMode.request(tier); setPopover(null) }} />
+        ? <V4PermissionPopover permission={actions.permission} onSelect={(tier) => { autoMode.request(tier); setPopover(null) }} onEditSystemPrompt={() => { setPopover(null); setSystemPromptOpen(true) }} />
         : undefined
 
+  const removeComposerChip = (chip: V4Chip) => {
+    if (chip.kind === 'skill') setActiveSkill(null)
+    else if (chip.kind === 'file') {
+      const match = attachments.find(item => chip.id ? item.id === chip.id : item.fileName === chip.label)
+      if (match) attachmentApi.removeAttachment(match.id)
+    }
+  }
+  const attachmentInput = <input ref={attachmentApi.inputRef} type="file" multiple accept={COMPOSER_ATTACHMENT_ACCEPT}
+    className="hidden" tabIndex={-1} aria-hidden="true" onChange={attachmentApi.onInputChange} />
   // 收起 = 藏起**对话流**，不是藏起对话（定稿 Collapsed 板）。同一个 composer 掉到画面下沿
   // 居中，介入槽跟着它——这样一份编辑计划仍然读得到、批得下，不必把整列还给面板。
   // 用户可独立关闭这条坞；关闭选择跨项目记住，提醒仍由顶栏角标承担。
@@ -396,27 +512,21 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
       >
         <TimelineAgentReceiptEffect />
         {timelinePlanPreviewPortal}
+        {attachmentInput}
         {!dockHidden && <V4CollapsedDock onClose={() => setDockHidden(true)}>
           {activeSlot ? (
             <V4Intervention
               data={activeSlot}
               labels={labels.intervention}
               {...(!autoMode.slot && spend.slot && spendComposer ? { composer: spendComposer } : {})}
-              {...(autoMode.slot
-                ? autoModeSlotHandlers
-                : spend.slot
-                  ? spendSlotHandlers
-                  : {
-                    onConfirm: actions.approve,
-                    onReject: actions.reject,
-                    onEscalate: actions.stopAsking,
-                    onOption: (option: string) => actions.answerOption(option),
-                  })}
+              {...slotHandlers}
             />
           ) : null}
           {autoModeBanner}
+          <V4Queue rows={queue} labels={labels.queue} {...queueHandlers} />
           <AgentPanelV4Composer
             dock
+            admitting={admitting}
             panelHeight={size.height}
             mode={data.running ? 'running' : data.liveChips.length ? 'reference' : 'idle'}
             permission={actions.permission}
@@ -426,6 +536,7 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
             onSubmit={submit}
             onStop={actions.stop}
             onAddFile={() => attachmentApi.inputRef.current?.click()}
+            onRemoveChip={removeComposerChip}
             modelLabel={data.modelLabel}
             skillSelected={Boolean(activeSkill || actions.selectedLibraryPrompt)}
           />
@@ -453,62 +564,79 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
     >
       <TimelineAgentReceiptEffect />
       {timelinePlanPreviewPortal}
-      <input
-        ref={attachmentApi.inputRef}
-        type="file"
-        multiple
-        accept={COMPOSER_ATTACHMENT_ACCEPT}
-        className="hidden"
-        tabIndex={-1}
-        aria-hidden="true"
-        onChange={attachmentApi.onInputChange}
-      />
-      {actions.error ? (
+      {attachmentInput}
+      {panelError ? (
         <div className="shrink-0 px-3 pt-1 text-micro text-workbench-danger" role="alert" data-agent-error="true">
-          {actions.error}
+          <span>{panelError}</span>
+          {connectionFailure && !connectionFailure.ok ? <button type="button" className="ml-2 underline" onClick={() => { void actions.reconnect() }}>{t('agentPanelV4.reconnect')}</button> : null}
         </div>
       ) : null}
       <AgentPanelV4Panel
         scrollMemory={flowScroll}
         width={size.width}
-        height={actions.error ? size.height - 20 : size.height}
+        height={panelError ? size.height - 20 : size.height}
         legacy={data.snapshot.active.legacy}
         flow={data.flow}
+        historyIdentity={historyIdentity}
+        historyCursor={data.snapshot.active.history?.before}
+        onLoadOlder={historyIdentity && data.loadOlder ? async () => {
+          await data.loadOlder!()
+          return laneClient.projection().history?.before
+        } : undefined}
         flowTail={shotVerifyFeedback}
         surface={surface}
         onStarter={startFromStarter}
         slot={activeSlot}
         {...(!autoMode.slot && spend.slot && spendComposer ? { slotComposer: spendComposer } : {})}
-        {...(autoModeBanner ? { composerBanner: autoModeBanner } : {})}
-        queue={data.queue}
-        queueHint={t('agentPanelV4.queueHint')}
+        {...(composerBanner ? { composerBanner } : {})}
+        queue={queue}
+        queueHint={t(recovered.length ? 'agentPanelV4.recoveredDraftHint' : 'agentPanelV4.queueHint')}
         context={data.context}
         onHistory={() => setThreadsOpen((value) => !value)}
         onCollapse={() => setCollapsed(true)}
         flowHandlers={{
-          onCopy: (text) => { void navigator.clipboard?.writeText(text) },
+          // 把写剪贴板的**结果**交回去：组件那颗 ✓ 只在真的写进去之后才打。
+          // `navigator.clipboard` 缺席（非安全上下文）或写入被拒时这里 reject，界面上就不打勾。
+          onCopy: (text) => navigator.clipboard
+            ? navigator.clipboard.writeText(text)
+            : Promise.reject(new Error('clipboard_unavailable')),
+          // Replay addresses the original pi input; the composer keeps the user's next draft.
+          onRetry: (index) => {
+            const target = data.flow[index]
+            if (target?.kind !== 'assistant' || !target.retryInputEntryId) return
+            void actions.send(t('agentPanelV4.retry'), { retryFromEntryId: target.retryInputEntryId })
+          },
           onContinue: (index) => {
             const item = data.flow[index]
             if (item?.kind !== 'assistant' || !item.continuationEntryId) return
-            void actions.send(draft.trim() || t('agentPanelV4.continue'), { continueFromEntryId: item.continuationEntryId })
+            void actions.send(t('agentPanelV4.continue'), { continueFromEntryId: item.continuationEntryId })
           },
           onUndoTool: actions.undoTool,
           onAdoptCandidate: (index, _tag, candidateIndex) => adoptLaneTaskCandidate(data.flow, index, candidateIndex, t),
           onErrorAction: recoverFromFailure,
-          onSuggestion: (_index, option) => actions.answerOption(option),
+          // 失败面之一（四处共用同一张卡）。那句人话**已经是** Agent 域自己 owner 的产物：
+          // `laneFailureText()` 按码取的本地化文案，走投影落到了 `item.reason`。
+          // 反馈这一侧不再翻一次码，也不做第六张码表（src/ui/community/feedbackSummary.ts）。
+          // 项目身份在**点下去那一刻**由唯一签发口给出（withProjectAction），不是去读「当前项目」——
+          // 主进程侧那种读法 2026-09-17 起已清零。没有打开项目时就不带（清单里写明轨迹缺席的 why）。
+          onFeedback: (_index, reason) => {
+            const request = {
+              intent: 'problem' as const,
+              surface: 'agent' as const,
+              stage: 'generation' as const,
+              summary: reason,
+              laneName: data.snapshot.active.lane,
+            }
+            withProjectAction(
+              (project) => openFeedbackFor({ ...request, projectId: project.binding.projectId }),
+              () => openFeedbackFor(request),
+            )
+          },
         }}
-        slotHandlers={autoMode.slot ? autoModeSlotHandlers : spend.slot ? spendSlotHandlers : {
-          onConfirm: actions.approve,
-          onReject: actions.reject,
-          onEscalate: actions.stopAsking,
-          onOption: (option) => actions.answerOption(option),
-          onAlternate: () => window.dispatchEvent(new Event('nomi-open-model-catalog')),
-        }}
-        queueHandlers={{
-          onAction: actions.queueAction,
-          onDestructiveAction: actions.queueInterrupt,
-        }}
+        slotHandlers={slotHandlers}
+        queueHandlers={queueHandlers}
         composer={{
+          admitting,
           mode: data.running ? 'running' : data.liveChips.length ? 'reference' : 'idle',
           permission: actions.permission,
           chips: data.liveChips,
@@ -518,22 +646,29 @@ export default function ProjectAgentResidentShell({ surface }: { surface: Reside
           onStop: actions.stop,
           onAddFile: () => attachmentApi.inputRef.current?.click(),
           inputRef: composerInputRef,
-          onRemoveChip: (chip) => {
-            if (chip.kind === 'skill') setActiveSkill(null)
-            else if (chip.kind === 'file') {
-              const match = attachments.find((item) => item.fileName === chip.label)
-              if (match) attachmentApi.removeAttachment(match.id)
-            }
-            // clip chip 指的是时间轴上的真实选中：它的「移除」是在时间轴上取消选中，
-            // 不是从一个附件列表里删一行。面板不代替用户操作另一个面。
-          },
+          onRemoveChip: removeComposerChip,
           modelLabel: data.modelLabel,
           skillSelected: Boolean(activeSkill || actions.selectedLibraryPrompt),
+          // 上面那张卡是在**问**用户（不是在求批准）时，composer 降一档（2026-09-21 拍板）。
+          // 降的是注意力不是能力：淡下去、占位改口，仍然能用——用户本来就可以不理那个问题、
+          // 先说别的。判据只有一个（槽的 kind），和卡自己画不画那一行自由输入同源。
+          awaitingAnswer: activeSlot?.kind === 'question',
           openPopover: popover,
           onTogglePopover: (next) => setPopover((current) => (current === next ? null : next)),
           ...(composerPopover ? { popover: composerPopover } : {}),
         }}
       />
+      <DesignModal
+        opened={systemPromptOpen}
+        onClose={() => setSystemPromptOpen(false)}
+        title={t('settings.ai.systemPrompt.title')}
+        centered
+        size={640}
+        closeOnClickOutside
+        returnFocus
+      >
+        {systemPromptOpen ? <SystemPromptSection /> : null}
+      </DesignModal>
       {threadsOpen ? (
         <div
           className="absolute right-2 top-10 z-50 w-[280px] rounded-nomi border border-nomi-line bg-nomi-paper p-1 shadow-nomi-lg"

@@ -3,7 +3,6 @@ import { useShotVerifyStore } from '../generationCanvas/agent/shotVerifyStore'
 import { useWorkbenchStore } from '../workbenchStore'
 import { emitCanvasGesture, getCanvasEventLastSeq, seedCanvasEventLastSeq } from '../generationCanvas/events/canvasEventEmitter'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { setDesktopActiveProjectId } from '../../desktop/activeProject'
 import type { WorkbenchProjectPayload, WorkbenchProjectRecordV1 } from './projectRecordSchema'
 import type { ProjectHydrationGuard } from './projectCanvasReadSurface'
 
@@ -19,6 +18,8 @@ export function readCurrentWorkbenchProjectPayload(): WorkbenchProjectPayload {
     categories: workbench.categories,
     // S5-b-1:尾部重放游标(append 回执维护;回执延迟导致略旧也安全——reducer 幂等)
     generationCanvasLastSeq: getCanvasEventLastSeq(),
+    filmBible: workbench.filmBible,
+    // Persist every document/design, never a second copy of the selected view.
     storyboardDesignsByDocumentId: workbench.storyboardDesignsByDocumentId,
     editingPanelLayout: workbench.editingPanelLayout,
   }
@@ -33,6 +34,7 @@ export function restoreWorkbenchProjectPayload(payload: WorkbenchProjectPayload)
   useWorkbenchStore.getState().setCategories(payload.categories)
   // P4：恢复整套分镜方案映射。用 hydrateStoryboardDesigns（非 setStoryboardPlan）载入不标脏。
   const store = useWorkbenchStore.getState()
+  store.hydrateFilmBible(payload.filmBible ?? null)
   store.hydrateStoryboardDesigns(payload.storyboardDesignsByDocumentId ?? {})
   if (payload.editingPanelLayout) store.setEditingPanelLayout(payload.editingPanelLayout, false)
   useGenerationCanvasStore.getState().restoreSnapshot(payload.generationCanvas)
@@ -103,7 +105,6 @@ function notifyActiveWorkbenchProjectSaveTarget(): void {
 
 export function setActiveWorkbenchProjectSaveTarget(target: ActiveWorkbenchProjectSaveTarget | null): void {
   activeWorkbenchProjectSaveTarget = target
-  setDesktopActiveProjectId(target?.projectId ?? '')
   // 当前工作台项目是审片结果的所有权边界。绑定新项目时同步切换 shot verify scope；
   // activateProject 对同 id 幂等，不会因保存订阅重绑而误清本项目预算。
   useShotVerifyStore.getState().activateProject(target?.projectId)
@@ -150,11 +151,6 @@ export function waitForActiveWorkbenchProjectSaveTarget(projectId: string): bool
     activeWorkbenchProjectSaveTargetListeners.add(listener)
     const timer = setTimeout(() => finish(false), ACTIVE_PROJECT_SAVE_TARGET_WAIT_MS)
   })
-}
-
-/** 当前活动 workbench 项目 id（单一真相源）—— 抽帧落素材需要它，runner 作用域本身拿不到。 */
-export function getActiveWorkbenchProjectId(): string | null {
-  return activeWorkbenchProjectSaveTarget?.projectId ?? null
 }
 
 export async function persistActiveWorkbenchProjectNow(): Promise<WorkbenchProjectRecordV1 | null> {

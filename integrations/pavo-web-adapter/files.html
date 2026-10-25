@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pavo 文件预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0e27;
+    color: #e0e0e0;
+    min-height: 100vh;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a1a3e 0%, #16213e 100%);
+    padding: 20px 30px;
+    border-bottom: 1px solid #1e3a5f;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header h1 {
+    font-size: 20px;
+    color: #a8d8ea;
+  }
+  .header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .badge {
+    background: #0f3460;
+    color: #a8d8ea;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+  }
+  .badge-hd {
+    background: rgba(76,175,80,0.2);
+    color: #4caf50;
+    border: 1px solid rgba(76,175,80,0.4);
+  }
+  .badge-standard {
+    background: rgba(139,143,163,0.2);
+    color: #8b8fa3;
+    border: 1px solid rgba(139,143,163,0.3);
+  }
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+
+  /* 搜索和过滤 */
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .toolbar input {
+    flex: 1;
+    min-width: 200px;
+    padding: 8px 14px;
+    background: #16213e;
+    border: 1px solid #1e3a5f;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 14px;
+    outline: none;
+    font-family: monospace;
+  }
+  .toolbar input:focus { border-color: #3a7bd5; }
+  .toolbar button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .btn-refresh {
+    background: #0f3460;
+    color: #a8d8ea;
+  }
+  .btn-refresh:hover { background: #1a4a80; }
+  .btn-link {
+    background: transparent;
+    color: #a8d8ea;
+    text-decoration: underline;
+    padding: 8px;
+  }
+
+  /* 统计信息 */
+  .stats {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    background: #16213e;
+    border: 1px solid #1e3a5f;
+    border-radius: 10px;
+    padding: 12px 20px;
+    min-width: 120px;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 28px;
+    font-weight: bold;
+    color: #a8d8ea;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: #8b8fa3;
+    margin-top: 2px;
+  }
+
+  /* 任务分组 */
+  .task-group {
+    background: #16213e;
+    border: 1px solid #1e3a5f;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .task-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: #1a2744;
+    border-bottom: 1px solid #1e3a5f;
+    cursor: pointer;
+    user-select: none;
+  }
+  .task-group-header:hover {
+    background: #1e2d50;
+  }
+  .task-code {
+    font-family: monospace;
+    font-size: 15px;
+    color: #a8d8ea;
+    font-weight: bold;
+  }
+  .task-group-meta {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px;
+    color: #8b8fa3;
+  }
+  .task-group-body {
+    padding: 16px 20px;
+  }
+
+  /* 文件网格 */
+  .file-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .file-card {
+    background: #0d1b36;
+    border: 1px solid #1e3a5f;
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .file-card:hover {
+    border-color: #3a7bd5;
+    transform: translateY(-2px);
+  }
+  .file-preview {
+    position: relative;
+    background: #000;
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .file-preview video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .file-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .quality-tag {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    z-index: 2;
+  }
+  .quality-hd {
+    background: rgba(76,175,80,0.85);
+    color: #fff;
+  }
+  .quality-standard {
+    background: rgba(100,100,120,0.85);
+    color: #ddd;
+  }
+  .file-info {
+    padding: 12px 14px;
+  }
+  .file-name {
+    font-size: 12px;
+    font-family: monospace;
+    color: #a8d8ea;
+    word-break: break-all;
+    margin-bottom: 6px;
+  }
+  .file-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #8b8fa3;
+    margin-bottom: 8px;
+  }
+  .file-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .file-actions a, .file-actions button {
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: background 0.2s;
+  }
+  .btn-download {
+    background: #0f3460;
+    color: #a8d8ea;
+  }
+  .btn-download:hover { background: #1a4a80; }
+  .btn-open {
+    background: rgba(139,143,163,0.2);
+    color: #8b8fa3;
+  }
+  .btn-open:hover { background: rgba(139,143,163,0.3); }
+
+  /* 标签筛选区 */
+  .tag-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    background: #16213e;
+    border: 1px solid #1e3a5f;
+    border-radius: 10px;
+  }
+  .tag-filter-label {
+    font-size: 13px;
+    color: #a8d8ea;
+    white-space: nowrap;
+  }
+  .tag-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tag-chip {
+    padding: 4px 12px;
+    border-radius: 14px;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid #1e3a5f;
+    background: #0d1b36;
+    color: #8b8fa3;
+    transition: all 0.15s;
+  }
+  .tag-chip:hover {
+    border-color: #3a7bd5;
+    color: #a8d8ea;
+  }
+  .tag-chip.active {
+    background: rgba(58,123,213,0.25);
+    border-color: #3a7bd5;
+    color: #a8d8ea;
+    font-weight: 500;
+  }
+  .tag-filter-clear {
+    padding: 4px 10px;
+    border-radius: 14px;
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px solid #e9456040;
+    background: transparent;
+    color: #e94560;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .tag-filter-clear:hover {
+    background: rgba(233,69,96,0.1);
+  }
+  /* 任务组头部标签 */
+  .group-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: 6px;
+  }
+  .group-tag {
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+    background: rgba(58,123,213,0.15);
+    color: #a8d8ea;
+  }
+
+  /* 空状态 */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #555;
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state h3 { font-size: 16px; color: #8b8fa3; margin-bottom: 6px; }
+  .empty-state p { font-size: 13px; color: #555; }
+
+  /* 展开/收起 */
+  .collapsed .task-group-body { display: none; }
+  .toggle-icon {
+    transition: transform 0.2s;
+    font-size: 12px;
+    color: #8b8fa3;
+  }
+  .collapsed .toggle-icon { transform: rotate(-90deg); }
+
+  /* 文件关联任务信息（折叠面板） */
+  .task-info-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: #5a9bf5;
+    cursor: pointer;
+    user-select: none;
+    border: none;
+    background: none;
+    transition: color 0.15s;
+  }
+  .task-info-toggle:hover { color: #7ab5ff; }
+  .task-info-toggle .ti-arrow {
+    display: inline-block;
+    font-size: 10px;
+    transition: transform 0.2s;
+    transform: rotate(90deg);
+  }
+  .task-info-toggle.collapsed .ti-arrow { transform: rotate(0deg); }
+  .task-info-panel {
+    display: block;
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: rgba(26, 39, 68, 0.6);
+    border: 1px solid #1e3a5f;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #8b8fa3;
+  }
+  .task-info-panel.collapsed { display: none; }
+
+  /* 文件卡片上直接显示的标签 */
+  .file-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .file-card-tag {
+    padding: 2px 8px;
+    background: rgba(58,123,213,0.2);
+    border: 1px solid rgba(58,123,213,0.35);
+    border-radius: 4px;
+    color: #7ab5ff;
+    font-size: 11px;
+  }
+  .task-info-panel .ti-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+  .task-info-panel .ti-label {
+    color: #556a8a;
+    white-space: nowrap;
+    min-width: 50px;
+  }
+  .task-info-panel .ti-value {
+    color: #cbd5e1;
+    word-break: break-all;
+  }
+  .task-info-panel .ti-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .task-info-panel .ti-tag {
+    padding: 1px 6px;
+    background: rgba(58,123,213,0.15);
+    border-radius: 3px;
+    color: #a8d8ea;
+    font-size: 10px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📁 Pavo 文件预览</h1>
+  <div class="header-actions">
+    <span class="badge" id="totalBadge">0 文件</span>
+    <a href="/admin" style="color:#a8d8ea;text-decoration:none;font-size:13px;">← 任务管理</a>
+  </div>
+</div>
+
+<div class="container">
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <input type="text" id="filterInput" placeholder="输入任务号过滤，如 SD-20260215-xxxx...">
+    <button class="btn-refresh" id="btnRefresh">🔄 刷新</button>
+  </div>
+
+  <!-- 标签筛选 -->
+  <div class="tag-filter" id="tagFilterArea" style="display:none;">
+    <span class="tag-filter-label">🏷️ 标签筛选:</span>
+    <div class="tag-filter-chips" id="tagFilterChips"></div>
+    <button class="tag-filter-clear" id="tagFilterClear" style="display:none;">✕ 清除</button>
+  </div>
+
+  <!-- 统计 -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-value" id="statTotal">0</div>
+      <div class="stat-label">总文件数</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statTasks">0</div>
+      <div class="stat-label">任务数</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statHD">0</div>
+      <div class="stat-label">高清 HD</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statStandard">0</div>
+      <div class="stat-label">标准</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="statSize">0</div>
+      <div class="stat-label">总大小 (MB)</div>
+    </div>
+  </div>
+
+  <!-- 文件列表 -->
+  <div id="fileList"></div>
+</div>
+
+<script>
+const API = window.location.origin;
+const filterInput = document.getElementById('filterInput');
+const btnRefresh = document.getElementById('btnRefresh');
+const fileList = document.getElementById('fileList');
+const totalBadge = document.getElementById('totalBadge');
+const statTotal = document.getElementById('statTotal');
+const statTasks = document.getElementById('statTasks');
+const statHD = document.getElementById('statHD');
+const statStandard = document.getElementById('statStandard');
+const statSize = document.getElementById('statSize');
+const tagFilterArea = document.getElementById('tagFilterArea');
+const tagFilterChips = document.getElementById('tagFilterChips');
+const tagFilterClear = document.getElementById('tagFilterClear');
+
+let selectedTags = new Set();
+let allKnownTags = [];
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function formatTime(isoStr) {
+  const d = new Date(isoStr);
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderTagFilter(tags) {
+  allKnownTags = tags || [];
+  if (allKnownTags.length === 0) {
+    tagFilterArea.style.display = 'none';
+    return;
+  }
+  tagFilterArea.style.display = 'flex';
+  tagFilterChips.innerHTML = allKnownTags.map(tag => {
+    const activeClass = selectedTags.has(tag) ? ' active' : '';
+    return `<span class="tag-chip${activeClass}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`;
+  }).join('');
+  tagFilterClear.style.display = selectedTags.size > 0 ? '' : 'none';
+
+  // 绑定点击
+  tagFilterChips.querySelectorAll('.tag-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const tag = chip.dataset.tag;
+      if (selectedTags.has(tag)) {
+        selectedTags.delete(tag);
+      } else {
+        selectedTags.add(tag);
+      }
+      loadFiles();
+    });
+  });
+}
+
+tagFilterClear.addEventListener('click', () => {
+  selectedTags.clear();
+  loadFiles();
+});
+
+async function loadFiles() {
+  const filterValue = filterInput.value.trim();
+  const params = new URLSearchParams();
+  if (filterValue) params.set('taskCode', filterValue);
+  if (selectedTags.size > 0) params.set('tags', Array.from(selectedTags).join(','));
+  const queryStr = params.toString() ? '?' + params.toString() : '';
+
+  try {
+    const resp = await fetch(`${API}/api/files${queryStr}`);
+    const data = await resp.json();
+
+    if (!data.success) {
+      fileList.innerHTML = '<div class="empty-state"><div class="icon">❌</div><h3>加载失败</h3></div>';
+      return;
+    }
+
+    // 更新标签筛选器
+    renderTagFilter(data.allTags || []);
+
+    const files = data.files || [];
+    const grouped = data.grouped || {};
+
+    // 更新统计
+    const hdCount = files.filter(f => f.quality === 'hd').length;
+    const stdCount = files.filter(f => f.quality !== 'hd').length;
+    const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
+    const taskCount = Object.keys(grouped).length;
+
+    statTotal.textContent = files.length;
+    statTasks.textContent = taskCount;
+    statHD.textContent = hdCount;
+    statStandard.textContent = stdCount;
+    statSize.textContent = (totalSize / (1024 * 1024)).toFixed(1);
+    totalBadge.textContent = `${files.length} 文件`;
+
+    if (files.length === 0) {
+      fileList.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">📂</div>
+          <h3>暂无上传文件</h3>
+          <p>在扩展面板中检索视频后，点击"📤 上传服务器"将视频上传到此处</p>
+        </div>`;
+      return;
+    }
+
+    // 按任务号分组渲染, 最新的在前
+    const taskCodes = Object.keys(grouped).sort((a, b) => {
+      // 按最新上传时间排序
+      const aLatest = grouped[a].reduce((max, f) => f.uploadedAt > max ? f.uploadedAt : max, '');
+      const bLatest = grouped[b].reduce((max, f) => f.uploadedAt > max ? f.uploadedAt : max, '');
+      return bLatest.localeCompare(aLatest);
+    });
+
+    let html = '';
+    for (const taskCode of taskCodes) {
+      const taskFiles = grouped[taskCode];
+      const hasHD = taskFiles.some(f => f.quality === 'hd');
+      const hasStd = taskFiles.some(f => f.quality !== 'hd');
+      const totalTaskSize = taskFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+      const latestUpload = taskFiles.reduce((max, f) => f.uploadedAt > max ? f.uploadedAt : max, '');
+
+      // 收集该任务组的标签
+      const groupTagsSet = new Set();
+      for (const tf of taskFiles) {
+        if (tf.taskTags && tf.taskTags.length > 0) {
+          tf.taskTags.forEach(t => groupTagsSet.add(t));
+        }
+      }
+      const groupTagsHtml = groupTagsSet.size > 0
+        ? `<span class="group-tags">${Array.from(groupTagsSet).map(t => `<span class="group-tag">${escapeHtml(t)}</span>`).join('')}</span>`
+        : '';
+
+      html += `
+        <div class="task-group" id="group-${escapeHtml(taskCode)}">
+          <div class="task-group-header" onclick="toggleGroup(this)">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span class="toggle-icon">▼</span>
+              <span class="task-code">${escapeHtml(taskCode)}</span>
+              ${hasHD ? '<span class="badge badge-hd" style="font-size:10px;padding:2px 8px;">HD</span>' : ''}
+              ${hasStd ? '<span class="badge badge-standard" style="font-size:10px;padding:2px 8px;">标准</span>' : ''}
+              ${groupTagsHtml}
+            </div>
+            <div class="task-group-meta">
+              <span>${taskFiles.length} 个文件</span>
+              <span>${formatSize(totalTaskSize)}</span>
+              <span>${formatTime(latestUpload)}</span>
+            </div>
+          </div>
+          <div class="task-group-body">
+            <div class="file-grid">
+              ${taskFiles.map(f => renderFileCard(f)).join('')}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    fileList.innerHTML = html;
+
+  } catch (err) {
+    fileList.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">❌</div>
+        <h3>连接失败</h3>
+        <p>${escapeHtml(err.message)}</p>
+      </div>`;
+  }
+}
+
+function renderFileCard(f) {
+  const isVideo = (f.mimeType || '').startsWith('video');
+  const isImage = (f.mimeType || '').startsWith('image');
+  const fileUrl = `${API}/api/files/${f.fileId}`;
+  const qualityClass = f.quality === 'hd' ? 'quality-hd' : 'quality-standard';
+  const qualityLabel = f.quality === 'hd' ? 'HD 高清' : '标准';
+
+  let previewHtml = '';
+  if (isVideo) {
+    previewHtml = `<video src="${fileUrl}" controls preload="metadata" muted></video>`;
+  } else if (isImage) {
+    previewHtml = `<img src="${fileUrl}" alt="${escapeHtml(f.filename)}">`;
+  } else {
+    previewHtml = `<div style="color:#555;font-size:14px;">📄 ${escapeHtml(f.mimeType || 'unknown')}</div>`;
+  }
+
+  // 构建任务信息面板
+  const hasTaskInfo = f.taskPrompt || f.taskDescription || (f.taskTags && f.taskTags.length > 0) || f.taskModelConfig;
+  let taskInfoHtml = '';
+  if (hasTaskInfo) {
+    const uid = `ti-${f.fileId}`;
+    let rows = '';
+    if (f.taskDescription) {
+      rows += `<div class="ti-row"><span class="ti-label">描述:</span><span class="ti-value">${escapeHtml(f.taskDescription)}</span></div>`;
+    }
+    if (f.taskPrompt) {
+      rows += `<div class="ti-row"><span class="ti-label">提示词:</span><span class="ti-value">${escapeHtml(f.taskPrompt)}</span></div>`;
+    }
+    if (f.taskTags && f.taskTags.length > 0) {
+      rows += `<div class="ti-row"><span class="ti-label">标签:</span><span class="ti-tags">${f.taskTags.map(t => `<span class="ti-tag">${escapeHtml(t)}</span>`).join('')}</span></div>`;
+    }
+    if (f.taskModelConfig) {
+      const mc = f.taskModelConfig;
+      const configParts = [
+        mc.model || '', mc.referenceMode || '', mc.aspectRatio || '', mc.duration || ''
+      ].filter(Boolean).join(' · ');
+      rows += `<div class="ti-row"><span class="ti-label">模型:</span><span class="ti-value">${escapeHtml(configParts)}</span></div>`;
+    }
+    if (f.taskRealSubmit) {
+      rows += `<div class="ti-row"><span class="ti-label">提交:</span><span class="ti-value" style="color:#e94560;">真实提交</span></div>`;
+    }
+    if (f.taskCreatedAt) {
+      rows += `<div class="ti-row"><span class="ti-label">任务创建:</span><span class="ti-value">${formatTime(f.taskCreatedAt)}</span></div>`;
+    }
+    // 直接显示标签在卡片上
+    let cardTagsHtml = '';
+    if (f.taskTags && f.taskTags.length > 0) {
+      cardTagsHtml = `<div class="file-card-tags">${f.taskTags.map(t => `<span class="file-card-tag">${escapeHtml(t)}</span>`).join('')}</div>`;
+    }
+    taskInfoHtml = `
+      ${cardTagsHtml}
+      <button class="task-info-toggle collapsed" onclick="toggleTaskInfo(this, '${uid}')">
+        <span class="ti-arrow">▶</span> 📋 任务详情
+      </button>
+      <div class="task-info-panel collapsed" id="${uid}">
+        ${rows}
+      </div>`;
+  }
+
+  return `
+    <div class="file-card">
+      <div class="file-preview">
+        ${previewHtml}
+        <span class="quality-tag ${qualityClass}">${qualityLabel}</span>
+      </div>
+      <div class="file-info">
+        <div class="file-name">${escapeHtml(f.filename)}</div>
+        <div class="file-meta">
+          <span>${formatSize(f.size)}</span>
+          <span>${formatTime(f.uploadedAt)}</span>
+        </div>
+        ${taskInfoHtml}
+        <div class="file-actions">
+          <a class="btn-download" href="${fileUrl}" download="${escapeHtml(f.filename)}">⬇️ 下载</a>
+          <a class="btn-open" href="${fileUrl}" target="_blank">🔗 新标签</a>
+        </div>
+      </div>
+    </div>`;
+}
+
+function toggleGroup(header) {
+  const group = header.parentElement;
+  group.classList.toggle('collapsed');
+}
+
+function toggleTaskInfo(btn, panelId) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  const isCollapsed = panel.classList.toggle('collapsed');
+  btn.classList.toggle('collapsed', isCollapsed);
+}
+
+// 事件绑定
+btnRefresh.addEventListener('click', loadFiles);
+filterInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loadFiles();
+});
+
+// 防抖过滤
+let filterTimer = null;
+filterInput.addEventListener('input', () => {
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(loadFiles, 500);
+});
+
+// 初始加载
+loadFiles();
+// 定时刷新
+setInterval(loadFiles, 15000);
+</script>
+</body>
+</html>

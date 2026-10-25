@@ -3,9 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { CANVAS_PERF_GATE_SCENARIOS, canvasPerfGateTimeoutMs } from './canvas-perf/gateScenarios.mjs'
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export const DEFAULT_CANVAS_SCENARIO_TIMEOUT_MS = 8 * 60_000
-export const PERFORMANCE_CANVAS_SCENARIO_TIMEOUT_MS = 20 * 60_000
 export const MAX_CANVAS_SCENARIO_LOG_BYTES = 32 * 1024 * 1024
 
 export const CRITICAL_CANVAS_SCENARIOS = [
@@ -26,6 +27,9 @@ export const FULL_CANVAS_SCENARIOS = [
   { id: 'group-reference-direction', script: 'tests/ux/group-reference-direction.walk.mjs' },
   { id: 'canvas-landing', script: 'tests/ux/p4-s5-canvas-landing.e2e.mjs' },
   { id: 'canvas-reconcile', script: 'tests/ux/p4-s5-canvas-reconcile.e2e.mjs' },
+  { id: 'magnetic-handle', script: 'tests/ux/canvas-magnetic-handle.walk.mjs' },
+  // 打开时适应一次：冷开 + 从项目库重开两条路（2026-09-26 重开那条曾不摆全貌）。
+  { id: 'open-fit', script: 'tests/ux/canvas-open-fit.walk.mjs' },
 ]
 
 export const PERFORMANCE_CANVAS_SCENARIOS = [
@@ -33,7 +37,9 @@ export const PERFORMANCE_CANVAS_SCENARIOS = [
     id: 'medium-canvas-performance',
     script: 'tests/ux/canvas-performance-benchmark.e2e.mjs',
     args: ['validation-gate', '--scale', 'M', '--runs', '1'],
-    timeoutMs: PERFORMANCE_CANVAS_SCENARIO_TIMEOUT_MS,
+    // 上限由门岗场景条数派生（见 canvas-perf/gateScenarios.mjs）：加一条场景自动多一格，
+    // 不会像 #763 那样撞上写死的 20 分钟被砍在半路。
+    timeoutMs: canvasPerfGateTimeoutMs(CANVAS_PERF_GATE_SCENARIOS),
   },
 ]
 
@@ -42,7 +48,7 @@ export const PERFORMANCE_CANVAS_SCENARIOS = [
 // 桶是显式清单而不是 index 取模：新场景加进 FULL_CANVAS_SCENARIOS 却没分桶时，
 // 每个 shard 启动即 fail-closed 抛错（见 assertFullCanvasShardPartition），场景不可能被静默漏跑。
 export const FULL_CANVAS_SHARDS = Object.freeze([
-  Object.freeze(['gestures', 'read-only-reload', 'blank-context-menu', 'group-baseline', 'group-reference-direction', 'canvas-reconcile']),
+  Object.freeze(['gestures', 'read-only-reload', 'blank-context-menu', 'group-baseline', 'group-reference-direction', 'canvas-reconcile', 'magnetic-handle', 'open-fit']),
   Object.freeze(['group-ports', 'card-stack-persistence', 'shortcuts', 'node-context-menu', 'batch-production', 'selection-toolbar', 'canvas-landing']),
 ])
 

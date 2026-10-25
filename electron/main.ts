@@ -23,12 +23,16 @@ import { importRendererCatalogPackage, upsertRendererCatalogMapping, upsertRende
 import { registerAssetTransportIpc } from "./assetTransportIpc";
 import { retypeModelCatalogModel } from "./catalog/modelRetype";
 import { registerTaskIpcHandlers } from "./tasks/taskIpcHandlers";
+import { createTaskSubmissionRuntime } from './tasks/taskSubmissionRuntime';
+import { initGlobalIdempotencyStore } from './tasks/idempotencyStore';
+import { getSettingsRoot } from './runtimePaths';
+import { registerDesktopIntegrationIpc } from './desktopIntegrationIpc';
+import { configureCustomMcpRuntime, runCustomDirector, setCustomBlenderCleanup, stopCustomGenerationProcesses } from './customGenerationLifecycle';
 import { registerNotificationIpc } from "./notificationIpc";
 import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
 import { listWorkspaceFiles, resolveWorkspaceFilePath } from "./workspace/workspaceFileIndex";
 import { registerWorkspaceFileDeleteIpc } from "./workspace/workspaceFileDelete";
 import { registerWorkspaceSyncIpc } from "./workspace/workspaceSyncIpc";
-import { registerRendererCrashIpc } from "./crashLog";
 import { installMainProcessLifecycle } from "./mainProcessLifecycle";
 import { registerExportJobIpc } from "./export/exportJobIpc";
 import { registerTextStreamIpc } from "./ai/textStreamIpc";
@@ -46,6 +50,7 @@ import { registerExistingConnectionIpc } from "./providerAdapter/existingConnect
 import { registerUpdaterIpc } from "./update/autoUpdater";
 import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
+import { registerNomiProtocolClient } from "./protocolRegistration";
 import { verifyMcp } from "./capabilityCore/mcpVerify";
 import { registerCustomMcpProfileIpc, watchMcpProfiles } from "./capabilityCore/mcpProfiles";
 import { registerLocalProtocol } from "./protocol/localProtocol";
@@ -69,12 +74,19 @@ import { canvasReadSurfaceRuntime } from "./capabilityCore/canvasReadSurfaceRunt
 import { registerDesktopCanvasReadRuntime, type CanvasReadExecutionRuntime } from "./capabilityCore/canvasReadMainRuntime";
 import { registerAgentLaneIpc, type LaneIpcRegistration } from "./agentLane/laneIpc";
 import { createDesktopLaneDependencies } from "./agentLane/laneDesktopRuntime";
-import type { ResidentGenerationAdapterFactory } from "./capabilityCore/residentGenerationAdapterFactory";
+import { bootResidentSurfaceLifecycle, residentGenerationFactory } from "./capabilityCore/residentSurfaceLifecycle";
 import { createDesktopProposalReceiptResolver } from "./capabilityCore/projectAgentReceiptResolver";
 import { installContentSecurityPolicy } from "./contentSecurityPolicy";
 import { registerSkillIpc } from "./skills/skillIpc";
 import { logError, logInfo, logWarn } from "./logging/logger";
+import { seedFromStableInstallAtBoot } from "./settings/sideBySideInstallSeed";
 import { registerDevDiagnostics } from "./logging/devDiagnostics";
+import { registerRendererLogIpc } from "./logging/rendererLog";
+import { createProjectInteractionCapture } from "./assets/projectInteractionCapture";
+import { issueChildWindowProject } from "./assets/windowProjectCapture";
+import { installWindowNavigation } from "./windowNavigation";
+import { installQuitTeardown } from "./quitTeardown";
+import { backgroundWindowOptions, disposeBackgroundLifecycle, hasInFlightProductionWork, installBackgroundLifecycle, installBackgroundWindowBehavior, isBackgroundLaunch, touchBackgroundActivity } from "./backgroundLaunch";
 // profile 重定向必须排在 installMainProcessLifecycle **之前**：崩溃处理与日志一装上就会写盘，
 // 晚一步重定向，这次会话的头几行（含会话表头）会落在被隔离掉的那个目录里。
 const configuredUserDataDir = String(process.env.NOMI_ELECTRON_USER_DATA_DIR || "").trim();
@@ -103,7 +115,13 @@ const isMcpStdio = process.env.NOMI_MCP_STDIO === "1";
 if (isMcpStdio && process.env.NOMI_APP_NAME) app.setName(process.env.NOMI_APP_NAME);
 const allowE2eMultiInstance = process.env.NOMI_E2E_ALLOW_MULTI_INSTANCE === "1";
 const hasSingleInstanceLock = isMcpStdio ? false : allowE2eMultiInstance ? true : app.requestSingleInstanceLock();
-const { ensureArtifactPreviewSecret, flushPendingProductionDeepLink } = installProductionRunDesktopLifecycle({ isMcpStdio, allowE2eMultiInstance, hasSingleInstanceLock, ensureMainWindow: () => ensureMainWindow() });
+configureCustomMcpRuntime(isMcpStdio);
+const { ensureArtifactPreviewSecret, flushPendingProductionDeepLink } = installProductionRunDesktopLifecycle({
+  isMcpStdio,
+  allowE2eMultiInstance,
+  hasSingleInstanceLock,
+  ensureMainWindow: () => ensureMainWindow(),
+});
 if (isMcpStdio) {
   void app
     .whenReady()
@@ -135,8 +153,9 @@ const DEV_RENDERER_LOAD_ATTEMPTS = 20;
 const DEV_RENDERER_LOAD_RETRY_MS = 500;
 let isRecreatingMainWindow = false;
 const lowMemoryMode = process.env.NOMI_LOW_MEMORY_MODE === "1";
-const capabilityCoreDisabled =
-  process.env.NOMI_DISABLE_CAPABILITY_CORE === "1" || (lowMemoryMode && process.env.NOMI_KEEP_CAPABILITY_CORE !== "1");
+// 「本会话起不起能力核」的判断与记录是同一件事（residentSurfaceLifecycle 是唯一 owner）：
+// 不起 = 常驻生成面按配置 disabled，lane 与付费卡读到的是这个相，而不是一个说不出原因的 undefined。
+const capabilityCoreDisabled = bootResidentSurfaceLifecycle({ env: process.env, lowMemoryMode }).phase === "disabled";
 let runtimeModulePromise: Promise<typeof import("./runtime")> | null = null;
 let capabilityCoreModule: typeof import("./capabilityCore/appIntegration") | null = null;
 let capabilityCoreModulePromise: Promise<typeof import("./capabilityCore/appIntegration")> | null = null;
@@ -160,29 +179,25 @@ function getActiveCapabilityPort(): number | null {
 }
 
 let desktopLaneIpc: LaneIpcRegistration | undefined;
-let desktopGenerationAdapterFactory: ResidentGenerationAdapterFactory['factory'] | undefined;
+const taskSubmissionRuntime = createTaskSubmissionRuntime(loadRuntimeModule);
 async function startDesktopCapabilityCore(): Promise<void> {
   if (!desktopCanvasReadExecutionRuntime) throw new Error("Canvas read execution runtime is unavailable");
   const core = await loadCapabilityCoreModule();
   await core.startCapabilityCore(
-    async (payload) => {
-      const { runTask } = await loadRuntimeModule();
-      return runTask(payload);
-    },
-    async (payload) => {
-      const { fetchTaskResult } = await loadRuntimeModule();
-      return fetchTaskResult(payload);
-    },
+    taskSubmissionRuntime.run,
+    taskSubmissionRuntime.result,
     {
       canvasReadExecutionRuntime: desktopCanvasReadExecutionRuntime,
-      onGenerationReady: (factory) => { desktopGenerationAdapterFactory = factory; },
       proposalReceiptFor: createDesktopProposalReceiptResolver(),
+      onRpcActivity: touchBackgroundActivity,
+      runDirector: runCustomDirector,
     },
   );
   capabilityPortCache = core.getCapabilityPort();
 }
 
 function stopDesktopCapabilityCore(): void {
+  stopCustomGenerationProcesses();
   capabilityCoreModule?.stopCapabilityCore();
   capabilityPortCache = null;
 }
@@ -238,18 +253,6 @@ function getRendererUrlWithRoute(currentUrl?: string): string {
   }
 }
 
-function isRendererEntryUrl(url: string, rendererUrl: string): boolean {
-  try {
-    const actual = new URL(url);
-    const expected = new URL(rendererUrl);
-    if (actual.protocol !== expected.protocol) return false;
-    if (actual.protocol === "file:") return actual.pathname === expected.pathname;
-    return actual.origin === expected.origin && actual.pathname === expected.pathname;
-  } catch {
-    return url === rendererUrl;
-  }
-}
-
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -295,7 +298,9 @@ async function createWindow(
       nodeIntegration: false,
       sandbox: false,
     },
+    ...backgroundWindowOptions(),
   });
+  installBackgroundWindowBehavior(mainWindow);
   setMainWindow(mainWindow); // 主窗口单一真相（registry）；closed 条件清理防窗口重建竞态误清新窗
   installMainWindowInteractions(mainWindow);
   mainWindow.on("closed", () => {
@@ -306,26 +311,12 @@ async function createWindow(
   mainWindow.on("maximize", () => mainWindow.webContents.send("nomi:window:maximized", true));
   mainWindow.on("unmaximize", () => mainWindow.webContents.send("nomi:window:maximized", false));
 
-  // External http(s) links (e.g. the "get your API key" link → provider console)
-  // open in the user's real browser, never as a new in-app Electron window.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
-
   const rendererUrl = options.rendererUrl || getRendererUrl();
+  installWindowNavigation(mainWindow, rendererUrl);
 
   // 纵深防御：setWindowOpenHandler 只拦新窗口，拦不住顶层框架自身被诱导导航
   // （window.location = 'http://evil'）。一旦发生，整个 app 会变成加载远端页面的浏览器。
   // 这里把任何「离开本地渲染入口」的顶层导航一律拦下；外链改走系统浏览器。
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isRendererEntryUrl(url, rendererUrl)) return;
-    event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-  });
-
   // 能力核 A 模式实时桥：登记当前窗口 webContents，让主进程把外部 MCP 的画布改动/付费确认
   // 转发进运行中的渲染层（所见即所得）。窗口销毁即清除，避免向死窗口发送。
   setRendererTarget(mainWindow.webContents);
@@ -346,7 +337,7 @@ async function createWindow(
 
   if (options.maximize) mainWindow.maximize();
 
-  if (isDev) {
+  if (isDev && process.env.NOMI_E2E !== '1') {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
   return mainWindow;
@@ -369,7 +360,11 @@ function recreateMainWindowFromSender(sender: WebContents, options: { preserveRo
     session.defaultSession.clearCodeCaches({}).catch(() => undefined),
   ])
     .then(() => createWindow({ bounds, maximize, rendererUrl }))
-    .then((nextWindow) => nextWindow.focus())
+    .then((nextWindow) => {
+      // A renderer reload can also happen in the hidden MCP-launched process;
+      // never let that maintenance path surface the background window.
+      if (!isBackgroundLaunch) nextWindow.focus();
+    })
     .catch((error) => {
       logError("window", "recreate-window-failed", error, { reason: options.reason });
     })
@@ -400,17 +395,20 @@ function registerIpc(): void {
   // independent from the delayed/optional external capability core.
   const canvasReadExecutionRuntime = registerDesktopCanvasReadRuntime();
   desktopCanvasReadExecutionRuntime = canvasReadExecutionRuntime;
+  const childWindowProject = (sender: WebContents) => issueChildWindowProject(sender, BrowserWindow.fromWebContents);
+  const projectInteraction = createProjectInteractionCapture(canvasReadExecutionRuntime.surfaceCapture, childWindowProject);
+  registerDesktopIntegrationIpc({ setCancelBlenderRendersOnQuit: setCustomBlenderCleanup });
   desktopLaneIpc = registerAgentLaneIpc(createDesktopLaneDependencies(
-    canvasReadExecutionRuntime, () => desktopGenerationAdapterFactory,
+    canvasReadExecutionRuntime, residentGenerationFactory,
   ));
   registerI18nIpc();
   // 会话式模型接入的可信渲染层交接（凭据保存/确认/handoff 队列）。0b6441c6 移植时这两行被误删，而
-  // preload 与 OnboardingWizard/IntegrationConfirmationPanel 仍调这些通道（No handler registered）；
+  // preload 与 OnboardingWizard/IntegrationSelfCheckPanel 仍调这些通道（No handler registered）；
   // model-integration-trusted-audio.e2e 抓到后按根因恢复注册。
   registerIntegrationHandoffIpc();
   registerIntegrationSessionIpc(installIntegrationSessionRuntime());
-  // 渲染层崩溃（RootErrorBoundary）也落到同一崩溃日志（P0-8）；注册与 sender 守卫住在 crashLog（main.ts 巨壳只减不增）。
-  registerRendererCrashIpc({ onMessage: ipcMain.on.bind(ipcMain), assertTrusted: assertTrustedUiSender });
+  // 渲染层失败与崩溃的唯一日志通道（崩溃另进崩溃日志，P0-8）；注册与 sender 守卫住在 logging/rendererLog（main.ts 巨壳只减不增）。
+  registerRendererLogIpc({ onMessage: ipcMain.on.bind(ipcMain), assertTrusted: assertTrustedUiSender });
   // 窗口控制（Windows 自绘标题栏）：只注册一次，作用于发起请求的那个窗口（fromWebContents），
   // 而非闭包捕获某个窗口实例——后者会在第二次 createWindow（重开库/activate）时重复注册 handle 抛错、崩窗。
   ipcMain.handle("nomi:window:minimize", (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
@@ -439,13 +437,10 @@ function registerIpc(): void {
     assertTrustedSender(event);
     recreateMainWindowFromSender(event.sender, { preserveRoute: true, reason: "hard reload window" });
   });
+  // 读目录的 IPC 是**纯读**：种子对账（写盘）只在启动期跑一次。挂在读上时，盘上版本比应用新就会
+  // 让每次读都抛 → 设置页全空零报错（判据住 electron/catalogReadChannelsPureRead.test.ts）。
   registerSyncIpc("nomi:model-catalog:vendors:list", listModelCatalogVendors);
-  registerSyncIpc("nomi:model-catalog:models:list", (params?: unknown) => {
-    // Renderer 热更新不会重启 Electron main；读取时补一次内置种子，避免 onboarding
-    // 长时间停留在旧的持久化目录（例如 APIMart 缺 Grok Imagine 1.5）。
-    ensureBuiltinModelSeeds();
-    return listModelCatalogModels(params);
-  });
+  registerSyncIpc("nomi:model-catalog:models:list", listModelCatalogModels);
   registerSyncIpc("nomi:model-catalog:mappings:list", listModelCatalogMappings);
   registerSyncIpc("nomi:model-catalog:health", getModelCatalogHealth);
   registerSyncIpc("nomi:model-catalog:vendor:upsert", upsertRendererCatalogVendor);
@@ -475,32 +470,6 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const { fetchModelCatalogDocs } = await import("./catalog/catalogCommit");
     return fetchModelCatalogDocs(payload);
-  });
-  // 即梦会员（dreamina CLI）：设备码登录/账户检测/安装（异步，spawn 本地 CLI）。
-  ipcMain.handle("nomi:dreamina:status", async (event) => {
-    assertTrustedSender(event);
-    const { dreaminaStatus } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaStatus();
-  });
-  ipcMain.handle("nomi:dreamina:login-start", async (event) => {
-    assertTrustedSender(event);
-    const { dreaminaLoginStart } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaLoginStart();
-  });
-  ipcMain.handle("nomi:dreamina:login-poll", async (event, deviceCode: unknown) => {
-    assertTrustedSender(event);
-    const { dreaminaLoginPoll } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaLoginPoll(String(deviceCode || ""));
-  });
-  ipcMain.handle("nomi:dreamina:logout", async (event) => {
-    assertTrustedSender(event);
-    const { dreaminaLogout } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaLogout();
-  });
-  ipcMain.handle("nomi:dreamina:install", async (event) => {
-    assertTrustedSender(event);
-    const { dreaminaInstall } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaInstall();
   });
   ipcMain.handle("nomi:workspace:select-folder", async (event) => {
     assertTrustedSender(event);
@@ -553,7 +522,7 @@ function registerIpc(): void {
     shell.showItemInFolder(absolutePath);
     return { ok: true };
   });
-  registerWorkspaceFileDeleteIpc({ readProject });
+  registerWorkspaceFileDeleteIpc({ readProject, childWindowProject });
   registerWorkspaceSyncIpc({ readProject });
   ipcMain.handle("nomi:workspace:reveal-project-folder", (event, payload) => {
     assertTrustedSender(event);
@@ -570,36 +539,21 @@ function registerIpc(): void {
     const { testModelCatalogMapping } = await import("./catalog/catalogCommit");
     return testModelCatalogMapping(id, payload);
   });
-  ipcMain.handle("nomi:assets:import-remote-url", async (event, payload) => {
-    assertTrustedSender(event);
-    const { importRemoteAsset } = await loadRuntimeModule();
-    return importRemoteAsset(payload);
-  });
   ipcMain.handle("nomi:assets:list", async (event, payload) => {
     assertTrustedUiSender(event); // UI 面：素材盒界面长在浮层窗里，理由见 ipcSenderGuard#assertTrustedUiSender
     const { listProjectAssets } = await loadRuntimeModule();
     return listProjectAssets(payload);
   });
-  registerAssetsIpc();
+  registerAssetsIpc(projectInteraction);
   registerSettingsIpc();
-  registerVideoIpc();
+  registerVideoIpc(projectInteraction);
   registerScreenshotIpc();
   registerTikhubConnectorIpc();
-  ipcMain.handle("nomi:image:decompose-layers", async (event, payload) => {
-    assertTrustedSender(event);
-    const { decomposeLayers } = await import("./image/decomposeLayers");
-    return decomposeLayers(payload);
-  });
-  ipcMain.handle("nomi:scene3d:frames-to-video", async (event, payload) => {
-    assertTrustedSender(event);
-    const { framesToVideoAsset } = await import("./video/framesToVideo");
-    return framesToVideoAsset(payload);
-  });
   registerDirectorMobileIpc();
   registerExportJobIpc({
     getActiveProjectSelection: () => canvasReadSurfaceRuntime.getCommittedProjectSelection(),
   });
-  registerTaskIpcHandlers(loadRuntimeModule);
+  registerTaskIpcHandlers(loadRuntimeModule, taskSubmissionRuntime);
   // 「接入 AI 编程助手」卡：读接入状态/配置片段 + 一键写入/撤销 ~/.claude.json 的 mcpServers.nomi。
   registerSyncIpc("nomi:capability:mcp-info", () => readMcpInfo(getActiveCapabilityPort()));
   registerSyncIpc("nomi:capability:mcp-install", installMcp);
@@ -634,13 +588,10 @@ if (hasSingleInstanceLock)
     .whenReady()
     .then(async () => {
       setDesktopLocale(app.getLocale());
+      initGlobalIdempotencyStore(getSettingsRoot());
       ensureArtifactPreviewSecret();
       watchMcpProfiles();
-      try {
-        app.setAsDefaultProtocolClient("nomi");
-      } catch {
-        // Registration is best-effort in dev and on platforms that disallow it.
-      }
+      registerNomiProtocolClient(app);
       registerLocalProtocol();
       installContentSecurityPolicy(session.defaultSession, {
         isDev,
@@ -654,7 +605,9 @@ if (hasSingleInstanceLock)
         .then(() => import("./vendor/vendorBaseFallbackBoot"))
         .then((m) => m.configureVendorBaseFallbackAtBoot())
         .catch((error) => logError("main", "network-boot-failed", error));
-      // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
+      // Preview/RC 首次启动从稳定版拷一份配置过来（共用 userData 不行，理由在该模块头注释）。
+      // 必须排在种子对账与任何一次配置读之前：它判断的正是「自己这份是不是全新的」。
+      seedFromStableInstallAtBoot();      // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
       // sync 且渲染层一进库就读 catalog → 须在 createWindow 前完成。
       try {
         ensureBuiltinModelSeeds();
@@ -663,6 +616,7 @@ if (hasSingleInstanceLock)
       }
       registerIpc(); void import('./telemetry/telemetryLifecycle').then(({ recordAppStarted }) => recordAppStarted());
       await createWindow();
+      installBackgroundLifecycle({ hasInFlightWork: hasInFlightProductionWork, quit: () => app.quit() });
       // 外部 capability RPC 不是首窗依赖，且它一旦 listen 就可能收到会解析凭据的 models/generation 请求。
       // 必须在窗口完成后才暴露；失败显式消化，不能反向拖垮已经可用的首窗。低内存模式仍默认跳过。
       if (!capabilityCoreDisabled) {
@@ -685,7 +639,7 @@ if (hasSingleInstanceLock)
         },
         lowMemoryMode ? 15000 : 3000,
       );
-      app.once("before-quit", startCatalogReconciliation());
+      app.once("will-quit", startCatalogReconciliation());
       app.on("activate", () => void ensureMainWindow()); // macOS 关窗后进程不退，点 Dock 靠这条把窗口建回来
     })
     .catch((error) => {
@@ -698,15 +652,12 @@ app.on("window-all-closed", () => {
 });
 // 退出时中止所有在跑导出，否则 ffmpeg 子进程会变孤儿（继续占 CPU/写文件，直到自己跑完）。
 // abort → ffmpegRunner 监听 abort 后 kill 子进程。同步、不抛，绝不拖住退出。
-app.on("before-quit", () => {
-  // 能力核退出清理：清实例广告 + 关 RPC，让外部探测立刻知道「app 已关」。同步、不抛。
-  stopDesktopCapabilityCore();
-  void desktopLaneIpc?.dispose().catch((error) => logError("agent", "close-on-quit-failed", error));
-  try {
-    const { abortAllActiveExports } = require("./export/exportJobs") as typeof import("./export/exportJobs");
-    const aborted = abortAllActiveExports();
-    if (aborted > 0) logInfo("export", "aborted-on-quit", { count: aborted });
-  } catch (error) {
-    logError("export", "abort-on-quit-failed", error);
-  }
+installQuitTeardown(app, {
+  disposeBackgroundLifecycle,
+  stopDesktopCapabilityCore,
+  disposeDesktopLaneIpc: () => desktopLaneIpc?.dispose() ?? Promise.resolve(),
+  abortAllActiveExports: () => (require("./export/exportJobs") as typeof import("./export/exportJobs")).abortAllActiveExports(),
+  onError: (stage, error) => stage === "exports-aborted"
+    ? logInfo("export", "aborted-on-quit", { count: error && typeof error === "object" && "count" in error && typeof error.count === "number" ? error.count : 0 })
+    : logError("agent", `${stage}-on-quit-failed`, error),
 });

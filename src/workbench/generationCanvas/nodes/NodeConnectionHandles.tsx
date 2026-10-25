@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPlus } from '@tabler/icons-react'
@@ -38,7 +39,6 @@ type MagneticConnectionHandleProps = {
   pendingTarget: boolean
   onStart: (event: React.PointerEvent<HTMLElement>, side: ConnectionAnchorSide) => void
   onComplete: (event: React.MouseEvent<HTMLButtonElement>) => void
-  ariaLabel?: string
 }
 
 export function MagneticConnectionHandle({
@@ -47,7 +47,6 @@ export function MagneticConnectionHandle({
   pendingTarget,
   onStart,
   onComplete,
-  ariaLabel,
 }: MagneticConnectionHandleProps): JSX.Element {
   const { t } = useTranslation()
   const homeX = side === 'left' ? 'calc(100% - 28px)' : '28px'
@@ -55,12 +54,12 @@ export function MagneticConnectionHandle({
     <button
       type="button"
       className={cn(
-        'generation-canvas-v2-node__magnetic-handle group/magnetic pointer-events-auto absolute top-1/2 z-[4]',
+        'generation-canvas-v2-node__magnetic-handle group/magnetic pointer-events-auto absolute top-1/2 z-[7]',
         'h-[min(168px,calc(100%+28px))] w-28 -translate-y-1/2',
         'touch-none cursor-crosshair border-0 bg-transparent p-0',
         side === 'left' ? 'left-[-112px]' : 'right-[-112px]',
       )}
-      aria-label={ariaLabel || (pendingTarget ? t('generationCommon.node.connectHere') : t('generationCommon.node.startConnection'))}
+      aria-label={pendingTarget ? t('generationCommon.node.connectHere') : t('generationCommon.node.startConnection')}
       data-active={active ? 'true' : 'false'}
       data-home-x={homeX}
       data-side={side}

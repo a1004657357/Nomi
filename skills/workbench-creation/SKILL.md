@@ -6,8 +6,8 @@ metadata:
     selectable-in-workbench: true
     version: 1.0.0
     tools:
-      - creation_read
-      - creation_write
+      - read_script
+      - write_script
     required-providers:
       - text
     library:
@@ -19,7 +19,7 @@ metadata:
         zh-CN: 协助写作、改写和编剧，生成提示词及分镜草稿，修改前交由用户确认。
         en: Develop and revise stories, scripts and generation prompts.
       appliesTo:
-      - text
+        - text
       group:
         zh-CN: 创作流程
         en: Workflow
@@ -30,7 +30,7 @@ metadata:
         author: Nomi contributors
         changes: Nomi adds library presentation metadata; the skill body is unchanged.
         evidence:
-        - https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/workbench-creation/SKILL.md
+          - https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/workbench-creation/SKILL.md
       preview:
         path: assets/cover.png
         type: image

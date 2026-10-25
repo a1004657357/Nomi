@@ -7,6 +7,9 @@ import { getGenerationNodeDefaultTitle, isGenerationNodeKind } from '../model/ge
 import { BUILTIN_CATEGORY_IDS } from '../../project/projectCategories'
 import { CAMERA_SPEED_DURATION, type CameraMove, type CameraSpeed } from '../nodes/director/agent/cameraMoveVocab'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { BUILTIN_CAPABILITY_RECIPES } from '../../../config/capabilityRecipes'
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import { resolveCapabilityAlias } from '../../../../electron/shared/agentCapabilities/registry'
 
 const T = 'generationCommon.assistant.toolCall'
 const tt = (key: string, values?: Record<string, unknown>): string =>
@@ -59,6 +62,35 @@ function plannedNodeKind(raw: unknown): GenerationNodeKind {
 
 export function summarizeToolCall(toolName: string, args: unknown): string {
   const record = args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+  const creative = resolveCapabilityAlias(toolName)
+  if (creative?.contract.id === 'creative.component.read') {
+    if (creative.alias === creative.contract.aliases.pi) return i18n.t('customWorkflow.toolRecipeList')
+    if (creative.alias === 'read_vibing_director') return i18n.t('customWorkflow.toolDirectorRead')
+  }
+  if (creative?.contract.id === 'creative.component.write') {
+    const sourceTitle = typeof record.sourceNodeId === 'string' ? nodeTitleById(record.sourceNodeId) : null
+    const source = sourceTitle ? quoted(sourceTitle) : i18n.t('customWorkflow.toolNodeFallback')
+    if (creative.alias === creative.contract.aliases.pi) {
+      const recipe = BUILTIN_CAPABILITY_RECIPES.find(candidate => candidate.id === record.recipeId)
+      const recipeLabel = recipe
+        ? translateCapabilityWorkflowText(recipe.label)
+        : typeof record.recipeId === 'string' ? record.recipeId : i18n.t('customWorkflow.toolRecipeFallback')
+      return i18n.t('customWorkflow.toolRecipeApply', {
+        source, recipe: recipeLabel,
+        review: record.visionReview ? i18n.t('customWorkflow.toolRecipeReview') : '',
+      })
+    }
+    if (creative.alias === 'save_creative_resource') {
+      const kind = record.kind === 'character' ? i18n.t('storyboardEditor.anchor.kind.character')
+        : record.kind === 'scene' ? i18n.t('storyboardEditor.anchor.kind.scene')
+          : record.kind === 'prop' ? i18n.t('storyboardEditor.anchor.kind.prop') : i18n.t('storyboardEditor.anchor.kind.style')
+      return i18n.t('customWorkflow.toolResourceSave', { source, kind, label: String(record.label ?? '') })
+    }
+    if (creative.alias === 'handoff_model3d') {
+      return i18n.t(record.target === 'staging' ? 'customWorkflow.toolModelHandoffStaging' : 'customWorkflow.toolModelHandoffDirector', { source })
+    }
+    if (creative.alias === 'apply_vibing_director_plan') return i18n.t('customWorkflow.toolDirectorApply')
+  }
   if (toolName === 'create_canvas_nodes') {
     const nodes = Array.isArray(record.nodes) ? record.nodes : []
     const summary = typeof record.summary === 'string' ? record.summary : ''
@@ -74,6 +106,14 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
     const title = record.nodeId ? nodeTitleById(String(record.nodeId)) : null
     return title ? tt('setNodePrompt', { title }) : tt('setNodePromptGeneric')
   }
+  if (toolName === 'update_storyboard_shot') {
+    const shotIndex = typeof record.shotIndex === 'number' ? record.shotIndex : null
+    return shotIndex ? i18n.t("customWorkflow.editStoryboardPromptForShot", { v0: shotIndex }) : i18n.t("customWorkflow.editStoryboardPrompt")
+  }
+  if (toolName === 'batch_update_storyboard_shots') {
+    const shots = Array.isArray(record.shots) ? record.shots : []
+    return i18n.t("customWorkflow.fillStoryboardShots", { v0: shots.length })
+  }
   if (toolName === 'delete_canvas_nodes') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds : []
     return tt('deleteNodes', { count: ids.length })
@@ -81,6 +121,10 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
   if (toolName === 'run_generation_batch') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds : []
     return tt('runGenerationBatch', { count: ids.length })
+  }
+  if (toolName === 'attach_external_image_to_node') {
+    const title = record.nodeId ? nodeTitleById(String(record.nodeId)) : null
+    return title ? i18n.t("customWorkflow.importAnExternalImageInto", { v0: title }) : i18n.t("customWorkflow.importAnExternalImageIntoANode")
   }
   if (toolName === 'read_canvas_state') {
     return tt('readCanvasState')
@@ -217,9 +261,46 @@ export function describeToolCallDetail(toolName: string, args: unknown): string 
     const prompt = String(record.prompt || '')
     return prompt.length > 80 ? `${prompt.slice(0, 80)}…` : prompt
   }
+  if (toolName === 'update_storyboard_shot') {
+    const prompt = String(record.videoPrompt || record.imagePrompt || record.prompt || '')
+    return prompt.length > 80 ? `${prompt.slice(0, 80)}…` : prompt
+  }
+  if (toolName === 'batch_update_storyboard_shots') {
+    const shots = Array.isArray(record.shots) ? record.shots : []
+    const indices = shots
+      .map((shot) => (shot && typeof shot === 'object' ? (shot as Record<string, unknown>).shotIndex : undefined))
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+      .sort((a, b) => a - b)
+    if (indices.length === 0) return ''
+    const head = indices.slice(0, 8).map((index) => i18n.t("customWorkflow.shot", { v0: index })).join('、')
+    return indices.length > 8 ? i18n.t("customWorkflow.andShotsInTotal", { v0: head, v1: indices.length }) : head
+  }
   if (toolName === 'delete_canvas_nodes' || toolName === 'run_generation_batch') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds.map((id) => String(id)) : []
     return joinNodeTitles(ids)
+  }
+  if (toolName === 'attach_external_image_to_node') {
+    const source = String(record.source || '')
+    if (!source) return ''
+    const compact = source.length > 96 ? `${source.slice(0, 96)}…` : source
+    return compact
+  }
+  if (toolName === 'apply_capability_recipe') {
+    const parts: string[] = []
+    if (typeof record.modelKey === 'string' && record.modelKey) parts.push(record.modelKey)
+    if (typeof record.variantId === 'string' && record.variantId) parts.push(record.variantId)
+    if (typeof record.modeId === 'string' && record.modeId) parts.push(record.modeId)
+    const outputs = Array.isArray(record.outputs) ? record.outputs.length : 0
+    const count = typeof record.requestedOutputs === 'number' ? record.requestedOutputs : outputs
+    if (count > 0) parts.push(i18n.t("customWorkflow.results", { v0: count }))
+    if (record.visionReview) parts.push(i18n.t("customWorkflow.1VisualReview"))
+    return parts.join(' · ')
+  }
+  if (toolName === 'handoff_model3d') {
+    const parts: string[] = []
+    if (typeof record.targetNodeId === 'string' && record.targetNodeId) parts.push(i18n.t("customWorkflow.appendTo", { v0: record.targetNodeId }))
+    if (typeof record.license === 'string' && record.license) parts.push(i18n.t("customWorkflow.license", { v0: record.license }))
+    return parts.join(' · ')
   }
   return ''
 }

@@ -1,0 +1,35 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-director-smoke-font-owners",
+  "change_kind": "structural",
+  "problem_type": "Four Director typography owners violate the existing FEEL font floor",
+  "symptom": "App74 passed the original 20 assertions and viewport pixel check but the final capture was blocked by four unreviewed 11px findings.",
+  "direct_cause": "The PiP footer, slider unit, insert-keyframe kbd and empty-timeline hint explicitly use or inherit text-micro instead of the existing text-caption token.",
+  "class_root": "Readable Director secondary text must use the existing caption token at its actual JSX owner rather than weakening the shared font guard or adding exemptions.",
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/director/panels/viewport/PipViewport.tsx",
+    "src/workbench/generationCanvas/nodes/director/panels/fields/SliderNumberField.tsx",
+    "src/workbench/generationCanvas/nodes/director/timeline/TimelineHeader.tsx",
+    "src/workbench/generationCanvas/nodes/director/timeline/DirectorTimeline.tsx",
+    "tests/ux/director-smoke-font-owners.test.mjs"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "src/workbench/generationCanvas/nodes/director/panels/viewport/PipViewport.tsx",
+      "src/workbench/generationCanvas/nodes/director/panels/fields/SliderNumberField.tsx",
+      "src/workbench/generationCanvas/nodes/director/timeline/TimelineHeader.tsx",
+      "src/workbench/generationCanvas/nodes/director/timeline/DirectorTimeline.tsx"
+    ],
+    "preserved_exports": [
+      { "path": "src/workbench/generationCanvas/nodes/director/panels/viewport/PipViewport.tsx", "name": "PipViewport" },
+      { "path": "src/workbench/generationCanvas/nodes/director/panels/fields/SliderNumberField.tsx", "name": "SliderNumberField" },
+      { "path": "src/workbench/generationCanvas/nodes/director/timeline/TimelineHeader.tsx", "name": "TimelineHeader" },
+      { "path": "src/workbench/generationCanvas/nodes/director/timeline/DirectorTimeline.tsx", "name": "DirectorTimeline" }
+    ],
+    "behavior_preservation": "Exactly one text-micro to text-caption substitution in each of four production files. All other production bytes, messages, callbacks, guards, project state, unit inputs, hotkeys, permissions, budgets and default scene remain unchanged. Shared slider units remain owned by the existing Director-private field primitive.",
+    "verification_limits": "Reuse the already captured four REDs and unchanged negative controls with maxWorkers=1. No App/browser/heavy/full315, screenshot generation, PNG/baseline, FEEL/exemption/tolerance or _assert changes. Original repair authorization applies; the unanswered four-item card is not recorded as an explicit approval. Coordinator runs normal PR CI and merges."
+  },
+  "regression_tests": ["tests/ux/director-smoke-font-owners.test.mjs"],
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-24"
+}

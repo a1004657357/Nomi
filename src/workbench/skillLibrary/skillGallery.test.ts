@@ -5,6 +5,7 @@ import type { LibraryPrompt } from '../api/promptLibraryApi'
 
 const skill: SkillListItemDto = {
   directoryName: 'external', name: 'external', label: 'External', description: 'Summary', author: null,
+  tools: [], inputs: [], stages: [], canvas: null,
   stageLabels: [], isPlaybook: false, neededProviders: [], manifestError: null, origin: 'user', packageVersion: 'v1', contentHash: 'hash',
   body: '---\nname: external\n---\n\n# External\n\nSummary\n\n## Method\n\nDo the work.',
 }

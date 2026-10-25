@@ -2,14 +2,35 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { CORE_SMOKE_ADVISORY_CHECK_NAMES } from './validation-policy.mjs'
+
 const API_ROOT = 'https://api.github.com'
 const REJECTED_LEVELS = new Set(['warning', 'failure'])
+
+// 非阻断（advisory）核心冒烟格的 owner：TODO 的 （`used` 升阻断）。
+export const ADVISORY_CORE_SMOKE_OWNER = ' core smoke advisory fixture'
+// 名单**派生自 scripts/validation-policy.mjs 的单一 owner**，不写死格子名：
+// 那里把 'used' 移进 CORE_SMOKE_BLOCKING_FIXTURES（ 升阻断）的当天，
+// 这条委派规则自动失效，used 的失败注解立刻变回 unexpected，不必也不许再改这里。
+const ADVISORY_CORE_SMOKE_JOB_NAMES = new Set(CORE_SMOKE_ADVISORY_CHECK_NAMES)
 
 function matchesPattern(value, pattern) {
   return pattern === undefined || new RegExp(pattern, 'u').test(value || '')
 }
 
 function delegatedOwner(annotation) {
+  // A cancelled package job can emit a failure annotation when GitHub's six-hour
+  // execution ceiling is reached. The cancellation is owned by workflow
+  // orchestration (and is already reflected in the job conclusion), rather than
+  // being an unowned product failure that should block annotation hygiene.
+  if (
+    annotation.level === 'failure' &&
+    annotation.jobName === 'Mac Package' &&
+    annotation.jobConclusion === 'cancelled' &&
+    annotation.path === '.github'
+  ) {
+    return 'workflow orchestration cancellation'
+  }
   if (
     annotation.level === 'warning' &&
     annotation.jobName === 'Contracts' &&
@@ -24,6 +45,22 @@ function delegatedOwner(annotation) {
   // allowlist：allowlist 是给临时状况用的，给一条永久且有 owner 的机制配过期日只会到期再红一次。
   if (annotation.level === 'warning' && annotation.title === 'docs-autosync') {
     return 'docs-autosync workflow on main'
+  }
+  // 「疑似不稳定」：vitest 重试后才通过的测试，由 scripts/vitest-flaky-reporter.mjs 打成 warning——只提示、不阻断，
+  // 有主体（那份 reporter）、主体真的会跑，所以是委派不是豁免。真失败是 failure 注解，不受这条影响。
+  if (annotation.level === 'warning' && annotation.title === '疑似不稳定') {
+    return 'vitest retry flaky hint'
+  }
+  // 非阻断的核心冒烟格（2026-09-22 用户拍板，docs/plan/2026-09-22-core-flow-smoke-three-defenses.md）：
+  // 它红了 job 级 continue-on-error 只放过 needs.core-smoke.result，**注解还在**——
+  // `##[error]Process completed with exit code 1.` 会以 failure 注解进到本环，
+  // 于是 Quality Gate 汇总的第一行 `test ci-hygiene.outcome = success` 把它重新变回阻断门
+  // （2026-09-22 main ffffadc7d 实测：1 unexpected → 汇总红 → 收据出不来）。
+  // 这一格有主体、且主体是登记在案的 TODO（：三条布局 bug 修完 + used 连跑 5 次全绿后升阻断），
+  // 所以是「委派」而不是「豁免」，同 docs-autosync 那条的理由——不进要写过期日的 allowlist。
+  // 只认非阻断名单里的格子：阻断档 Core Flow Smoke (empty) 不在 ADVISORY 名单里，它的注解照旧是 unexpected。
+  if (annotation.level === 'failure' && ADVISORY_CORE_SMOKE_JOB_NAMES.has(annotation.jobName)) {
+    return ADVISORY_CORE_SMOKE_OWNER
   }
   return null
 }
@@ -144,7 +181,11 @@ export function evaluateAnnotations(annotations, allowlist, now = new Date()) {
     else unexpected.push(annotation)
   }
 
-  return { delegated, allowed, unexpected, expiredAllowlistEntries }
+  // advisory 冒烟格单列出来：它不判，但必须**看得见它红了**——否则「不阻断」就滑成「没发生过」，
+  //  也就永远等不到「连跑 5 次全绿」的观测面。
+  const advisorySmoke = delegated.filter((entry) => entry.owner === ADVISORY_CORE_SMOKE_OWNER)
+
+  return { delegated, allowed, unexpected, advisorySmoke, expiredAllowlistEntries }
 }
 
 export async function auditCiAnnotations({
@@ -182,6 +223,7 @@ export async function auditCiAnnotations({
       delegated: [],
       allowed: [],
       unexpected: [],
+      advisorySmoke: [],
       expiredAllowlistEntries: [],
       passed: false,
       error: { message: error instanceof Error ? error.message : String(error) },
@@ -214,6 +256,11 @@ async function main() {
   writeReport(outputPath, report)
   console.log(
     `CI annotation hygiene: ${report.annotations.length} annotations, ${report.delegated.length} delegated, ${report.allowed.length} allowed, ${report.unexpected.length} unexpected`,
+  )
+  // 单列一行：advisory 冒烟格红了不判，但要在日志里看得见（owner 是 ）。
+  const advisoryJobs = [...new Set(report.advisorySmoke.map((entry) => entry.annotation.jobName))]
+  console.log(
+    `advisory-smoke: ${report.advisorySmoke.length}${advisoryJobs.length > 0 ? ` (${advisoryJobs.join(', ')} -> ${ADVISORY_CORE_SMOKE_OWNER})` : ''}`,
   )
   if (!report.passed) {
     console.error(`CI annotation hygiene failed; inspect ${path.relative(repoRoot, outputPath)}`)

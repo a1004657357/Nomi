@@ -61,7 +61,19 @@ export type FixationContext = {
 }
 
 function joinList(items: readonly string[]): string {
-  return items.filter((s) => s && s.trim()).map((s) => s.trim()).join(' / ')
+  return items
+    .filter((s) => s && s.trim())
+    .map((s) => s.trim())
+    .join(' / ')
+}
+
+function layoutForAspectRatio(aspectRatio: string): string {
+  const match = aspectRatio.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
+  if (!match) return '自适应版面'
+  const ratio = Number(match[1]) / Number(match[2])
+  if (!Number.isFinite(ratio) || ratio <= 0) return '自适应版面'
+  if (Math.abs(ratio - 1) < 0.01) return '方形版面'
+  return ratio < 1 ? '竖向版面' : '横向版面'
 }
 
 /**
@@ -70,6 +82,7 @@ function joinList(items: readonly string[]): string {
  */
 export function buildFixationPrompt(ctx: FixationContext): string {
   const aspect = ctx.aspectRatio || '16:9'
+  const layout = layoutForAspectRatio(aspect)
   const isScene = ctx.subject === 'scene'
   const lines: string[] = []
 
@@ -86,7 +99,7 @@ export function buildFixationPrompt(ctx: FixationContext): string {
 
   // 任务 + [规律2] 布局：中心锚点 + 不对称环绕，绝不网格
   lines.push(
-    `【任务】基于参考图，制作一张 ${aspect} ${isScene ? '场景设定板' : '角色身份板'}。柔和米白色纸质背景，` +
+    `【任务】基于参考图，制作一张 ${aspect} ${layout} ${isScene ? '场景设定板' : '角色身份板'}。柔和米白色纸质背景，` +
       `电影感艺术书式**不对称**布局，**绝不用网格**——${isScene ? '主图（环境广角）略偏中心作视觉锚点' : '英雄全身立绘略偏中心作视觉锚点'}，` +
       '周围以干净间距环绕排列各区块，细灰引导线连接，每块独立清晰、有呼吸空间、不堆叠、不裁切、不合并。',
   )
@@ -98,16 +111,21 @@ export function buildFixationPrompt(ctx: FixationContext): string {
     if (ctx.turnaround) lines.push('· 「三视图」：正面 / 侧面 / 背面')
     if (ctx.expressions?.length) lines.push(`· 「表情研究」：${joinList(ctx.expressions)}`)
     if (ctx.outfits?.length) lines.push(`· 「服装变体」：${joinList(ctx.outfits)}（各一张全身小图）`)
-    if (ctx.props?.length) lines.push(`· 「道具与材质」：${joinList(ctx.props)}（部位特写，用引出线连到中心人物对应部位）`)
+    if (ctx.props?.length)
+      lines.push(`· 「道具与材质」：${joinList(ctx.props)}（部位特写，用引出线连到中心人物对应部位）`)
     if (ctx.silhouettes && ctx.silhouettes > 0) lines.push(`· 「剪影研究」：${ctx.silhouettes} 个黑色侧影`)
   } else {
-    if (ctx.times?.length) lines.push(`· 「时段」：${joinList(ctx.times)}（**保持建筑结构/布局/机位完全相同，只改光照与天气**）`)
-    if (ctx.angles?.length) lines.push(`· 「机位」：${joinList(ctx.angles)}（保持场景所有元素/材质/配色完全相同，只改机位）`)
+    if (ctx.times?.length)
+      lines.push(`· 「时段」：${joinList(ctx.times)}（**保持建筑结构/布局/机位完全相同，只改光照与天气**）`)
+    if (ctx.angles?.length)
+      lines.push(`· 「机位」：${joinList(ctx.angles)}（保持场景所有元素/材质/配色完全相同，只改机位）`)
   }
 
   // 色板（规律5）
   if (ctx.palette?.length) {
-    lines.push(`· 「色板」：${ctx.palette.map((p) => `${p.hex} ${p.role}`).join(' / ')}（色块横排，块下写 hex + 中文角色）`)
+    lines.push(
+      `· 「色板」：${ctx.palette.map((p) => `${p.hex} ${p.role}`).join(' / ')}（色块横排，块下写 hex + 中文角色）`,
+    )
   }
 
   // ID 信息块（规律9）
@@ -148,7 +166,10 @@ const BASIC_TIMES = ['白天', '黑夜', '黄昏']
 const BASIC_ANGLES = ['广角', '俯视']
 
 /** Tier1 角色基础定妆：三视图 + 4 基础表情 + 剪影 + ID 块。只需名字（+ 可选一句设定）。 */
-export function buildBasicCharacterFixation(name: string, opts: { tagline?: string; style?: FixationStyle } = {}): string {
+export function buildBasicCharacterFixation(
+  name: string,
+  opts: { tagline?: string; style?: FixationStyle } = {},
+): string {
   return buildFixationPrompt({
     subject: 'character',
     name,

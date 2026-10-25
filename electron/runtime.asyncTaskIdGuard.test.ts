@@ -74,24 +74,21 @@ async function seedAsyncVendor(): Promise<void> {
 }
 
 describe("async provider request-id guard", () => {
-  it("fails closed after one create when the provider omits its remote task id", async () => {
+  it("reports submission uncertainty, not a safe-to-retry failure, after one unacknowledged create", async () => {
     await seedAsyncVendor();
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ status: "IN_QUEUE" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchFn);
 
     const { mintSpendGrant } = await import("./spendGrant");
     const { runTask } = await import("./runtime");
-    const result = await runTask({
+    await expect(runTask({
       vendor: "missing-id-provider",
       request: {
         kind: "text_to_video",
         prompt: "one request only",
         extras: { modelKey: "async-video", grantId: mintSpendGrant({ nodeIds: [] }) },
       },
-    });
-
-    expect(result.status).toBe("failed");
-    expect(result.error).toMatch(/task ID|任务编号/);
+    })).rejects.toThrow(/submission-unknown/);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(String(fetchFn.mock.calls[0]?.[0])).toContain("/create");
   });

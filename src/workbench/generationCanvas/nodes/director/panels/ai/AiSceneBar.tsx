@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../../../electron/shared/contracts/mediaImportPolicy';
 /**
  * [INPUT]: 依赖 react、react-i18next、../../../../../../design（NomiSegmented / WorkbenchButton / WorkbenchIconButton）、../../../../../../vendor/tablerIcons、
  *          ../../../../../../ui/toast、../../useAiSceneBuilder、../../model/storeAiSceneActions 的 AiSceneTarget、../CanvasImagesContext、../imageFile 的 readFileAsDataUrl、../Popover
@@ -6,7 +7,7 @@
  *        + 运行 / 取消 + 状态与秒表。只组合设计原语，编排在 useAiSceneBuilder。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NomiSegmented, WorkbenchButton, WorkbenchIconButton } from '../../../../../../design'
 import { toast } from '../../../../../../ui/toast'
@@ -121,7 +122,7 @@ export function AiSceneBar({ open, onOpen, onClose }: { open: boolean; onOpen: (
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={acceptAttrForSurface('image-reference')}
           multiple
           className="hidden"
           aria-label={t('director.ai.addImage')}

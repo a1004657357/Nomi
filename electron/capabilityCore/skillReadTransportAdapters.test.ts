@@ -10,9 +10,12 @@ function record(overrides: Partial<SkillRecord> = {}): SkillRecord {
     name: "brand.promo",
     directoryName: "brand-promo",
     filePath: "/not-returned/SKILL.md",
+    packageDir: "/not-returned",
     description: "A compact brand workflow",
+    content: "# Brand promo\nUse the approved brand palette.",
     body: "# Brand promo\nUse the approved brand palette.",
     manifest: null,
+    requiresCodingTools: false,
     origin: "user",
     audience: "internal",
     packageVersion: "nomi-skill-v1",
@@ -22,7 +25,7 @@ function record(overrides: Partial<SkillRecord> = {}): SkillRecord {
 }
 
 function call(args: unknown): RuntimeToolCall {
-  return { toolCallId: "skill-read-1", toolName: SKILL_READ_CAPABILITY.aliases.pi, args };
+  return { toolCallId: "skill-read-1", toolName: SKILL_READ_CAPABILITY.aliases.method, args };
 }
 
 function liveSignal(): AbortSignal {

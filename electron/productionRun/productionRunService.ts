@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { tagNomiError } from '../shared/nomiErrorCodes'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -12,18 +13,23 @@ import {
 } from './artifactProjection'
 import { buildProductionDeepLink } from './productionDeepLink'
 import { applyRunControl } from './productionRunControl'
-import { createDriverOps } from './productionRunDriverOps'
+import { isStillAtProvider, settleRunLifecycle } from './productionRunLifecycle'
+import { createDriverOps, isSemanticMultiShotRun } from './productionRunDriverOps'
 import { isShotGate, isSpendGate } from './productionRunGateIdentity'
 import { withEventTap } from './productionRunEventTap'
 import { assertStoryboardSourceFresh, createArtifactOperations } from './productionRunArtifactOperations'
 import { assertStoryboardSourceApproved } from './productionRunReducer'
 import { MEANINGFUL_EVENT_TYPES } from './productionRunMeaningfulEvents'
 import { readAutomationPolicySettings } from '../settings/automationPolicySettings'
+import { readAgentApprovalPolicy } from '../settings/agentApprovalPolicySettings'
+import { readConnectedModelScope } from './connectedModelScope'
 import { assertProductionPolicyReady } from './productionPolicyReadiness'
 import { normalizeTrustLevel, trustLevelOf } from './productionRunTypes'
+import { assertCallerDeclaredTrustLevel, trustLevelFromApprovalPolicy } from './productionRunTrustAuthority'
 import { createGateApprovalOwner } from './productionRunApprovalReceipt'
 import { isAnchorCheckpointGate } from './anchorCheckpoint'
 import { kickBatchSchedulerForRun } from './batchSchedulerKick'
+import { renewDispatchConsent } from './productionDispatchConsentEdits'
 import { recoverStoryboardContentHashes } from './productionRunStoryboardHashRecovery'
 import type { ApprovalReceiptAuthority } from '../capabilityCore/approvalReceipt'
 import {
@@ -48,6 +54,7 @@ export type {
   MaterializeStoryboardResult,
 } from './productionRunProjections'
 import { logError } from '../logging/logger'
+import { ProductionRunNotFoundError } from './productionRunErrors'
 
 
 type ServiceDeps = {
@@ -92,6 +99,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     const bridge = await import('../capabilityCore/rendererBridge')
     return bridge.requestRenderer(op, payload, timeoutMs)
   })
+
   const executeProductionExport = deps.executeProductionExport ?? (async (input) => {
     const prepared = await requestRenderer('production.export', input, 5 * 60_000) as { manifest?: unknown }
     const exports = await import('../export/exportJobs')
@@ -107,12 +115,14 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
   const policyResolver = deps.policyResolver ?? (() => {
     const settings = readAutomationPolicySettings()
     return {
-      mode: settings.mode,
       trustedHosts: [...settings.trustedHosts],
-      allowedProviders: [...settings.allowedProviders],
-      allowedModels: [...settings.allowedModels],
+      ...readConnectedModelScope(),
       maxAttemptsPerJob: settings.maxAttemptsPerJob,
       minimizeUploads: settings.minimizeUploads,
+      // 信任档不是这一层自己的设置，而是**用户权限档的投影**（唯一那座桥）。少了这一行，
+      // `normalizeTrustLevel(undefined)` 恒给 `key_confirm`：用户在 Agent 面板选了「全自动」，
+      // Run 这一侧永远不知道，外部入口只能靠调用方自报——而自报那条路已经被堵死了。
+      trustLevel: trustLevelFromApprovalPolicy(readAgentApprovalPolicy()),
     }
   })
   // 装配不变量：service 内部**没有**「没有人证持有者」这个状态。缺权威时持有的是 fail-closed 的那份，
@@ -139,16 +149,20 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     const safeProjectId = identifier(projectId, 'project')
     const safeRunId = identifier(runId, 'run')
     const run = repository.read(safeProjectId, safeRunId)
-    if (!run) throw new Error(`Production run not found: ${safeRunId}`)
+    if (!run) throw new ProductionRunNotFoundError()
     if (run.projectId !== safeProjectId) throw new Error('Production run project mismatch')
     return run
   }
 
   function createDraft(input: CreateProductionRunInput): ProductionRunProjection {
+    const userPolicy = policyResolver()
+    // 调用方自报的信任档不得自证：放松（少问）只能由用户的设置或一次真人答过的确认产生，
+    // 而建 Run 这条路上连一个能问人的面都没有。收紧照收。
+    assertCallerDeclaredTrustLevel(input.policy?.trustLevel, userPolicy)
     const run = repository.create({
       ...input,
       runId: input.runId ? identifier(input.runId, 'run') : undefined,
-      policy: { ...policyResolver(), ...(input.policy || {}) },
+      policy: { ...userPolicy, ...(input.policy || {}) },
     })
     // create 只可能产出「等方向 + 至少一道门 + 零任务零预算」的草稿：未登记的 playbook / 缺 brief
     // 在 repository 层就抛错（productionPlaybooks.ts），draft 已不可达，这里不再给它留口子。
@@ -157,6 +171,9 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     }
     // B3：budget_only（「别问了直接出」）→ 自动批准创意方向门（留痕），不拟候选、不打扰。
     // 其余档位 → 异步拟方向候选（GUI 有 LLM 才成；关着则保持兜底 gate）。均不阻塞返回。
+    // 2026-09-21：这一行以前也认调用方在请求体里自报的档位——门在 run 创建的同一刻被批掉，
+    // 没有任何人看见过它。上面的 assertCallerDeclaredTrustLevel 保证走到这里的 budget_only
+    // 只可能来自用户的设置（放松档位的请求已经被拒了）。
     if (trustLevelOf(run.policy) === 'budget_only') void autoApproveGate(run.projectId, run.runId, 'gate-direction-v1')
     else void proposeDirections(run)
     return runProjection(run, projectRootResolver, previewSecret)
@@ -170,6 +187,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     currency?: string
     policy?: Partial<AutomationPolicy>
     shots?: ReadonlyArray<Pick<ProductionGenerationShot, 'shotId' | 'role' | 'included' | 'candidate'>>
+    cardHidden?: boolean
   }): ProductionRun {
     // Semantic generation drafts must use the same live automation policy as
     // every other ProductionRun entry point. Previously this thin service
@@ -256,6 +274,16 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     directionsInFlight,
   })
 
+  /**
+   * 叫醒干这个 Run 的活的那一方——「谁来驱动」只在这里判：多镜批次的派发归批次调度器（批次收齐后它自己交给
+   * driveGeneration 收尾），其余归 driveGeneration。Run 从停着被放回 running（任务卡 / 画布 / MCP 的「继续」都经
+   * run.control）后经这里，入口自己不用知道该踢谁；以前「继续」只踢 driveGeneration，多镜批次状态回到 running 却一镜都不派。
+   */
+  function wakeRunDriver(run: ProductionRun): void {
+    if (isSemanticMultiShotRun(run)) kickBatchSchedulerForRun(run.projectId, run.runId)
+    else void driveGeneration(run)
+  }
+
   async function command(projectId: string, runId: string, runCommand: RunCommand) {
     const safeProjectId = identifier(projectId, 'project')
     const safeRunId = identifier(runId, 'run')
@@ -275,6 +303,32 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       const outcome = runCommand.payload.outcome
       const job = current.jobs.find((candidate) => candidate.jobId === jobId)
       if (!job || job.status !== 'submission_unknown') throw new Error('Production job is not awaiting reconciliation')
+      if (outcome === 'user_checked_abandon') {
+        // 「我去服务商后台核对过了，没有这一笔」：把那次结果未知的尝试记成「用户核对后放弃」，释放这一镜的占用
+        // （job → needs_attention，画布重新可以生成），预留按用户核对过的事实 provider-safe 释放。
+        // 只认来自 Nomi 自己窗口的真人手势（productionRunIpc 盖章）；不开拍——重新生成仍要在正常的付费确认卡上点。
+        if (runCommand.humanGesture !== true) throw new Error('A user gesture is required to release an unconfirmed submission')
+        const released = repository.execute(safeProjectId, safeRunId, {
+          ...runCommand,
+          type: 'job.status',
+          payload: {
+            jobId,
+            status: 'needs_attention',
+            patch: { errorCode: 'user_checked_abandoned', errorMessage: `User checked the provider and abandoned this unconfirmed attempt at ${runCommand.issuedAt}` },
+          },
+        })
+        const reservationId: string = `${safeRunId}:${jobId}:${job.attempt}`
+        if (repository.readBudgetLedger(safeProjectId, safeRunId).reservations[reservationId]?.status === 'unsettled') {
+          return repository.execute(safeProjectId, safeRunId, {
+            commandId: `${runCommand.commandId}:release`,
+            expectedRevision: released.run.revision,
+            type: 'budget.entry',
+            payload: { entry: { billingEntryId: `${reservationId}:release-user-checked`, kind: 'release', reservationId, providerSafe: true, occurredAt: runCommand.issuedAt } },
+            issuedAt: runCommand.issuedAt,
+          })
+        }
+        return released
+      }
       if (outcome === 'not_found') {
         return repository.execute(safeProjectId, safeRunId, {
           ...runCommand,
@@ -322,7 +376,8 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     if (runCommand.type === 'run.control') {
       // A4 run 控制：逻辑在 productionRunControl.ts（MCP 与渲染端同一收口）。
       const controlled = applyRunControl(repository, safeProjectId, safeRunId, requireRun(safeProjectId, safeRunId), runCommand)
-      if (runCommand.payload.action === 'resume' && controlled.run.status === 'running') void driveGeneration(controlled.run) // 恢复必须重踢 driver：只回状态不回工作=假 resume
+      // 恢复必须重踢干活的那一方：只回状态不回工作 = 假 resume。
+      if (runCommand.payload.action === 'resume' && controlled.run.status === 'running') wakeRunDriver(controlled.run)
       return controlled
     }
     if (runCommand.type === 'script.review' || runCommand.type === 'artifact.review') {
@@ -502,7 +557,13 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     // 免费空 tick（derivation 对 rejected 只在有新 attempt 时才重派锚，见 batchScheduleDerivation）。scheduler
     // 构造依赖 appIntegration 接线，故经晚绑定插槽（batchSchedulerKick.ts 有为什么）。
     if (runCommand.type === 'gate.decide' && decidedGate && isAnchorCheckpointGate(decidedGate)) {
+      // 付费卡① 第 13 条：用户在 Nomi 窗口里放行形象 = 他对等着这一下才开拍的那几镜点了头，续上它们的同意。
+      // MCP / Agent 的决议没有真人手势章，不续——派到时同意过了窗口就如实停下，等他自己点。
+      const renewed = runCommand.payload.status === 'approved' && runCommand.humanGesture === true
+        ? renewDispatchConsent(repository, safeProjectId, safeRunId, result.run, 'anchor_release', runCommand.issuedAt)
+        : undefined
       kickBatchSchedulerForRun(safeProjectId, safeRunId)
+      if (renewed) return { run: renewed.run, events: [...result.events, ...renewed.events] }
     }
     return result
   }
@@ -541,6 +602,15 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       for (const summary of summaries) {
         let current = repository.read(safeProjectId, summary.runId)
         if (!current || ['completed', 'cancelled'].includes(current.status)) continue
+        // 老数据：上一版把多镜批次急停后留在 pausing、手上其实已经没有在跑的活——之后再没有命令经过写入口，
+        // 它就永远「暂停中」。欠不欠这一步只由生命周期 owner 判，这里只负责在重开项目时让它经过一次写入口。
+        if (settleRunLifecycle(current, new Date().toISOString())) {
+          try {
+            current = executeInternal(safeProjectId, current.runId, current, 'run.lifecycle.settle', {}, `recovery-${current.runId}-lifecycle-${current.revision}`).run
+          } catch (error) {
+            logError('production-run', 'recovery-lifecycle-settle-failed', error)
+          }
+        }
         // Semantic single-shot runs own recovery through ProductionGenerationSubmission
         // (resume/poll/reconcile). The legacy playbook driver must not rewrite their
         // durable provider state to submission_unknown or kick a second submit.
@@ -548,8 +618,31 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
           && current.generationPlan?.operationId === current.runId
         let changedUnknown = false
         for (const job of current.jobs) {
-          if (!['submitting', 'provider_accepted', 'polling', 'retry_wait', 'downloading', 'validating_technical', 'validating_content'].includes(job.status)) continue
-          if (isSemanticSingleShot) continue
+          if (!isStillAtProvider(job)) continue
+          if (isSemanticSingleShot) {
+            // 提交在路上时进程没了（硬杀 / 断电）：请求发没发出去、供应商收没收下，Nomi 都不知道——结果未知，
+            // 和连接被重置是同一档。此前这里直接跳过，job 永远停在 submitting、画布一直写「生成中」。
+            // 已经拿到任务号的（polling 等）仍由 ProductionGenerationSubmission 的恢复路径接手。
+            if (job.status === 'submitting' && !job.providerTaskId) {
+              try {
+                current = executeInternal(safeProjectId, current.runId, current, 'job.status', {
+                  jobId: job.jobId,
+                  status: 'submission_unknown',
+                  patch: { errorCode: 'submission_unknown_restart', errorMessage: tagNomiError('submission-unknown', 'Nomi was closed while the request was being sent') },
+                }, `recovery-${current.runId}-${job.jobId}-submit-unknown`).run
+                const reservationId: string = `${current.runId}:${job.jobId}:${job.attempt}`
+                if (repository.readBudgetLedger(safeProjectId, current.runId).reservations[reservationId]?.status === 'reserved') {
+                  current = executeInternal(safeProjectId, current.runId, current, 'budget.entry', {
+                    entry: { billingEntryId: `${reservationId}:mark-unsettled`, kind: 'mark_unsettled', reservationId, occurredAt: new Date().toISOString() },
+                  }, `recovery-${current.runId}-${job.jobId}-unsettled`).run
+                }
+                changedUnknown = true
+              } catch {
+                // A concurrent command may have already settled this job.
+              }
+            }
+            continue
+          }
           try {
             current = executeInternal(safeProjectId, current.runId, current, 'job.status', {
               jobId: job.jobId,
@@ -563,10 +656,10 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
         }
         current = requireRun(safeProjectId, current.runId)
         if (changedUnknown && current.status !== 'needs_attention') {
-          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention' }, `recovery-${current.runId}-attention-${current.revision}`).run } catch { /* preserve the durable job state */ }
+          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention', reason: 'restart_recovery' }, `recovery-${current.runId}-attention-${current.revision}`).run } catch { /* preserve the durable job state */ }
         }
         if (current.status === 'exporting') {
-          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention' }, `recovery-${current.runId}-export-attention-${current.revision}`).run } catch { /* preserve exporting state for inspection */ }
+          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention', reason: 'restart_recovery' }, `recovery-${current.runId}-export-attention-${current.revision}`).run } catch { /* preserve exporting state for inspection */ }
         }
         // B1/B3：草稿建好时 GUI 关着 → 重开时补动作。budget_only 自动批准方向门，其余补拟候选（gate 还 waiting 且无候选才跑）。
         if (current.status === 'awaiting_direction') {
@@ -651,19 +744,13 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     return { filePath: resolveOwnedArtifactFile(root, claims.relativePath), expiresAt: claims.expiresAt }
   }
 
-  function listProjections(projectId: string): ProductionRunProjection[] {
-    return repository.list(identifier(projectId, 'project')).map((summary) => runProjection(requireRun(projectId, summary.runId), projectRootResolver, previewSecret))
-  }
 
-  function listFull(projectId: string): ProductionRun[] {
-    return repository.list(identifier(projectId, 'project')).map((summary) => requireRun(projectId, summary.runId))
-  }
   return {
     // Semantic generation is a thin orchestration layer; ProductionRun remains the only durable owner.
     repository,
     createDraft, createGenerationDraft, readProjection, readFull, readEvents, readArtifactProjection, readArtifactContent, readScriptDraft,
     requestArtifactRevision, reviewArtifact, materializeStoryboard, resolveArtifactPreview, command, proposeScript, proposeStoryboard,
-    advanceSemanticProduction, resumeUnfinishedRuns, listProjections, listFull,
+    advanceSemanticProduction, resumeUnfinishedRuns,
   }
 }
 export type ProductionRunService = ReturnType<typeof createProductionRunService>

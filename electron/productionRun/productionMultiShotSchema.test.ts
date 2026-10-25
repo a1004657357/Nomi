@@ -7,6 +7,7 @@ import { compileExecutionContract, type PlanCandidate } from "../capabilityCore/
 import type { GenerationProvider } from "../capabilityCore/generationRuntimeAdapter";
 import { createModuleRegistry } from "../capabilityCore/moduleRegistry";
 import { prepareProductionGenerationAuthorization, prepareProductionGenerationReauthorization } from "./prepareProductionGenerationAuthorization";
+import { authorizationGateForJob } from "../shared/productionSpendAuthority";
 import { applyProductionCommand } from "./productionRunReducer";
 import { createProductionGenerationSubmission } from "./productionGenerationSubmission";
 import { sealAndApproveProductionGeneration } from "./productionGenerationAuthorizationTestUtils";
@@ -106,10 +107,10 @@ function setupSingleShot() {
 function submission(root: string, repository: ReturnType<typeof createProductionRunRepository>, submit: ReturnType<typeof vi.fn>, now = "2026-08-24T00:00:00.000Z") {
   return createProductionGenerationSubmission({
     repository,
+    beforeDispatch: () => undefined,
     projectRoot: root,
     immutableProjectUuid: "project-uuid-1",
     projectGeneration: 1,
-    projectRevision: 0,
     intentMacKey: "test-intent-key",
     provider: {
       ...provider(submit as GenerationProvider["submit"]),
@@ -169,6 +170,7 @@ describe("P4 S1 multi-shot generation plan schema", () => {
       projectId: "project-1",
       origin: { host: "semantic-mcp" },
       candidate: shotACandidate,
+      shots: [{ shotId: "shot-a", candidate: shotACandidate }, { shotId: "shot-b", candidate: shotBCandidate }],
       policy: {
         trustedHosts: ["semantic-mcp"],
         allowedProviders: ["fixture-provider"],
@@ -192,7 +194,7 @@ describe("P4 S1 multi-shot generation plan schema", () => {
       candidate: shotACandidate,
       contract: shotAContract,
       providers: [provider()],
-      multiShot: { shots, planHash: "plan-hash-multi" },
+      multiShot: { shots, scope: shots.filter((shot) => shot.included !== false).map((shot) => shot.shotId), planHash: "plan-hash-multi" },
       receiptId: "receipt-multi",
       now: NOW,
     });
@@ -237,8 +239,8 @@ describe("P4 S1 reducer shot addressing", () => {
       schemaVersion: 1, runId: "op-x", projectId: "project-1", revision: 5,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 5, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-x",
@@ -257,7 +259,8 @@ describe("P4 S1 reducer shot addressing", () => {
       projectRevision: 0,
       operation: { operationId: "op-x", projectId: "project-1", candidate: shotACandidate, planVersion: 1 },
       contract: shotAContract,
-      multiShot: { shots: sealedShots, planHash: "plan-hash-x" },
+      multiShot: { shots: sealedShots, scope: sealedShots.filter((shot) => shot.included !== false).map((shot) => shot.shotId), planHash: "plan-hash-x" },
+      run: draft,
       providers: [provider()],
       resolveShotPrice: () => ({ known: true, amount: 0 }),
       now,
@@ -294,7 +297,7 @@ describe("P4 S1 reducer shot addressing", () => {
   it("a per-shot reauthorization creates a waiting attempt and leaves the sibling untouched", () => {
     const run = sealedTwoShotRun();
     const { authorization, effect } = reauthorize(run, "shot-a");
-    expect(effect.run.generationPlan?.approvedReceiptId).toBeUndefined();
+    expect(effect.run.generationPlan).not.toHaveProperty("approvedReceiptId");
     const shotA = effect.run.generationPlan?.shots?.find((s) => s.shotId === "shot-a");
     const shotB = effect.run.generationPlan?.shots?.find((s) => s.shotId === "shot-b");
     expect(shotA?.approvedReceiptId).toBeUndefined();
@@ -317,25 +320,20 @@ describe("P4 S1 reducer shot addressing", () => {
     expect(approved.generationPlan?.shots?.find((shot) => shot.shotId === "shot-b")?.approvedReceiptId).toBe("receipt-x");
   });
 
-  it("refuses to replace the run-wide authority while a sibling job is still authorized", () => {
+  // 2026-09-30：授权按门存（每点一次一份）。重做一镜是「又一份」，不替掉别的镜那一份，所以旁边还在排队的镜
+  // 不再挡住重做，而且它照样由批它的那道门盖着（以前这里钉的是「有兄弟镜排队就拒」）。
+  it("reworks one shot while a sibling job is still queued; the sibling keeps its own authorization", () => {
     const settled = sealedTwoShotRun();
-    const authorization = prepareProductionGenerationReauthorization({
-      lease: { projectId: "project-1", immutableProjectUuid: "project-uuid-1", projectGeneration: 1, revocationEpoch: 0 },
-      projectRevision: 0,
-      run: settled,
-      shotId: "shot-a",
-      providers: [provider()],
-      resolveShotPrice: () => ({ known: true, amount: 0 }),
-      now,
-    });
     const withAuthorizedSibling = {
       ...settled,
       jobs: settled.jobs.map((job) => job.metadata?.shotId === "shot-b"
         ? { ...job, status: "authorized" as const }
         : job),
     };
-
-    expect(() => prepareProductionGenerationReauthorization({
+    const sibling = withAuthorizedSibling.jobs.find((job) => job.metadata?.shotId === "shot-b")!;
+    const siblingGate = authorizationGateForJob(withAuthorizedSibling, sibling);
+    expect(siblingGate?.status, "兄弟镜由它那一份批准盖着").toBe("approved");
+    const authorization = prepareProductionGenerationReauthorization({
       lease: { projectId: "project-1", immutableProjectUuid: "project-uuid-1", projectGeneration: 1, revocationEpoch: 0 },
       projectRevision: 0,
       run: withAuthorizedSibling,
@@ -343,15 +341,20 @@ describe("P4 S1 reducer shot addressing", () => {
       providers: [provider()],
       resolveShotPrice: () => ({ known: true, amount: 0 }),
       now,
-    })).toThrow("requires all previously authorized jobs to be submitted or settled");
-
-    expect(() => applyProductionCommand(withAuthorizedSibling, {
+    });
+    const reworked = applyProductionCommand(withAuthorizedSibling, {
       commandId: "reauthorize-with-authorized-sibling",
       expectedRevision: withAuthorizedSibling.revision,
       type: "generation.reauthorize",
       payload: { shotId: "shot-a", authorization },
       issuedAt: now,
-    }, now)).toThrow("requires all previously authorized jobs to be submitted or settled");
+    }, now).run;
+    const siblingAfter = reworked.jobs.find((job) => job.jobId === sibling.jobId)!;
+    expect(siblingAfter.status, "兄弟镜还在排队").toBe("authorized");
+    expect(authorizationGateForJob(reworked, siblingAfter)?.gateId, "还是批它的那道门").toBe(siblingGate?.gateId);
+    expect(authorizationGateForJob(reworked, siblingAfter)?.status).toBe("approved");
+    expect(reworked.gates.find((gate) => gate.gateId === authorization.envelope.gateId)?.authorizationEnvelope, "重做那一份住在它自己的门上")
+      .toEqual(authorization.envelope);
   });
 
   it("scopes attempt monotonicity to the shot lineage: shot A attempt 2 does not block shot B attempt 2", () => {
@@ -378,8 +381,8 @@ describe("P4 S1 reducer shot addressing", () => {
       schemaVersion: 1, runId: "op-patch", projectId: "project-1", revision: 3,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 3, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-patch", state: "draft", candidate: shotACandidate,
@@ -415,8 +418,8 @@ describe("P4 S1 reducer shot addressing", () => {
       schemaVersion: 1, runId: "op-inc", projectId: "project-1", revision: 2,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 2, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-inc", state: "draft", candidate: shotACandidate,
@@ -461,7 +464,6 @@ describe("P4 S1 reducer shot addressing", () => {
 
     const narrowed = effect.run.generationPlan!;
     expect(narrowed.state).toBe("draft");
-    expect(narrowed.planHash).toBeUndefined();
     expect(effect.run.planVersion).toBe(2);
     expect(effect.run.gates).toEqual([expect.objectContaining({ status: "revoked" })]);
     expect(effect.run.jobs).toEqual([]);
@@ -469,7 +471,7 @@ describe("P4 S1 reducer shot addressing", () => {
     expect(narrowed.shots?.find((s) => s.shotId === "shot-a")?.included).toBe(true);
     expect(narrowed.shots?.find((s) => s.shotId === "shot-b")?.included).toBe(false);
     // The old authority is cleared; a trial re-gate must re-confirm the smaller scope.
-    expect(narrowed.approvedReceiptId).toBeUndefined();
+    expect(narrowed).not.toHaveProperty("approvedReceiptId");
     expect(narrowed.shots?.find((s) => s.shotId === "shot-a")?.approvedReceiptId).toBeUndefined();
   });
 
@@ -482,8 +484,8 @@ describe("P4 S1 reducer shot addressing", () => {
       schemaVersion: 1, runId: "op-anchor", projectId: "project-1", revision: 4,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 4, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-anchor", state: "draft", candidate: anchorCandidate,
@@ -508,7 +510,8 @@ describe("P4 S1 reducer shot addressing", () => {
       projectRevision: 0,
       operation: { operationId: "op-anchor", projectId: "project-1", candidate: anchorCandidate, planVersion: 1 },
       contract: anchorContract,
-      multiShot: { shots, planHash: "plan-hash-anchor" },
+      multiShot: { shots, scope: shots.filter((shot) => shot.included !== false).map((shot) => shot.shotId), planHash: "plan-hash-anchor" },
+      run: draft,
       providers: [provider()],
       resolveShotPrice: () => ({ known: true, amount: 0 }),
       now,

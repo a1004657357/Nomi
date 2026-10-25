@@ -1,0 +1,172 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-functional-card-render-protection",
+  "problem_type": "Presentation overrides can displace a node's functional workspace/card body",
+  "symptom": "Historical whiteboard/audio nodes carrying shot-frame lose the whiteboard launcher or audio controls and fixed geometry after the broad intrinsic-return removal.",
+  "direct_cause": "The prior correction treated whiteboard/audio like character/scene presentation choices. Explicit metadata now returns before the functional kind-owned card, making isCardRenderKind false and preventing NodeCardBody from mounting.",
+  "class_root": "Render ownership must distinguish function-bearing bodies from selectable presentation. Persistent display metadata cannot remove a whiteboard editor or audio upload/playback/transcript surface; character/scene presentation remains selectable.",
+  "affected_population": [
+    "Already persisted V51/V60 whiteboard/audio + shot-frame nodes",
+    "Functional whiteboard/audio nodes with any incompatible stored display card value",
+    "Card/body/size/history/ReactFlow consumers of the shared resolver"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts",
+    "src/workbench/generationCanvas/nodes/render/NodeCardBody.functional.test.ts",
+    "src/workbench/generationCanvas/nodes/nodeSizing.visualSize.test.ts"
+  ],
+  "entry_points": [
+    "registry -> BaseGenerationNode -> resolveNodeRenderKind / isCardRenderKind -> NodeCardBody",
+    "resolveNodeVisualSize and history/ReactFlow card consumers"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This internal ownership rule is established by actual registry, shell, card dispatcher, whiteboard/audio bodies, historical migration source and the user's precise counterexample. Existing React SSR is used only to execute actual consumers; no dependency behavior or upgrade is changed.",
+  "invariants": [
+    "Whiteboard always resolves to its functional whiteboard-card; audio to audio-strip regardless of incompatible persisted presentation metadata",
+    "Character/scene still honor every declared explicit render kind before their defaults",
+    "Keep all existing editor/asset/Agent-artifact/storyboard-table protections and category defaults",
+    "Actual whiteboard open and audio upload/playback/transcript/copy/subtitle controls remain rendered",
+    "Audio geometry remains 420x80 and functional sizes equal clean-node geometry",
+    "Do not mutate stored renderKind, user meta/results or any persistent data; no feature deletion, model/frozen/PNG/metadata edits"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/useNodeResultHistory.ts",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowNodes.tsx",
+      "symbol": "resolveNodeRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "isCardRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "symbol": "isCardRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeResultHistory.ts",
+      "symbol": "isCardRenderKind"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowNodes.tsx",
+      "symbol": "isCardRenderKind"
+    }
+  ],
+  "door_reduction": {
+    "before": 8,
+    "after": 8,
+    "why_not": "Shell, sizing, history and ReactFlow are legitimate independent consumers that already use the same resolver. Fix functional ownership once there; do not add caller-side guards or merge unrelated UI lifecycles."
+  },
+  "generality_proof": "Exact shot-frame counterexamples and all declared display values are executed for both functional kinds, while character/scene explicit matrices remain. Real NodeCardBody with real WhiteboardCardBody and AudioStripNode is streamed through React SSR in Chinese/English; only the closed heavy whiteboard modal is mocked and throws if incorrectly mounted. Upload, playback, transcript/copy/subtitle and frozen input/result identity are checked. Existing sizing consumes the resolver and verifies clean/polluted geometry equality.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+      "symbol": "resolveNodeRenderKind",
+      "responsibility": "Protect function-bearing card ownership before explicit presentation choices, then retain intrinsic/category defaults"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "entry_point": "resolveNodeRenderKind -> isCardRenderKind -> NodeCardBody",
+      "disposition": "enforced",
+      "evidence": "Actual shell only mounts the card dispatcher for a card result; there is no whiteboard kind fallback. The real dispatcher and actual functional bodies are executed in SSR regression."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "entry_point": "resolveNodeVisualSize",
+      "disposition": "enforced",
+      "evidence": "The same resolver chooses cardFixedSize; actual size regression checks audio 420x80 and clean/polluted geometry."
+    },
+    {
+      "path": "src/workbench/project/projectV51ToV60Migration.ts",
+      "entry_point": "migrateProjectV51ToV60",
+      "disposition": "not-affected",
+      "evidence": "Current migration avoids new category pollution for these kinds but does not remove already stored explicit shot-frame. It is not changed; render-time ownership must remain protective."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any stored generic/category render kind can hide a functional body, across both node kinds and multiple consumer surfaces. The previous four-kind explicit matrix encoded an overbroad assumption.",
+    "same_class_scan": [
+      "Generated actual resolveNodeRenderKind/isCardRenderKind doors",
+      "Read registry whiteboard/audio entries and complete shell -> card dispatcher -> actual functional body chain",
+      "Read current migration prevention and retained explicit metadata behavior",
+      "Read actual audio fixed-size consumer and existing protected workspace tests",
+      "Replaced the incorrect functional explicit-override matrix with a stronger functional-ownership matrix; retained character/scene choices"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+    "invariant": "Function-bearing whiteboard/audio card identity wins before stored presentation choice; selectable character/scene identity does not.",
+    "failure_mode": "Incompatible presentation metadata cannot make the dispatcher skip functional controls or make audio geometry drift.",
+    "exception_policy": "none",
+    "strategy": "Use the existing intrinsic map once and protect only the two function-bearing kinds before explicit selection, keeping later default lookup and every other hard boundary.",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/resolveRenderKind.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts",
+    "src/workbench/generationCanvas/nodes/render/NodeCardBody.functional.test.ts",
+    "src/workbench/generationCanvas/nodes/nodeSizing.visualSize.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts",
+    "src/workbench/generationCanvas/nodes/render/NodeCardBody.functional.test.ts",
+    "src/workbench/generationCanvas/nodes/nodeSizing.visualSize.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/nodes/resolveRenderKind.ts"
+    ],
+    "rationale": "Remove the overbroad behavior where a presentation override displaces functional whiteboard/audio bodies; keep all APIs and stored values."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse existing pure resolver, map and React SSR test APIs; no production dependency/runtime upgrade or API substitution.",
+    "exit_criteria": []
+  },
+  "migration": "No data rewrite. Old explicit fields remain byte-for-byte in the test inputs and actual stored result values are preserved. The existing rendering boundary chooses a safe functional body.",
+  "residual_risks": [
+    "No full ReactFlow/App mounting, pointer activation, Leafer drawing, actual audio decoding, Provider or PNG acceptance is run; actual card bodies are verified by SSR, not a real screenshot",
+    "The closed WhiteboardModal is mocked only to avoid loading the heavy canvas; the real WhiteboardCardBody and AudioStripNode are not mocked",
+    "Door-map enumerates callers, not the resolver definition itself; retain actual generated consumers and report any resulting owner-definition coverage advisory without fake self-calls or checker changes"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/resolveRenderKind.ts",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/resolveRenderKind.test.ts",
+      "src/workbench/generationCanvas/nodes/render/NodeCardBody.functional.test.ts",
+      "src/workbench/generationCanvas/nodes/nodeSizing.visualSize.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/render/NodeCardBody.functional.test.ts"
+  },
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-24"
+}

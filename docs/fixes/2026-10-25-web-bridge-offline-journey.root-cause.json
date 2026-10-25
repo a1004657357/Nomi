@@ -1,0 +1,28 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-web-bridge-offline-journey",
+  "change_kind": "structural",
+  "problem_type": "A rendered model-access component has no executable bounded journey owner",
+  "symptom": "Inventory identifies WebBridgeConnectionCard as unowned.",
+  "direct_cause": "The test manifest predates the common Jimeng/Pavo bridge card.",
+  "class_root": "Own real rendered controls through an executable isolated journey without inventing generation coverage or exclusions.",
+  "scope_paths": ["tests/ux/model-access-journeys/harnessContract.mjs", "tests/ux/model-access-journeys/manifest.mjs", "tests/ux/model-access-journeys/manifest.test.mjs", "tests/ux/model-access-journeys/web-bridge-connection.test.mjs", "tests/ux/web-bridge-connection.walk.mjs", "tests/ux/fixtures/web-bridge-connection/index.html", "tests/ux/fixtures/web-bridge-connection/main.tsx"],
+  "external_sources": [],
+  "internal_only_reason": "Repository UI owners, installed Vite source and existing Chromium/component fixture patterns determine this test-only change; production/API/dependency behavior is unchanged.",
+  "structural_evidence": {
+    "affected_paths": ["tests/ux/model-access-journeys/harnessContract.mjs", "tests/ux/model-access-journeys/manifest.mjs", "tests/ux/model-access-journeys/manifest.test.mjs", "tests/ux/model-access-journeys/web-bridge-connection.test.mjs", "tests/ux/web-bridge-connection.walk.mjs", "tests/ux/fixtures/web-bridge-connection/index.html", "tests/ux/fixtures/web-bridge-connection/main.tsx"],
+    "preserved_exports": [
+      {"path":"tests/ux/model-access-journeys/manifest.mjs","name":"MODEL_ACCESS_JOURNEYS"},
+      {"path":"tests/ux/model-access-journeys/manifest.mjs","name":"STABLE_ROUNDTRIP_JOURNEYS"},
+      {"path":"tests/ux/model-access-journeys/harnessContract.mjs","name":"JOURNEY_ENTRY_COMPONENTS"},
+      {"path":"tests/ux/model-access-journeys/harnessContract.mjs","name":"IGNORED_DRAWER_COMPONENTS"}
+    ],
+    "behavior_preservation": "All production files and prior journey/ignore values remain unchanged. J17 is component-level with no profiles or capability dimensions. The fixture supplies only in-memory existing preload operations; no new production entry or permission exemption.",
+    "verification_limits": "Chinese/English real Chromium components, not Electron navigation, real bridge login/startup, Provider generation, full-suite or final independent review. One static-fixture Fast Refresh lint warning is retained."
+  },
+  "regression_tests": ["tests/ux/model-access-journeys/manifest.test.mjs", "tests/ux/model-access-journeys/web-bridge-connection.test.mjs"],
+  "legacy_paths": {"status":"not-applicable","removed_paths":[],"rationale":"No production migration; add a bounded component journey without changing the existing Electron runner or exclusions."},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"Reuse installed tools without dependency changes.","exit_criteria":[]},
+  "migration": "No production/project/source-input/baseline migration; temporary compiled fixture and disposable browser contexts only.",
+  "residual_risks": ["No complete Host authentication or live service acceptance", "Coordination-head integration still needs review/retest"]
+}

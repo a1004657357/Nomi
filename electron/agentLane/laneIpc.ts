@@ -5,12 +5,14 @@ import { assertTrustedSender } from '../ipcSenderGuard'
 import { LANE_IPC_CHANNELS, type LaneWorkspaceHandle, type LaneWorkspaceProjection } from '../shared/agentLane/laneContracts'
 import { LaneCommandError, parseLaneCommand } from './laneCommandCodec'
 import { laneErrorCodeOf } from '../shared/agentLane/laneErrorCodes'
+import { logError } from '../logging/logger'
 import type { LaneDesktopResult, LaneRestoredDesktopInput } from '../shared/agentLane/laneDesktopContracts'
+import { laneConversationOf } from '../shared/agentLane/laneConversation'
 
 export interface LaneIpcDependencies {
-  /** Validate project identity, resolve credentials in main, and capture the committed surface. */
+  /** Open the main-issued window/project session and resolve credentials in main. */
   openWorkspace(event: IpcMainInvokeEvent, request: unknown): Promise<LaneWorkspaceHandle>
-  /** Revalidate the committed project before every operation, including approvals and cancellation. */
+  /** Revalidate the stable project session before every operation, including approvals and cancellation. */
   validate(event: IpcMainInvokeEvent): void
   updatePolicy(event: IpcMainInvokeEvent, policy: unknown, workspace: LaneWorkspaceHandle): void
   configure(event: IpcMainInvokeEvent, request: unknown, workspace: LaneWorkspaceHandle): Promise<void>
@@ -109,7 +111,16 @@ export function registerAgentLaneIpc(dependencies: LaneIpcDependencies): LaneIpc
           if (disposed || event.sender.isDestroyed()) { await workspace.close(); return }
           const target = event.sender
           const push = (projection: LaneWorkspaceProjection) => {
-            if (!target.isDestroyed()) target.send(LANE_IPC_CHANNELS.projection, projection)
+            if (active?.workspaceId !== workspaceId) return
+            if (projection.closed) {
+              // Structural replacement can close the inner workspace without passing through
+              // its session wrapper. Revoke now (close() detaches synchronously before its first
+              // await), then serialize disposal before the next open. Never await here: close may
+              // itself be waiting for this publisher's operation.
+              const closing = close()
+              void replace(async () => { await closing }).catch(error => logError('agent', 'workspace-terminal-close-failed', error))
+            }
+            if (!target.isDestroyed()) target.send(LANE_IPC_CHANNELS.projection, { ...projection, workspaceId })
           }
           const destroyed = () => { void replace(async () => { if (active?.workspaceId === workspaceId) await close() }) }
           active = { workspace, workspaceId, target, unsubscribe: workspace.subscribe(push), destroyed }
@@ -148,29 +159,38 @@ export function registerAgentLaneIpc(dependencies: LaneIpcDependencies): LaneIpc
       }
       const command = parseLaneCommand(wire)
       const owner = active
+      const changesLane = command.kind === 'lane-select' || command.kind === 'lane-create' || command.kind === 'lane-delete'
+      const address = wire as { expectedLane?: unknown; expectedSessionId?: unknown }
+      const expectedConversation = !changesLane && typeof address.expectedLane === 'string' && typeof address.expectedSessionId === 'string'
+        ? { laneName: address.expectedLane, sessionId: address.expectedSessionId } : undefined
+      const assertCurrent = () => {
+        const conversation = laneConversationOf(owner.workspace.projection())
+        if (disposed || switching || active !== owner || (!changesLane && (!expectedConversation || !conversation
+          || conversation.laneName !== expectedConversation.laneName || conversation.sessionId !== expectedConversation.sessionId))) {
+          throw new Error('agent_lane_workspace_stale')
+        }
+        dependencies.validate(event)
+      }
+      assertCurrent()
       let execution: Promise<Awaited<ReturnType<LaneWorkspaceHandle['execute']>>>
       if (command.kind === 'prompt' || command.kind === 'steer' || command.kind === 'follow-up') {
-        const expectedLane = (wire as { expectedLane?: unknown }).expectedLane
-        const assertCurrent = () => {
-          if (disposed || switching || active !== owner || owner.workspace.projection().active.lane !== expectedLane) {
-            throw new Error('agent_lane_workspace_stale')
-          }
-          dependencies.validate(event)
-        }
+        const admissionSignal = owner.workspace.captureInputSignal()
         // Serialize only configure + synchronous message capture. A running prompt must never
         // hold an approval, abort or the next queued input behind its model request.
         const preparation = inputPreparation.then(async () => {
+          admissionSignal.throwIfAborted()
           assertCurrent()
           await dependencies.configure(event, wire, owner.workspace)
+          admissionSignal.throwIfAborted()
           assertCurrent()
           let acknowledge!: (value: Awaited<ReturnType<LaneWorkspaceHandle['execute']>>) => void
           const accepted = new Promise<Awaited<ReturnType<LaneWorkspaceHandle['execute']>>>((resolve) => { acknowledge = resolve })
-          const settled = owner.workspace.execute(command, { onAccepted: () => acknowledge({}) })
+          const settled = owner.workspace.execute(command, { expectedConversation, admissionSignal, onAccepted: () => acknowledge({}) })
           return { execution: command.kind === 'prompt' ? Promise.race([accepted, settled]) : settled }
         })
         inputPreparation = preparation.then(() => undefined, () => undefined)
         execution = (await preparation).execution
-      } else execution = owner.workspace.execute(command)
+      } else execution = owner.workspace.execute(command, { expectedConversation })
       const outcome = await execution
       return { ok: true as const, ...outcome,
         ...(outcome.restoredInput
@@ -189,7 +209,6 @@ export function registerAgentLaneIpc(dependencies: LaneIpcDependencies): LaneIpc
     dispose: async () => {
       disposed = true
       for (const shot of singleShots.values()) shot.controller.abort()
-      ipcMain.removeHandler(LANE_IPC_CHANNELS.command)
       await lifecycle
       await close()
     },

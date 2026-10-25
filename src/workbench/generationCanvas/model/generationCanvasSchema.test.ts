@@ -165,4 +165,146 @@ describe('generationCanvasSchema Phase E.2 groups', () => {
       sceneTimeline: { totalDuration: 3 },
     })
   })
+
+  it('preserves creative resources and multi-result collections while legacy nodes remain valid', () => {
+    const parsed = generationCanvasNodeSchema.parse({
+      id: 'multi-view-1',
+      kind: 'image',
+      title: '多机位九宫格',
+      position: { x: 0, y: 0 },
+      categoryId: 'shots',
+      creativeResource: {
+        id: 'style-1',
+        kind: 'style',
+        label: '自然电影',
+        promptTokens: ['自然肤质'],
+        assetIds: [],
+        createdAt: 10,
+        updatedAt: 10,
+      },
+      resultCollections: [{
+        id: 'collection-1',
+        recipeId: 'image.multiview.grid9',
+        createdAt: 20,
+        quality: {
+          version: 1,
+          kind: 'grid9',
+          evaluator: 'grid9-local-v1',
+          status: 'warning',
+          evaluatedAt: 21,
+          checks: [{
+            id: 'view-diversity',
+            label: '视角差异',
+            status: 'warning',
+            summary: '发现 1 组近似重复视角',
+            itemIds: ['front', 'right'],
+            metrics: { duplicatePairCount: 1 },
+          }],
+          metrics: { successfulImageCount: 9 },
+          humanReview: {
+            verdict: 'rejected',
+            reviewedAt: 22,
+            note: '背面机位主体已经漂移',
+          },
+        },
+        items: [{
+          id: 'front',
+          label: '正面',
+          azimuth: 0,
+          elevation: 0,
+          status: 'success',
+          result: { id: 'result-front', type: 'image', url: 'nomi-local://front.png', createdAt: 20 },
+          selectedResultId: 'result-front',
+          candidates: [
+            {
+              id: 'result-front',
+              type: 'image',
+              url: 'nomi-local://front.png',
+              providerUrl: 'https://provider.example/front.png',
+              createdAt: 20,
+            },
+            { id: 'result-front-2', type: 'image', url: 'nomi-local://front-2.png', createdAt: 20 },
+          ],
+        }],
+      }],
+    })
+
+    expect(parsed.creativeResource?.kind).toBe('style')
+    expect(parsed.resultCollections?.[0]?.items[0]?.azimuth).toBe(0)
+    expect(parsed.resultCollections?.[0]?.items[0]?.selectedResultId).toBe('result-front')
+    expect(parsed.resultCollections?.[0]?.items[0]?.candidates).toHaveLength(2)
+    expect(parsed.resultCollections?.[0]?.items[0]?.candidates?.[0]?.providerUrl).toBe(
+      'https://provider.example/front.png',
+    )
+    expect(parsed.resultCollections?.[0]?.quality?.checks[0]?.metrics?.duplicatePairCount).toBe(1)
+    expect(parsed.resultCollections?.[0]?.quality?.humanReview).toEqual({
+      verdict: 'rejected',
+      reviewedAt: 22,
+      note: '背面机位主体已经漂移',
+    })
+
+    const legacy = generationCanvasNodeSchema.parse({
+      id: 'legacy-image', kind: 'image', title: '旧图片', position: { x: 0, y: 0 }, categoryId: 'shots',
+    })
+    expect(legacy.creativeResource).toBeUndefined()
+    expect(legacy.resultCollections).toBeUndefined()
+  })
+
+  it('keeps quality reports without a human review valid for legacy projects', () => {
+    const parsed = generationCanvasNodeSchema.parse({
+      id: 'legacy-quality',
+      kind: 'image',
+      title: '旧质量报告',
+      position: { x: 0, y: 0 },
+      resultCollections: [{
+        id: 'legacy-collection',
+        recipeId: 'portrait.refine',
+        createdAt: 20,
+        items: [],
+        quality: {
+          version: 1,
+          kind: 'portrait',
+          evaluator: 'portrait-local-v1',
+          status: 'unavailable',
+          evaluatedAt: 21,
+          checks: [],
+        },
+      }],
+    })
+
+    expect(parsed.resultCollections?.[0]?.quality?.humanReview).toBeUndefined()
+  })
+
+  it('preserves portrait comparison provenance and mood coordinates', () => {
+    const parsed = generationCanvasNodeSchema.parse({
+      id: 'mood-matrix',
+      kind: 'image',
+      title: '5x5 情绪矩阵',
+      position: { x: 0, y: 0 },
+      categoryId: 'shots',
+      resultCollections: [{
+        id: 'mood-run',
+        recipeId: 'portrait.mood',
+        createdAt: 20,
+        source: {
+          nodeId: 'portrait-source',
+          resultId: 'source-result',
+          label: '原始人像',
+          url: 'nomi-local://source.png',
+          thumbnailUrl: 'nomi-local://source-thumb.png',
+        },
+        items: [{
+          id: 'mood-e4-a0',
+          label: '能量 4 · 亲和 0',
+          energy: 4,
+          affinity: 0,
+          status: 'success',
+          result: { id: 'mood-result', type: 'image', url: 'nomi-local://mood.png', createdAt: 20 },
+        }],
+      }],
+    })
+
+    expect(parsed.resultCollections?.[0]?.source?.resultId).toBe('source-result')
+    expect(parsed.resultCollections?.[0]?.items[0]).toMatchObject({ energy: 4, affinity: 0 })
+  })
 })

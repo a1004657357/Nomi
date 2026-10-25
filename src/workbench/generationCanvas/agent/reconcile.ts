@@ -159,6 +159,19 @@ export function reconcileProposal(input: {
         if (typeof plan.modelKey === 'string' && plan.modelKey.trim() && meta.modelKey !== plan.modelKey.trim()) {
           deviations.push({ where, field: '模型', expected: plan.modelKey.trim(), actual: meta.modelKey ?? '(回退自动选)' })
         }
+        const actualArchetype = asRecord(meta.archetype)
+        if (
+          typeof plan.variantId === 'string' &&
+          plan.variantId.trim() &&
+          actualArchetype.variantId !== plan.variantId.trim()
+        ) {
+          deviations.push({
+            where,
+            field: '型号',
+            expected: plan.variantId.trim(),
+            actual: actualArchetype.variantId ?? '(默认型号)',
+          })
+        }
         const plannedParams = asRecord(plan.params)
         for (const [key, value] of Object.entries(plannedParams)) {
           if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue

@@ -6,7 +6,8 @@
 // structuredContent.nomiOutcome 给模型稳定字段（runId/params/nextActions/error），不再让它从文本里抠 ID。
 // 纯逻辑、不碰 electron —— 与 mcpProtocol 同边界，可裸 node 单测。
 
-import { ACTIVE_JOB_STATUSES } from '../productionRun/productionRunControl'
+import { isStillAtProvider } from '../productionRun/productionRunLifecycle'
+import type { ProductionJobStatus, ProductionRunStopReason } from '../productionRun/productionRunTypes'
 import { isAnchorCheckpointGate } from '../productionRun/anchorCheckpoint'
 import { projectGenerationRecovery } from './generationRecoveryProjection'
 
@@ -35,8 +36,30 @@ const RUN_STATUS_HINT: Record<string, { zh: string; en: string; nextZh: string; 
   cancelled: { zh: '已取消', en: 'cancelled', nextZh: '未提交的任务不计费', nextEn: 'Unsubmitted jobs are not charged', action: 'none' },
 }
 
+/**
+ * 停着的 Run **为什么停**（Run 在停下那一刻记下的事实，投影里的 `stopReason`）→ 给 Agent 转述的人话与下一步。
+ * 以前 needs_attention 一律说「有任务卡住了」，Agent 没法告诉用户是失败、要他再确认一次还是重启后要核对。
+ * 穷尽：多一种停下原因而这里没表态，类型检查当场红。
+ */
+const STOP_REASON_HINT: Record<ProductionRunStopReason | 'unknown', { zh: string; en: string; nextZh: string; nextEn: string; action: string }> = {
+  consent_expired: { zh: '需要用户再确认一次', en: 'needs the user to confirm again', nextZh: '批过的镜头还没开拍，离用户上一次确认已经太久了；请用户在 Nomi 里点一下「继续」，那一下就是确认（你替不了他）', nextEn: 'The approved shots have not started and the user\'s last confirmation is too old; ask the user to click Continue in Nomi — that click is the confirmation, you cannot give it for them', action: 'ask_user_to_continue' },
+  failed: { zh: '有镜头没生成成功', en: 'a shot failed', nextZh: '有镜头没生成成功，这一批停下了。可以在 Nomi 画布上重做那一镜，或取消这次制作', nextEn: 'A shot failed, so the batch stopped. Redo that shot on the Nomi canvas, or cancel the run', action: 'rework_or_cancel' },
+  user_paused: { zh: '用户暂停了', en: 'paused by the user', nextZh: '已提交的花费不退但产物保留；未提交的不再花钱。可继续或取消', nextEn: 'Submitted spend is not refundable but its output is kept; nothing new will be charged. Resume or cancel', action: 'resume_or_cancel' },
+  user_cancelled: { zh: '用户取消了', en: 'cancelled by the user', nextZh: '未提交的任务不计费', nextEn: 'Unsubmitted jobs are not charged', action: 'none' },
+  restart_recovery: { zh: '重启后待核对', en: 'waiting for a post-restart check', nextZh: 'Nomi 重启后要先核对之前在跑的任务，看错误详情选恢复动作', nextEn: 'After a restart Nomi must verify the jobs that were running; check the error details for recovery actions', action: 'recover' },
+  unknown: { zh: '已停（上一版没记原因）', en: 'stopped (reason not recorded by an older version)', nextZh: '这次制作是上一版停下的，没有记下原因；看错误详情选恢复动作，或取消', nextEn: 'An older version stopped this run without recording why; check the error details for recovery actions, or cancel', action: 'recover' },
+}
+
 function str(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+/** 投影里的停下原因（productionRunProjections 只透出 runStopReason 读到的那一格）。不认识的词当作没给。 */
+function stopReasonOf(value: Record<string, unknown>): ProductionRunStopReason | 'unknown' | null {
+  const raw = value.stopReason
+  return typeof raw === 'string' && Object.prototype.hasOwnProperty.call(STOP_REASON_HINT, raw)
+    ? raw as ProductionRunStopReason | 'unknown'
+    : null
 }
 function rec(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -252,15 +275,13 @@ const KEY_STATUS_LABEL: Record<string, { zh: string; en: string }> = {
 }
 
 /** 一个模型的参考能力压成一句短标签（只在真能带参考时出，纯文生模型不占字）。 */
-function referenceTag(ctx: Ctx, references: Record<string, unknown>): string {
+/** 薄名单那一行的能力位 → 一小截人话（这个模型吃不吃图/视频/音频参考）。 */
+function acceptsTag(ctx: Ctx, accepts: Record<string, unknown>): string {
   const kinds: string[] = []
-  if (references.image) kinds.push(L(ctx, references.multiImage ? '多图' : '图', references.multiImage ? 'multi-image' : 'image'))
-  if (references.video) kinds.push(L(ctx, '视频', 'video'))
-  if (references.audio) kinds.push(L(ctx, '音频', 'audio'))
-  if (kinds.length === 0) return ''
-  const modes = Array.isArray(references.referenceModes) ? (references.referenceModes as string[]) : []
-  const modeHint = modes.length ? `@${modes.join('/')}` : ''
-  return `${L(ctx, '参考', 'refs')}:${kinds.join('+')}${modeHint}`
+  if (accepts.image) kinds.push(L(ctx, accepts.multiImage ? '多图' : '图', accepts.multiImage ? 'multi-image' : 'image'))
+  if (accepts.video) kinds.push(L(ctx, '视频', 'video'))
+  if (accepts.audio) kinds.push(L(ctx, '音频', 'audio'))
+  return kinds.length ? `${L(ctx, '参考', 'refs')}:${kinds.join('+')}` : ''
 }
 
 /** 交付1 · 模型清单 → 双语转述（按 keyStatus 分组，只有 ok 说可用）+ 结构化透传（模型精确读）。 */
@@ -275,8 +296,11 @@ function buildListModelsOutcome(ctx: Ctx, value: Record<string, unknown>): ToolO
   const line = (m: Record<string, unknown>): string => {
     const status = str(m.keyStatus) || 'missing'
     const label = KEY_STATUS_LABEL[status] || KEY_STATUS_LABEL.missing
-    const refTag = referenceTag(ctx, rec(m.references))
-    const head = `${str(m.vendor)} · ${str(m.modelKey)}（${str(m.label)}, ${str(m.kind)}）`
+    const modes = Array.isArray(m.modeIds) && m.modeIds.length ? `@${(m.modeIds as string[]).join('/')}` : ''
+    const refTag = acceptsTag(ctx, rec(m.accepts)) + modes
+    const variants = Array.isArray(m.variantIds) && m.variantIds.length
+      ? ` · ${L(ctx, '变体', 'variants')}:${(m.variantIds as string[]).join('/')}` : ''
+    const head = `${str(m.vendor)} · ${str(m.modelId)}（${str(m.label)}, ${str(m.kind)}）${variants}`
     const tail = status === 'ok'
       ? `✓ ${L(ctx, label.zh, label.en)}${refTag ? ' · ' + refTag : ''}`
       : `✗ ${L(ctx, label.zh, label.en)}——${str(m.statusReason)}`
@@ -285,7 +309,8 @@ function buildListModelsOutcome(ctx: Ctx, value: Record<string, unknown>): ToolO
   const usable = models.filter((m) => str(m.keyStatus) === 'ok')
   const blocked = models.filter((m) => str(m.keyStatus) !== 'ok')
   const text = [
-    L(ctx, `可用模型 ${usable.length} 个（keyStatus=ok，选型只挑这些）：`, `${usable.length} usable model(s) (keyStatus=ok — pick from these):`),
+    L(ctx, `可用模型 ${usable.length} 个（keyStatus=ok，选型只挑这些）。要参数/取值/参考槽，用 nomi_read{target:"model", modelId} 查那一个：`,
+      `${usable.length} usable model(s) (keyStatus=ok — pick from these). For parameters, values and reference slots call nomi_read{target:"model", modelId}:`),
     ...(usable.length ? usable.map(line) : [L(ctx, '  （无——请先配置 API Key）', '  (none — configure an API key first)')]),
     ...(blocked.length ? [L(ctx, `另有 ${blocked.length} 个已列出但暂不可用（缺 Key / Key 解不开）：`, `${blocked.length} listed but not usable (missing / locked key):`), ...blocked.map(line)] : []),
   ].join('\n')
@@ -296,11 +321,9 @@ function buildListModelsOutcome(ctx: Ctx, value: Record<string, unknown>): ToolO
       total: models.length,
       usable: usable.length,
       // 结构化原样透传逐模型真话字段（模型精确读，不必从文本抠）。
-      models: models.map((m) => ({
-        vendor: str(m.vendor), modelKey: str(m.modelKey), kind: str(m.kind), label: str(m.label),
-        keyStatus: str(m.keyStatus) || 'missing', statusReason: str(m.statusReason),
-        references: rec(m.references),
-      })),
+      // 薄名单**原样透传**：这一层不再自己挑字段重投一遍（那是第三份手写投影，
+      // 2026-09-22 之前它还在用已经不存在的 modelKey/references 两个字段）。
+      models,
       nextActions: usable.length ? ['pick_model'] : ['configure_api_key'],
     },
   }
@@ -360,7 +383,8 @@ export function buildToolOutcome(
 
   if (toolName === 'nomi_read' && readTarget === 'run') {
     const status = str(value.status) || 'unknown'
-    const hint = stalledDraftHint(value) ?? RUN_STATUS_HINT[status]
+    const stopReason = stopReasonOf(value)
+    const hint = stalledDraftHint(value) ?? (status === 'needs_attention' && stopReason ? STOP_REASON_HINT[stopReason] : RUN_STATUS_HINT[status])
     const artifacts = Array.isArray(value.artifacts) ? (value.artifacts as Array<Record<string, unknown>>) : []
     const latest = artifacts.at(-1)
     const preview = latest ? rec(latest.preview) : {}
@@ -412,6 +436,14 @@ export function buildToolOutcome(
         `${unknownJobs.length} job(s) have an unverified provider state; waiting for reconciliation and no automatic resubmit.`,
       ),
       `  ${recovery?.message}`,
+      // 逐镜点名：Agent 读到这一行就不该再自己去 generate 这一镜（重复提交 = 可能重复扣费）；要不要重新生成由用户核对后在任务中心决定。
+      ...unknownJobs.map((job) => {
+        const meta = job.metadata && typeof job.metadata === 'object' ? job.metadata as Record<string, unknown> : {}
+        const label = str(meta.shotId) || str(job.shotId) || str(job.jobId)
+        return L(ctx,
+          `  ${label} 结果未知，服务商可能已经收下；不要再调用 generate 生成它；请让用户去服务商后台核对，要不要重新生成由用户在任务中心决定。`,
+          `  ${label}: outcome unknown, the provider may have already received it; do not call generate for it again; ask the user to check the provider dashboard, and leave the decision to generate again to the user in the task center.`)
+      }),
     ] : []
     // B3：状态转述带当前信任档位（非默认时才占一行，避免默认档噪音）。
     const trustLevel = str(value.trustLevel) || 'key_confirm'
@@ -430,7 +462,7 @@ export function buildToolOutcome(
     return {
       text,
       outcome: {
-        kind: 'run_status', runId, projectId, status, stageId: str(value.stageId) || null, trustLevel,
+        kind: 'run_status', runId, projectId, status, stopReason, stageId: str(value.stageId) || null, trustLevel,
         budget: { authorized: budget.authorized ?? null, actual: budget.actual ?? null },
         latestPreviewUrl: str(preview.url) || null,
         ...(direction && direction.candidates.length ? { directionGateId: direction.gateId, directionCandidates: direction.candidates } : {}),
@@ -553,7 +585,7 @@ export function buildToolOutcome(
     const budget = rec(value.budget)
     // 诚实敞口（D4）：已提交给供应商的任务收不回、钱已花——如实报数量，别让用户以为「停=零损失」。
     const jobsArr = Array.isArray(value.jobs) ? (value.jobs as Array<Record<string, unknown>>) : []
-    const inFlight = jobsArr.filter((job) => ACTIVE_JOB_STATUSES.includes(str(job.status))).length
+    const inFlight = jobsArr.filter((job) => isStillAtProvider({ status: str(job.status) as ProductionJobStatus })).length
     const done = action === 'pause'
       ? (status === 'pausing' ? L(ctx, '✓ 正在暂停', '✓ Pausing') : L(ctx, '✓ 已暂停', '✓ Paused'))
       : action === 'resume'

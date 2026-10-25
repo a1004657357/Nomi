@@ -1,8 +1,7 @@
-import { anchorsConsumedBy } from '../../../../config/modelArchetypes/anchorPolicy'
 import { NodeGenerationStatus } from '../../../generationCanvas/nodes/NodeGenerationStatus'
 import { StoryboardOverrideBadge } from '../../../generationCanvas/nodes/StoryboardOverrideBadge'
 import { resolveStoryboardOverride } from '../exec/storyboardOverrideActions'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconAlertTriangle,
@@ -19,9 +18,12 @@ import {
 import { cn } from '../../../../utils/cn'
 import type { MentionSuggestionItem, MentionUploadControls } from '../../../assets/AssetMentionSuggestionList'
 import type { PlanAnchor, PlanShot } from '../../../generationCanvas/agent/storyboardPlan'
+import { NO_SCENE_VALUE, type PlanShotPatch } from '../../../generationCanvas/agent/storyboardPlanEdits'
+import { findModelOptionByIdentifier } from '../../../../config/modelOptionResolvers'
+import { useVendorPreferenceOrder } from '../../../common/useVendorPreference'
 import type { PromptSegmentRange, StoryboardProfile } from '../../../generationCanvas/agent/storyboardPlan'
 import type { ModelOption } from '../../../../config/models'
-import { resolveShotArchetypeMode } from './shotRowModel'
+import { missingRequiredSlots, resolveShotArchetypeMode } from './shotRowModel'
 import { FRAME_COLUMN_WIDTH, type FrameMediaBox } from './shotFrameGeometry'
 import type { ShotRowExec } from '../exec/storyboardRowStatus'
 import type { Editor } from '@tiptap/react'
@@ -30,6 +32,7 @@ import StoryboardShotFrame from './StoryboardShotFrame'
 import StoryboardFrameActions from './StoryboardFrameActions'
 import StoryboardVariantsDrawer from './StoryboardVariantsDrawer'
 import ShotReferenceZone from './ShotReferenceZone'
+import { modeDisplayLabel, referenceCapableSibling } from './shotReferenceCells'
 import ShotComposerBar from './ShotComposerBar'
 import PromptSkeletonSegments from './PromptSkeletonSegments'
 import type { ShotVariant } from './shotVariants'
@@ -52,10 +55,8 @@ type Props = {
   shot: PlanShot
   anchors: PlanAnchor[]
   modelOptions?: ModelOption[]
-  /** 这镜引用了、但锚已不存在的 id（展开态红标 + 阻断确认）。 */
-  danglingIds: string[]
   exec?: ShotRowExec | undefined
-  /** 这一行生效的画幅（storyboardAspectScope.effectiveShotAspect）。 */
+  /** 这一行生效的画幅（storyboardShotScope.effectiveShotAspect）。 */
   aspect: string
   /** 整张表共用的媒体盒（`tableFrameMediaBox`）——行不自己按画幅算，算了混排就又不齐（§2.4 修订）。 */
   frameBox: FrameMediaBox
@@ -82,7 +83,6 @@ type Props = {
   mentionUpload?: MentionUploadControls
   storyboardProfile?: StoryboardProfile
   onGenerate?: (() => void) | undefined
-  onJumpToAnchor?: ((anchorId: string) => void) | undefined
   onOpenPreview?: (() => void) | undefined
   onRegenerate?: (() => void) | undefined
   /** 可找回态的**免费**续查（`recoverNodeResult`）；与 onGenerate/onRegenerate 那两条付费路径分开。 */
@@ -107,8 +107,8 @@ type Props = {
   onKeyboardMove?: ((direction: -1 | 1) => void) | undefined
   onKeyboardFocus?: ((direction: -1 | 1) => void) | undefined
   onRerunFreshRefs?: (() => void) | undefined
-  onUpdate: (patch: Partial<PlanShot>) => void
-  onToggleAnchor: (anchorId: string) => void
+  onResolveOverride?: (field: string, action: 'adopt' | 'discard') => void
+  onUpdate: (patch: PlanShotPatch) => void
   onRemove: () => void
   promptInvalid?: boolean
   /**
@@ -151,16 +151,32 @@ function MenuItem({
   )
 }
 
+/**
+ * 行级 Enter 快捷键（「回车 = 去改提示词」）**不许抢走已经聚焦的控件的那一下**。
+ *
+ * 2026-09-17 实测到的坑：原来的名单只列了文本录入类（`input, textarea, select, contenteditable`），
+ * 于是**行内每一颗按钮**——「生成」、行尾 ⋯、画面格那排动作钮——用键盘 Tab 过去之后按 Enter，
+ * 都会被这一行 `preventDefault()` 吃掉，焦点直接跳去提示词框。鼠标用户完全看不到这个问题，
+ * 键盘用户则是「这颗钮按不动」。
+ *
+ * 判据改成「这一下 Enter 本来就属于某个控件吗」，而不是「是不是在打字」——
+ * 按钮、链接、combobox 的 Enter 都是它们自己的。行自己是个 `div`，不在这张名单里，
+ * 所以焦点真落在行上时快捷键照旧。
+ */
+const ENTER_BELONGS_TO_CONTROL =
+  'input, textarea, select, button, a[href], [contenteditable="true"], [role="button"], [role="combobox"], [role="option"], [role="switch"]'
+
 export default function StoryboardShotRow(props: Props): JSX.Element {
   const { t } = useTranslation()
   const {
     shot, anchors, modelOptions, exec, aspect, frameBox, aspectOverridden, aspectOptions, onChangeAspect,
     skipped, onToggleSkip, variants = [], adoptedVariantId, onAdoptVariant, onDeleteVariant, onGenerateVariants, outputTag,
-    onGenerate, onJumpToAnchor, onOpenPreview, onRegenerate, onRecover, onToggleLock, onAgentHandoff,
+    onGenerate, onOpenPreview, onRegenerate, onRecover, onToggleLock, onAgentHandoff,
     onInsertAbove, onInsertBelow, targetShots, allShots, sourcePosition, onSaveAsReference, onSetAsFirstFrame,
     onRerunFreshRefs, onUpdate, onRemove, promptInvalid, durationWarning,
     mentionSearch, onMentionSelect, currentRefUrls, mentionUpload, storyboardProfile, sourceSegment,
   } = props
+  const orderedVendorKeys = useVendorPreferenceOrder()
   const [actionsOpen, setActionsOpen] = React.useState(false)
   const [aspectMenuOpen, setAspectMenuOpen] = React.useState(false)
   const [variantsOpen, setVariantsOpen] = React.useState(false)
@@ -174,8 +190,17 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
   const closeMenus = (): void => { setActionsOpen(false); setAspectMenuOpen(false) }
 
   const isImageShot = shot.shotKind === 'image'
-  const resolved = resolveShotArchetypeMode(modelOptions?.find((option) => option.value === shot.modelKey) ?? null, shot.modeId)
+  // 档案按 (modelKey, modelVendor) 取：同名两家的档案/参数可以不同，按名字取会拿到另一家的模式表。
+  const resolved = resolveShotArchetypeMode(findModelOptionByIdentifier(modelOptions ?? [], shot.modelKey, shot.modelVendor, orderedVendorKeys), shot.modeId)
   const resolvedMode = resolved?.mode ?? null
+  // 行上摆着、当前模式用不上的参考图：一句话点名（模式名与下拉同一个出口；换哪个模式才带得上也说出来）。
+  const ignoredNames = (exec?.ignoredAnchors ?? []).map((anchor) => anchor.name).join(t('storyboardEditor.anchorPolicy.nameSeparator'))
+  const ignoredSwitch = resolvedMode ? referenceCapableSibling(resolvedMode, resolved?.archetype ?? null) : undefined
+  const ignoredReferenceNotice = resolvedMode && ignoredNames
+    ? ignoredSwitch
+      ? t('storyboardEditor.anchorPolicy.rowIgnored', { names: ignoredNames, mode: modeDisplayLabel(resolvedMode), other: ignoredSwitch.modeLabel })
+      : t('storyboardEditor.anchorPolicy.rowIgnoredNoAlt', { names: ignoredNames, mode: modeDisplayLabel(resolvedMode) })
+    : null
 
 
   /**
@@ -193,13 +218,18 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
 
   const grip = (
     <div className="flex flex-col items-center gap-1">
+      {/* 拖动把手。它和下面那颗「⋯」曾经**共用同一个 aria-label**（都叫「镜头操作」），
+          于是任何按名字找的点击——走查、读屏器、无障碍工具——都落在这一颗上；而它没有 onClick，
+          点了什么也不会发生（2026-09-17，W-04：逐镜换画幅的入口因此整条不可达）。
+          一个名字只能有一个含义。 */}
       <button
         type="button"
         draggable={props.draggable}
         onDragStart={props.onDragStart}
         onDragEnd={props.onDragEnd}
-        className="cursor-grab active:cursor-grabbing"
-        aria-label={t('storyboardEditor.rowActions.open')}
+        className="relative cursor-grab active:cursor-grabbing after:absolute after:-inset-1.5 after:content-['']"
+        aria-label={t('storyboardEditor.rowActions.drag')}
+        data-storyboard-row-drag={shot.index}
       >
         <IconGripVertical size={15} stroke={1.6} aria-hidden />
       </button>
@@ -219,7 +249,9 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
         onClick={() => setActionsOpen((value) => !value)}
         aria-label={t('storyboardEditor.rowActions.open')}
         data-storyboard-row-menu-trigger={shot.index}
-        className="grid size-4 place-items-center rounded-nomi-sm text-nomi-ink-40 hover:bg-nomi-ink-10 hover:text-nomi-ink-80"
+        // 视觉尺寸受 14px 的行首栏宽约束（改栏宽是布局改动），但**命中区**不必受它约束：
+        // ::after 把可点范围撑到约 28px，仍然只有这一颗，不与相邻控件抢（W-04 附带的「命中区偏小」）。
+        className="relative grid size-4 place-items-center rounded-nomi-sm text-nomi-ink-40 after:absolute after:-inset-1.5 after:content-[''] hover:bg-nomi-ink-10 hover:text-nomi-ink-80"
       >
         <IconDots size={13} stroke={1.8} />
       </button>
@@ -238,7 +270,7 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
               {props.scenes.map((scene) => (
                 <MenuItem key={scene.id} icon={<IconArrowRight size={13} stroke={1.8} />} label={scene.title} onClick={() => { props.onMoveToScene?.(scene.id); closeMenus() }} />
               ))}
-              <MenuItem icon={<IconArrowRight size={13} stroke={1.8} />} label={t('storyboardEditor.selection.allScenes')} onClick={() => { props.onMoveToScene?.('__none__'); closeMenus() }} />
+              <MenuItem icon={<IconArrowRight size={13} stroke={1.8} />} label={t('storyboardEditor.selection.allScenes')} onClick={() => { props.onMoveToScene?.(NO_SCENE_VALUE); closeMenus() }} />
             </>
           ) : null}
           <span className="my-0.5 h-px bg-nomi-line-soft" aria-hidden />
@@ -280,7 +312,6 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
         aspect={aspect}
         box={frameBox}
         onGenerate={onGenerate}
-        onJumpToAnchor={onJumpToAnchor}
         onOpenPreview={onOpenPreview}
         selected={props.selected}
         onSelect={props.onSelect}
@@ -321,11 +352,10 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
 
   const prompt = (
     <div className="flex min-w-0 flex-col gap-1.5" data-storyboard-prompt-block="true">
-      {exec?.node ? <StoryboardOverrideBadge node={exec.node} onResolve={(field, action) => resolveStoryboardOverride(exec.node!.id, field, action)} /> : null}
+      {exec?.node ? <StoryboardOverrideBadge node={exec.node} onResolve={(field, action) => props.onResolveOverride ? props.onResolveOverride(field, action) : resolveStoryboardOverride(exec.node!.id, field, action)} /> : null}
       {exec?.ignoredAnchors?.length ? (
         <span className="text-micro text-nomi-ink-40" data-storyboard-anchor-ignored={shot.index} title={exec.ignoredAnchors.map(anchor => `${anchor.name}: ${anchor.reason}`).join('\n')}>
-          {t(resolved?.archetype.modes.every(mode => anchorsConsumedBy(mode).includes('none'))
-            ? 'storyboardEditor.anchorPolicy.modelUnsupported' : 'storyboardEditor.anchorPolicy.rowIgnored')}
+          {ignoredReferenceNotice}
         </span>
       ) : null}
       {skipped ? (
@@ -407,6 +437,7 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
           onChangeAspect={onChangeAspect}
           onUpdate={onUpdate}
           onGenerate={statusTag ? undefined : onGenerate}
+          generating={exec?.status === 'generating'}
           statusTag={statusTag}
         />
       </div>
@@ -465,7 +496,7 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
         } else if (event.metaKey && event.key === 'Enter') {
           event.preventDefault()
           onGenerate?.()
-        } else if (event.key === 'Enter' && !(event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"]'))) {
+        } else if (event.key === 'Enter' && !(event.target instanceof HTMLElement && event.target.closest(ENTER_BELONGS_TO_CONTROL))) {
           event.preventDefault()
           const box = event.currentTarget.querySelector<HTMLElement>('[data-prompt-box="true"] [contenteditable="true"]')
           box?.focus()
@@ -489,7 +520,11 @@ export default function StoryboardShotRow(props: Props): JSX.Element {
           archetype={resolved?.archetype ?? null}
           bindings={shot.referenceBindings}
           onChangeBindings={(next) => onUpdate({ referenceBindings: next })}
+          // 红格与画面格「缺X参考」、批量排除读同一份（exec.missingSlots）；没有 exec 的降级态直接问同一个 owner。
+          missingSlots={exec ? exec.missingSlots : missingRequiredSlots(resolvedMode, shot, anchors)}
+          plannedFirstFrame={exec?.plannedFirstFrame ?? null}
           anchors={anchors}
+          hideNoRefNotice={Boolean(exec?.ignoredAnchors?.length)}
           onTriggerMention={triggerAtMention}
           mentionEnabled={Boolean(mentionSearch)}
         />

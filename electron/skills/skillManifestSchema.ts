@@ -31,6 +31,7 @@ import { CAPABILITY_CONTRACTS } from "../shared/agentCapabilities/registry";
  */
 
 import { skillProviderKindSchema, type SkillProviderKind } from "../shared/skillProvider";
+import type { SkillFrontmatter } from "./skillFrontmatter";
 export { skillProviderKindSchema, type SkillProviderKind } from "../shared/skillProvider";
 
 export const skillAudienceSchema = z.enum(["internal", "mcp"]);
@@ -42,6 +43,33 @@ export const skillRequestedCapabilitySchema = z.string().refine(
   "must be a canonical Capability Registry id",
 );
 
+// Canvas workflow nodes still consume these structured input declarations.
+export const skillInputSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  required: z.boolean().optional(),
+});
+export type SkillInput = z.infer<typeof skillInputSchema>;
+
+/**
+ * Optional canvas presentation for skills that should be instantiated as a
+ * first-class workflow node. Recipe ids stay provider-independent: the model
+ * catalog resolves a compatible provider only when the user runs the recipe.
+ */
+export const skillCanvasSchema = z.object({
+  recipeIds: z.array(z.string().min(1)).default([]),
+  defaultRecipeId: z.string().min(1).optional(),
+}).superRefine((value, ctx) => {
+  if (value.defaultRecipeId && !value.recipeIds.includes(value.defaultRecipeId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["defaultRecipeId"],
+      message: "defaultRecipeId must be included in recipeIds",
+    });
+  }
+});
+export type SkillCanvas = z.infer<typeof skillCanvasSchema>;
+
 /**
  * 阶段级模型偏好 —— **只声明能力身份（kind + 可选 family），绝不绑 vendor 专属 archetypeId，
  * 也不写死参数**（参数合法区间交模型档案给）。这是「通用第一（P4）」+「分享出去不绑死」的硬约束：
@@ -50,7 +78,7 @@ export const skillRequestedCapabilitySchema = z.string().refine(
  */
 export const skillStageModelPrefSchema = z
   .object({
-    /** 能力类别：text / image / video，驱动供应商模态 chip。 */
+    /** 能力类别：text / image / video / model3d（机读，决定路由到哪类模型）。 */
     kind: skillProviderKindSchema,
     /** @deprecated 兼容已有技能包；无运行时模型家族选择作用。 */
     family: z.string().min(1).optional(),
@@ -112,6 +140,8 @@ export type SkillManifest = {
   requestedCapabilities?: string[];
   tools: string[];
   requiredProviders: SkillProviderKind[];
+  inputs?: SkillInput[];
+  canvas?: SkillCanvas;
   stages?: SkillStage[];
 };
 
@@ -135,6 +165,8 @@ export const skillManifestSchema = z
     tools: z.array(z.string().min(1)),
     /** Provider modalities required to run this skill end-to-end (drives the ✓/⚠ chips). */
     "required-providers": z.array(skillProviderKindSchema),
+    inputs: z.array(skillInputSchema).optional(),
+    canvas: skillCanvasSchema.optional(),
     /** Multi-stage playbook skeleton (optional). Absent ⇒ single-stage pack. */
     stages: z.array(skillStageSchema).optional(),
   })
@@ -147,6 +179,8 @@ export const skillManifestSchema = z
     requestedCapabilities: manifest["requested-capabilities"],
     tools: manifest.tools,
     requiredProviders: manifest["required-providers"],
+    inputs: manifest.inputs,
+    canvas: manifest.canvas,
     stages: manifest.stages,
   }));
 
@@ -163,4 +197,25 @@ export function parseSkillManifest(input: unknown):
   const parsed = skillManifestSchema.safeParse(input);
   if (parsed.success) return { ok: true, manifest: parsed.data };
   return { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
+}
+
+/**
+ * Read the Nomi extension block out of `metadata.nomi`.
+ *
+ * Three outcomes, and the middle one is the security-relevant one: a block that
+ * exists but does not validate returns `manifest: null` **with** an error, which
+ * downstream turns into an empty capability list (zero tools).  A missing block
+ * is not an error — most skills are pure knowledge and declare nothing beyond
+ * the two required frontmatter fields.  pi's loader never sees this block
+ * (the Agent Skills spec leaves `metadata` to the client), so this is the one
+ * place it is read — by the catalog and by the package importer alike.
+ */
+export function readSkillManifest(front: SkillFrontmatter): { manifest: SkillManifest | null; error?: string } {
+  if (front.error) return { manifest: null, error: front.error };
+  const metadata = front.values.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return { manifest: null };
+  const nomi = (metadata as Record<string, unknown>).nomi;
+  if (nomi === undefined) return { manifest: null };
+  const parsed = parseSkillManifest(nomi);
+  return parsed.ok ? { manifest: parsed.manifest } : { manifest: null, error: `metadata.nomi 校验失败：${parsed.error}` };
 }

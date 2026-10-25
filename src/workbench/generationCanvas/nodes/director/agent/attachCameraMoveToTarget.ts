@@ -23,9 +23,16 @@ export type AttachCameraMoveOutcome =
   | { kind: 'patch'; patch: { meta: Record<string, unknown>; prompt?: string }; toast?: { message: string; level: 'warning' } }
 
 /** 运镜 prompt 地板（通用，全供应商可用）：人话点出该镜的运镜，作为不吃视频参考时的降级 */
-function cameraMoveDirective(move: CameraMove | undefined): string {
+const CAMERA_MOVE_PROMPT_HEADING = '镜头运动：'
+
+export function cameraMoveDirective(move: CameraMove | undefined): string {
   if (!move) return ''
-  return `\n镜头运动：${CAMERA_MOVE_LABEL[move]}（${CAMERA_MOVE_DESC[move]}）`
+  return `\n${CAMERA_MOVE_PROMPT_HEADING}${CAMERA_MOVE_LABEL[move]}（${CAMERA_MOVE_DESC[move]}）`
+}
+
+/** Both Director and legacy Scene3D retain authored movement instructions verbatim. */
+export function appendCameraMoveDirective(prompt: string, move: CameraMove | undefined): string {
+  return prompt.includes(CAMERA_MOVE_PROMPT_HEADING) ? prompt : prompt + cameraMoveDirective(move)
 }
 
 function readAttachedUrl(meta: Record<string, unknown>): string {
@@ -73,6 +80,6 @@ export function computeAttachCameraMove(target: GenerationCanvasNode | undefined
   const directive = cameraMoveDirective(move)
   if (!directive) return { kind: 'noop' }
   const basePrompt = typeof target.prompt === 'string' ? target.prompt : ''
-  const prompt = basePrompt.includes('镜头运动：') ? basePrompt : `${basePrompt}${directive}`
+  const prompt = appendCameraMoveDirective(basePrompt, move)
   return { kind: 'patch', patch: { meta: { ...meta, [CAMERA_MOVE_ATTACHED_URL_KEY]: trimmedNew }, prompt } }
 }

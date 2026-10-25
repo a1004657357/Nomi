@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApprovalReceiptAuthority } from "./approvalReceipt";
 import { dispatch } from "./dispatcher";
 import type { McpConnectionContext } from "./mcpConnectionContext";
-import { createMcpGenerationPolicy } from "./mcpGenerationPolicy";
 import { createMcpProtocol, type McpTransport } from "./mcpProtocol";
 import { createGenerationPlanningHandler } from "./mcpGenerationTools";
 import { createModuleRegistry } from "./moduleRegistry";
@@ -121,7 +120,7 @@ describe("semantic MCP one-confirmation journey", () => {
       createdOperationId = input.operationId;
       return createOperation(input);
     };
-    const start = vi.fn(async (operation: { operationId: string; approvedReceiptId?: string }) => ({ operationId: operation.operationId, approvedReceiptId: operation.approvedReceiptId, nextAction: "provider_not_configured" }));
+    const start = vi.fn(async (operation: { operationId: string; authorization?: { status: string } }) => ({ operationId: operation.operationId, authorizationStatus: operation.authorization?.status, nextAction: "provider_not_configured" }));
     const provider: GenerationProvider = {
       providerId: "fixture-provider",
       capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true, materialize: true },
@@ -139,6 +138,8 @@ describe("semantic MCP one-confirmation journey", () => {
         projectRevision: 1,
         operation,
         contract,
+        // 授权站在真实 Run 上（`run` 必填）：不传曾经让这台 harness 恒停在 attempt=1。
+        run: repository.read(operation.projectId, operation.operationId)!,
         ...(multiShot ? { multiShot } : {}),
         providers: [provider],
         resolveShotPrice: () => ({ known: true, amount: 0 }),
@@ -150,24 +151,20 @@ describe("semantic MCP one-confirmation journey", () => {
       operations,
       planning,
       receipts,
-      projectRevisionResolver: () => 1,
       now: () => "2026-08-23T00:00:00.000Z",
     });
     const runTask = vi.fn(async () => ({ status: "succeeded" }));
-    const policy = createMcpGenerationPolicy({ env: { NOMI_MCP_GENERATION_SINGLE_SHOT_V1: "1" }, checkpoints: { p0Passed: true, p2Passed: true, p3Passed: true } });
     const context = {
       runTask,
       makeGateway: vi.fn(() => { throw new Error("semantic confirmation must not create a gateway"); }),
       productionRuns: { createDraft: vi.fn(), readProjection: vi.fn(), readEvents: vi.fn(), readArtifactProjection: vi.fn(), readFull: vi.fn(), command: vi.fn() },
       origin: { host: "codex" as const },
-      generationPolicy: policy,
       generationPlanning: planning,
       requestGenerationGate: generationAuthority.requestGenerationGate,
       authorizeGeneration: generationAuthority.authorizeGeneration,
       projectSession: {
         authority: createProjectSessionAuthority({
           leaseAuthority: leases,
-          generationPolicy: policy,
           resolveProjectSelection: async () => ({ ...projectIdentity, manifestDigest: "manifest" }),
         }),
         connection,
@@ -221,9 +218,11 @@ describe("semantic MCP one-confirmation journey", () => {
     await call(3, "tools/call", { name: "nomi_operation_preview", arguments: { leaseHandle: lease, operationId } });
     const gate = await call(4, "tools/call", { name: "nomi_operation_gate", arguments: { phase: "request", leaseHandle: lease, operationId } });
     expect(gate.result).toBeTruthy();
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ operationId, approvedReceiptId: expect.stringMatching(/^receipt-/) }), expect.anything());
+    // 批准住在「批这一份的那道门」上：start 读到的是那道门已批（operationFromRun 的 authorization 投影）。
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ operationId, authorization: expect.objectContaining({ status: "approved" }) }), expect.anything());
     const persisted = repository.read(projectIdentity.projectId, operationId);
-    expect(persisted?.generationPlan).toMatchObject({ state: "sealed", approvedReceiptId: expect.stringMatching(/^receipt-/) });
+    expect(persisted?.generationPlan).toMatchObject({ state: "sealed" });
+    expect(persisted?.gates.at(-1)).toMatchObject({ status: "approved", receiptId: expect.stringMatching(/^receipt-/) });
     expect(persisted?.gates.find((item) => Boolean(item.authorizationDigest))?.status).toBe("approved");
     expect(persisted?.budget).toMatchObject({ authorized: 0, reserved: 0, actual: 0, unsettled: 0 });
     expect(provider.submit).not.toHaveBeenCalled();

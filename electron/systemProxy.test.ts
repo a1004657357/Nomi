@@ -5,6 +5,7 @@ import { getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from "undic
 import {
   applySystemProxy,
   describeNetworkError,
+  getActiveHttpProxyUrl,
   getProxyStatus,
   getAppDispatcher,
   parseEnvProxy,
@@ -109,20 +110,14 @@ describe("SelectiveProxyDispatcher（私网走直连，其余走代理）", () =
 
   it("公网 origin → 走代理", () => {
     const calls: string[] = [];
-    const d = new SelectiveProxyDispatcher(
-      makeFakeDispatcher("proxy", calls),
-      makeFakeDispatcher("direct", calls),
-    );
+    const d = new SelectiveProxyDispatcher(makeFakeDispatcher("proxy", calls), makeFakeDispatcher("direct", calls));
     d.dispatch({ origin: "https://api.apimart.ai", path: "/", method: "GET" }, {} as never);
     expect(calls).toEqual(["proxy:https://api.apimart.ai"]);
   });
 
   it("localhost / 127.0.0.1 / 私网 → 走直连（不代理本地模型服务器）", () => {
     const calls: string[] = [];
-    const d = new SelectiveProxyDispatcher(
-      makeFakeDispatcher("proxy", calls),
-      makeFakeDispatcher("direct", calls),
-    );
+    const d = new SelectiveProxyDispatcher(makeFakeDispatcher("proxy", calls), makeFakeDispatcher("direct", calls));
     d.dispatch({ origin: "http://127.0.0.1:11434", path: "/", method: "GET" }, {} as never);
     d.dispatch({ origin: "http://localhost:1234", path: "/", method: "GET" }, {} as never);
     d.dispatch({ origin: "http://192.168.1.50:8080", path: "/", method: "GET" }, {} as never);
@@ -178,6 +173,13 @@ describe("describeNetworkError（把 fetch failed 翻成人话）", () => {
   it("生效 HTTP 代理后 → 诊断带出代理标签（回归既有行为）", () => {
     rememberProxyStateForTests({ kind: "http", url: "http://127.0.0.1:7897", source: "system" });
     expect(describeNetworkError(withCause("ETIMEDOUT"))).toMatch(/当前代理/);
+    expect(getActiveHttpProxyUrl()).toBe("http://127.0.0.1:7897");
+  });
+
+  it("无代理或不支持的代理不会暴露给子进程", () => {
+    expect(getActiveHttpProxyUrl()).toBeNull();
+    rememberProxyStateForTests({ kind: "unsupported", detail: "SOCKS only", source: "system" });
+    expect(getActiveHttpProxyUrl()).toBeNull();
   });
 
   it("happy-eyeballs AggregateError 的 DNS cause 不会退化成普通 fetch failed", () => {

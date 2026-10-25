@@ -8,54 +8,52 @@ export const BROWSER_TEXT_PROMPT_CONSOLE_PREFIX = "__NOMI_BROWSER_TEXT_PROMPT__"
 
 export async function installBrowserImageDragBridge(record: BrowserViewRecord): Promise<void> {
   const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   const script = `
 (() => {
   const dragMime = ${JSON.stringify(BROWSER_IMAGE_DRAG_MIME)};
+  const viewId = ${JSON.stringify(record.viewId)};
   if (window.__nomiBrowserImageDragBridgeInstalled) return true;
   window.__nomiBrowserImageDragBridgeInstalled = true;
   const pickMediaElement = (target) => {
     if (!(target instanceof Element)) return null;
     if (target instanceof HTMLImageElement || target instanceof HTMLVideoElement) return target;
-    const closestMedia = target.closest ? target.closest('img,video') : null;
-    if (closestMedia) return closestMedia;
-    const container = target.closest ? target.closest('[draggable="true"],a,picture,figure') : null;
-    return container?.querySelector ? container.querySelector('img,video') : null;
+    return target.closest ? target.closest('img,video') : null;
   };
-  const readBackgroundUrl = (target) => {
-    if (!(target instanceof Element)) return '';
-    const candidates = [target, target.closest?.('[draggable="true"],a,figure')].filter(Boolean);
-    for (const candidate of candidates) {
-      const value = getComputedStyle(candidate).backgroundImage || '';
-      const match = value.match(/url\\(["']?(.+?)["']?\\)/i);
-      if (match?.[1]) return match[1];
-    }
-    return '';
-  };
-  const readMedia = (target) => {
-    const media = pickMediaElement(target);
+  const readMediaUrl = (media) => {
+    if (!media) return '';
     if (media instanceof HTMLVideoElement) {
-      const videoUrl = media.currentSrc || media.src || media.querySelector('source')?.src || '';
-      return {
-        element: media,
-        url: videoUrl || media.poster || '',
-        mediaType: videoUrl ? 'video' : 'image',
-      };
+      return media.currentSrc || media.src || media.querySelector('source[src]')?.getAttribute('src') || '';
     }
-    if (media instanceof HTMLImageElement) {
-      return {
-        element: media,
-        url: media.currentSrc || media.src || media.getAttribute('data-src') || media.getAttribute('data-original') || media.getAttribute('data-lazy-src') || '',
-        mediaType: 'image',
-      };
-    }
-    return { element: target instanceof Element ? target : null, url: readBackgroundUrl(target), mediaType: 'image' };
+    return media.currentSrc || media.src || media.getAttribute('data-src') || media.getAttribute('data-original') || '';
   };
+  const mediaType = (media) => media instanceof HTMLVideoElement ? 'video' : 'image';
+  const mediaTitle = (media) => (
+    media.getAttribute('alt') ||
+    media.getAttribute('title') ||
+    media.getAttribute('aria-label') ||
+    document.title ||
+    ''
+  ).trim();
+  const fileNameFromUrl = (url, type) => {
+    try {
+      const name = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || '');
+      if (name) return name;
+    } catch {}
+    return 'browser-' + type + '-' + Date.now() + (type === 'video' ? '.mp4' : '.png');
+  };
+  document.addEventListener('pointerover', (event) => {
+    const media = pickMediaElement(event.target);
+    if (!media) return;
+    const rect = media.getBoundingClientRect();
+    if (rect.width < 64 || rect.height < 64 || !readMediaUrl(media)) return;
+    media.draggable = true;
+  }, true);
   document.addEventListener('dragstart', (event) => {
     const transfer = event.dataTransfer;
     if (!transfer) return;
-    const media = readMedia(event.target);
-    const rawUrl = media.url;
+    const media = pickMediaElement(event.target);
+    const rawUrl = readMediaUrl(media);
     if (!rawUrl) return;
     let url = '';
     try {
@@ -63,11 +61,14 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
     } catch {
       return;
     }
-    const title = (media.element?.getAttribute?.('alt') || media.element?.getAttribute?.('title') || document.title || '').trim();
+    const type = mediaType(media);
+    const title = mediaTitle(media);
     const payload = {
+      viewId,
       url,
       title,
-      mediaType: media.mediaType,
+      fileName: fileNameFromUrl(url, type),
+      mediaType: type,
       pageUrl: window.location.href,
       pageTitle: document.title || '',
     };
@@ -80,9 +81,6 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
   document.addEventListener('dragend', () => {
     try { console.info(${JSON.stringify(BROWSER_IMAGE_DRAG_END_CONSOLE_MESSAGE)}); } catch {}
   }, true);
-  document.addEventListener('drop', () => {
-    try { console.info(${JSON.stringify(BROWSER_IMAGE_DRAG_END_CONSOLE_MESSAGE)}); } catch {}
-  }, true);
   return true;
 })()
 `;
@@ -93,11 +91,8 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
   }
 }
 
-// 提示词/划词桥脚本抽成纯函数：单测钉死「零 innerHTML sink」（Trusted Types 站点上桥必须活着）。
-// 素材面收敛 2026-07-22：自定义分类数据源（素材盒 localStorage 私账）已亡，恒喂 []——
-// 注入版 normalize 前置内置 图片/视频 两默认项，页内「保存提示词」面板照常可用。
-export function promptHoverBridgeScript(promptCategories: { id: string; label: string }[] = []): string {
-  return `
+export function promptHoverBridgeScript(promptCategories: BrowserViewRecord["promptCategories"]): string {
+  const script = `
 (() => {
   const consolePrefix = ${JSON.stringify(BROWSER_IMAGE_PROMPT_CONSOLE_PREFIX)};
   const promptCategories = ${JSON.stringify(promptCategories)};
@@ -130,29 +125,23 @@ export function promptHoverBridgeScript(promptCategories: { id: string; label: s
   }
   window.__nomiBrowserPromptHoverBridgeInstalled = true;
 
-  // Trusted Types-safe DOM 构造（2026-07-22 审计 P1：YouTube 等强制 TT 的站点上 innerHTML 直接抛异常，
-  // 整条划词/提示词桥失效）。textContent/createElement/setAttribute 不经 TT sink，全站通用。
-  const el = (tag, props, children) => {
-    const node = document.createElement(tag);
-    const options = props || {};
-    if (options.className) node.className = options.className;
-    if (options.text) node.textContent = options.text;
-    if (options.style) node.style.cssText = options.style;
-    if (options.attrs) Object.keys(options.attrs).forEach((name) => node.setAttribute(name, options.attrs[name]));
-    (children || []).forEach((child) => node.appendChild(child));
-    return node;
-  };
-
   const state = {
     image: null,
     visible: false,
     menuOpen: false,
   };
+  const appendNomiButtonLabel = (target, label) => {
+    const mark = document.createElement('span');
+    mark.className = 'nomi-prompt-mark';
+    mark.textContent = 'N';
+    const text = document.createElement('span');
+    text.textContent = label;
+    target.append(mark, text);
+  };
   const button = document.createElement('button');
   button.type = 'button';
   button.setAttribute('aria-label', 'Nomi 获取提示词');
-  button.appendChild(el('span', { className: 'nomi-prompt-mark', text: 'N' }));
-  button.appendChild(el('span', { text: '获取提示词' }));
+  appendNomiButtonLabel(button, '获取提示词');
   button.style.cssText = [
     'position:fixed',
     'z-index:2147483647',
@@ -199,11 +188,18 @@ export function promptHoverBridgeScript(promptCategories: { id: string; label: s
     option.className = 'nomi-prompt-mode-option';
     option.setAttribute('role', 'menuitem');
     option.setAttribute('data-nomi-prompt-mode', mode);
-    option.appendChild(el('span', { className: 'nomi-prompt-mode-icon', text: mode === 'style' ? 'S' : 'R' }));
-    option.appendChild(el('span', {}, [
-      el('span', { className: 'nomi-prompt-mode-title', text: title }),
-      el('span', { className: 'nomi-prompt-mode-desc', text: description }),
-    ]));
+    const icon = document.createElement('span');
+    icon.className = 'nomi-prompt-mode-icon';
+    icon.textContent = mode === 'style' ? 'S' : 'R';
+    const copy = document.createElement('span');
+    const titleElement = document.createElement('span');
+    titleElement.className = 'nomi-prompt-mode-title';
+    titleElement.textContent = title;
+    const descriptionElement = document.createElement('span');
+    descriptionElement.className = 'nomi-prompt-mode-desc';
+    descriptionElement.textContent = description;
+    copy.append(titleElement, descriptionElement);
+    option.append(icon, copy);
     return option;
   };
   menu.appendChild(createModeOption('replicate', '画面复刻', '还原主体、构图、光影与细节'));
@@ -360,8 +356,7 @@ export function promptHoverBridgeScript(promptCategories: { id: string; label: s
   const textButton = document.createElement('button');
   textButton.type = 'button';
   textButton.setAttribute('aria-label', 'Nomi 保存提示词');
-  textButton.appendChild(el('span', { className: 'nomi-prompt-mark', text: 'N' }));
-  textButton.appendChild(el('span', { text: '保存提示词' }));
+  appendNomiButtonLabel(textButton, '保存提示词');
   textButton.style.cssText = [
     'position:fixed',
     'z-index:2147483647',
@@ -400,46 +395,59 @@ export function promptHoverBridgeScript(promptCategories: { id: string; label: s
     'font:500 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
     'backdrop-filter:blur(10px)'
   ].join(';');
-  textCard.appendChild(el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px' }, [
-    el('strong', { text: '保存提示词', style: 'font-size:14px' }),
-    el('button', {
-      text: '×',
-      attrs: { type: 'button', 'data-nomi-text-close': '' },
-      style: 'border:0;background:transparent;color:rgba(23,32,51,.55);font-size:18px;line-height:1;cursor:pointer',
-    }),
-  ]));
-  textCard.appendChild(el('div', { style: 'display:grid;gap:10px' }, [
-    el('div', {
-      text: '无参考图',
-      style: 'display:grid;place-items:center;min-height:72px;border-radius:12px;background:rgba(23,32,51,.06);color:rgba(23,32,51,.48);font-size:12px',
-    }),
-    el('label', { style: 'display:grid;gap:5px' }, [
-      el('span', { text: '提示词类型', style: 'color:rgba(23,32,51,.62);font-size:12px' }),
-      el('select', {
-        attrs: { 'data-nomi-text-type': '' },
-        style: 'height:34px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:0 8px;color:#172033',
-      }),
-    ]),
-    el('label', { style: 'display:grid;gap:5px' }, [
-      el('span', { text: '选中文字', style: 'color:rgba(23,32,51,.62);font-size:12px' }),
-      el('textarea', {
-        attrs: { 'data-nomi-text-value': '' },
-        style: 'min-height:110px;resize:vertical;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:8px;color:#172033;font:500 13px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
-      }),
-    ]),
-    el('div', { style: 'display:flex;justify-content:flex-end;gap:8px' }, [
-      el('button', {
-        text: '取消',
-        attrs: { type: 'button', 'data-nomi-text-cancel': '' },
-        style: 'height:32px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;color:rgba(23,32,51,.72);padding:0 12px;cursor:pointer',
-      }),
-      el('button', {
-        text: '保存',
-        attrs: { type: 'button', 'data-nomi-text-save': '' },
-        style: 'height:32px;border:0;border-radius:10px;background:#172033;color:white;padding:0 12px;font-weight:700;cursor:pointer',
-      }),
-    ]),
-  ]));
+  const cardHeader = document.createElement('div');
+  cardHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px';
+  const cardTitle = document.createElement('strong');
+  cardTitle.style.fontSize = '14px';
+  cardTitle.textContent = '保存提示词';
+  const cardClose = document.createElement('button');
+  cardClose.type = 'button';
+  cardClose.setAttribute('data-nomi-text-close', '');
+  cardClose.style.cssText = 'border:0;background:transparent;color:rgba(23,32,51,.55);font-size:18px;line-height:1;cursor:pointer';
+  cardClose.textContent = '×';
+  cardHeader.append(cardTitle, cardClose);
+
+  const cardBody = document.createElement('div');
+  cardBody.style.cssText = 'display:grid;gap:10px';
+  const referencePlaceholder = document.createElement('div');
+  referencePlaceholder.style.cssText = 'display:grid;place-items:center;min-height:72px;border-radius:12px;background:rgba(23,32,51,.06);color:rgba(23,32,51,.48);font-size:12px';
+  referencePlaceholder.textContent = '无参考图';
+
+  const typeLabel = document.createElement('label');
+  typeLabel.style.cssText = 'display:grid;gap:5px';
+  const typeCaption = document.createElement('span');
+  typeCaption.style.cssText = 'color:rgba(23,32,51,.62);font-size:12px';
+  typeCaption.textContent = '提示词类型';
+  const typeSelect = document.createElement('select');
+  typeSelect.setAttribute('data-nomi-text-type', '');
+  typeSelect.style.cssText = 'height:34px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:0 8px;color:#172033';
+  typeLabel.append(typeCaption, typeSelect);
+
+  const valueLabel = document.createElement('label');
+  valueLabel.style.cssText = 'display:grid;gap:5px';
+  const valueCaption = document.createElement('span');
+  valueCaption.style.cssText = 'color:rgba(23,32,51,.62);font-size:12px';
+  valueCaption.textContent = '选中文字';
+  const valueInput = document.createElement('textarea');
+  valueInput.setAttribute('data-nomi-text-value', '');
+  valueInput.style.cssText = 'min-height:110px;resize:vertical;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:8px;color:#172033;font:500 13px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';
+  valueLabel.append(valueCaption, valueInput);
+
+  const cardActions = document.createElement('div');
+  cardActions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.setAttribute('data-nomi-text-cancel', '');
+  cancelButton.style.cssText = 'height:32px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;color:rgba(23,32,51,.72);padding:0 12px;cursor:pointer';
+  cancelButton.textContent = '取消';
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.setAttribute('data-nomi-text-save', '');
+  saveButton.style.cssText = 'height:32px;border:0;border-radius:10px;background:#172033;color:white;padding:0 12px;font-weight:700;cursor:pointer';
+  saveButton.textContent = '保存';
+  cardActions.append(cancelButton, saveButton);
+  cardBody.append(referencePlaceholder, typeLabel, valueLabel, cardActions);
+  textCard.append(cardHeader, cardBody);
   document.documentElement.appendChild(textCard);
 
   const getPromptCategories = () => {
@@ -551,22 +559,21 @@ export function promptHoverBridgeScript(promptCategories: { id: string; label: s
   return true;
 })()
 `;
+  return script;
 }
 
 export async function installBrowserPromptHoverBridge(record: BrowserViewRecord): Promise<void> {
   const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   try {
-    await contents.executeJavaScript(promptHoverBridgeScript(), true);
+    await contents.executeJavaScript(promptHoverBridgeScript(record.promptCategories), true);
   } catch {
     // The next DOM-ready/load event retries.
   }
 }
 
-// 资源捕捞桥脚本抽成纯函数：jsdom 单测可直接 eval 验证「候选冻结」不变量
-// （2026-07-22 审计 L0：保存时重新 pickAt 会让用户保存到与所见不同的资源）。
 export function resourceCaptureBridgeScript(enabled: boolean): string {
-  return `
+  const script = `
 (() => {
   const enabled = ${enabled ? "true" : "false"};
   const imagePattern = /\\.(?:png|jpe?g|gif|webp|avif|svg)(?:[?#]|$)/i;
@@ -576,6 +583,7 @@ export function resourceCaptureBridgeScript(enabled: boolean): string {
     enabled: false,
     current: null,
     target: null,
+    lastPoint: null,
   };
   const absoluteUrl = (value) => {
     const raw = String(value || '').trim();
@@ -720,6 +728,7 @@ export function resourceCaptureBridgeScript(enabled: boolean): string {
     state.current = candidate?.payload || null;
   };
   const pickAt = (clientX, clientY) => {
+    state.lastPoint = { clientX, clientY };
     const elements = document.elementsFromPoint(clientX, clientY);
     for (const element of elements) {
       const candidate = candidateFromElement(element, clientX, clientY);
@@ -748,18 +757,17 @@ export function resourceCaptureBridgeScript(enabled: boolean): string {
   if (!enabled) setTarget(null);
   window.__nomiBrowserResourceCaptureBridge = state;
   window.__nomiReadBrowserResourceCapture = () => {
-    // 候选冻结（审计 L0）：保存读的是高亮那一刻的候选，绝不按坐标重新 pick——
-    // hover 换图站点（YouTube 动图缩略等）重拾会拿到与用户所见不同的 URL。
     return state.current ? { ...state.current } : null;
   };
   return true;
 })()
 `;
+  return script;
 }
 
 export async function installBrowserResourceCaptureBridge(record: BrowserViewRecord, enabled: boolean): Promise<void> {
   const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   try {
     await contents.executeJavaScript(resourceCaptureBridgeScript(enabled), true);
   } catch {

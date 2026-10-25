@@ -1,4 +1,5 @@
-import React from 'react'
+import { useIntegrationVerificationRefresh } from './useIntegrationVerificationRefresh'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { OnboardingWizard } from './OnboardingWizard'
 import { VendorOnboardCard } from './VendorOnboardCard'
@@ -7,6 +8,7 @@ import { CustomVendorCard } from './CustomVendorCard'
 import { CustomCallEditor, type CustomCallTarget } from './CustomCallEditor'
 import { consumePendingCustomCallIntent } from './customCallIntent'
 import { DreaminaMemberCard } from './DreaminaMemberCard'
+import { WebBridgeConnectionCard } from './WebBridgeConnectionCard'
 import { ComfyuiLocalCard } from './ComfyuiLocalCard'
 import { AddComfyuiInstanceButton } from './AddComfyuiInstanceButton'
 import { isComfyuiVendorKey } from '../../workbench/generationCanvas/model/comfyuiVendor'
@@ -65,7 +67,7 @@ import {
 import { useModelPageRequest, type ModelPageRequest } from './useModelPageRequest'
 import { CertificationIntentKey } from './certificationIntentKey'
 import { CertificationUiError, certificationFailureMessage } from './certificationFailureMessage'
-import { IntegrationConfirmationPanel, type IntegrationVerificationHandoff } from './IntegrationConfirmationPanel'
+import { IntegrationSelfCheckPanel, type IntegrationVerificationHandoff } from './IntegrationSelfCheckPanel'
 import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 
 export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPageRequest } = {}): JSX.Element {
@@ -74,7 +76,6 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
   const [navigation, setNavigation] = React.useState(createModelSettingsNavigation)
   const [integrationHandoffs, setIntegrationHandoffs] = React.useState<IntegrationHandoff[]>([])
   const openedIntegrationHandoff = React.useRef<string | null>(null)
-  const verificationRefreshTimer = React.useRef<number | null>(null)
   const page = currentModelSettingsPage(navigation)
   const feedbackOwner = JSON.stringify(page)
   const [errors, setErrors] = React.useState<Record<string, string>>({})
@@ -92,12 +93,7 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
   useModelSettingsPageFocus(page, goBack)
   const openWizard = React.useCallback(
     (preset?: string, existingVendorKey?: string, initialScreen?: 'form' | 'scriptDraft') => {
-      openPage({
-        type: 'add',
-        ...(preset ? { preset } : {}),
-        ...(existingVendorKey ? { existingVendorKey } : {}),
-        ...(initialScreen ? { initialScreen } : {}),
-      })
+      openPage({ type: 'add', ...(preset ? { preset } : {}), ...(existingVendorKey ? { existingVendorKey } : {}), ...(initialScreen ? { initialScreen } : {}) })
     },
     [openPage],
   )
@@ -107,8 +103,10 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
     vendorMeta,
     customCallScripts,
     dreaminaStatus,
+    jimengWebStatus,
+    pavoWebStatus,
     loaded,
-    bridgeMissing,
+    bridgeMissing, loadError, readOnly,
     reloadFromError,
     refresh,
   } = useOnboardingDrawerCatalog()
@@ -126,24 +124,7 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
     setNavigation({ stack: [{ type: 'home' }] })
     void reloadIntegrationHandoffs()
   }, [reloadIntegrationHandoffs])
-  const refreshAfterIntegrationVerification = React.useCallback(() => {
-    if (verificationRefreshTimer.current !== null) {
-      window.clearTimeout(verificationRefreshTimer.current)
-      verificationRefreshTimer.current = null
-    }
-    refresh()
-    let attempts = 0
-    const tick = () => {
-      refresh()
-      attempts += 1
-      if (attempts < 60) verificationRefreshTimer.current = window.setTimeout(tick, 500)
-      else verificationRefreshTimer.current = null
-    }
-    verificationRefreshTimer.current = window.setTimeout(tick, 500)
-  }, [refresh])
-  React.useEffect(() => () => {
-    if (verificationRefreshTimer.current !== null) window.clearTimeout(verificationRefreshTimer.current)
-  }, [])
+  const refreshAfterIntegrationVerification = useIntegrationVerificationRefresh(refresh)
   React.useEffect(() => {
     if (!loaded) return
     void reloadIntegrationHandoffs()
@@ -377,9 +358,11 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
       dreamina: t('onboardingProviders.dreamina.name'),
       codex: t('onboardingProviders.codexImage.name'),
       antigravity: t('antigravity.name'),
+      jimengWeb: t('onboardingProviders.jimengWeb.name'),
+      pavoWeb: t('onboardingProviders.pavoWeb.name'),
     },
   })
-  const kindGuessGap = resolveKindGuessGap(models, vendorMeta)
+  const kindGuessGap = resolveKindGuessGap(models)
   const renderVendorCard = (
     card: (typeof knownCards)[number],
     detailMode = false,
@@ -420,8 +403,7 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
         vendorKey={group.vendorKey}
         name={group.name}
         models={group.models}
-        baseUrl={meta?.baseUrl ?? ''}
-        hasApiKey={meta?.hasApiKey ?? true}
+        vendorMeta={meta}
         skipHealthProbe={Boolean(meta?.customCallOnly) && group.models.every((model) => model.hasCustomCall || model.customCallDraft)}
         onToggle={handleSetEnabled}
         onDelete={handleDelete}
@@ -458,11 +440,11 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
     return (
       <KnownVendorKeyConnectPage
         directory={card.directory}
-        vendorName={translateModelDisplayText(card.meta.name)}
-        modelCount={card.vendorModels.length} hasApiKey={card.meta.hasApiKey} credentialVerificationPending={card.meta.credentialVerificationPending}
-        // 「模型已发布」不另立标志位：凭据停用必然连带 vendor 停用（credentialPublication.ts），
-        // 所以 vendor 还 enabled 且有 key ⇔ 这家的预置模型此刻就在可用列表里。
-        curatedModelsPublished={card.meta.enabled && card.meta.hasApiKey}
+        vendorName={translateModelDisplayText(card.meta.name)} baseUrl={card.meta.baseUrl}
+        // 数量与发布提示都读主进程 availability（#765）；列表与数量同源＝传过滤后的数组，不另立 modelCount（#788）。
+        models={card.vendorModels.filter((model) => model.availability?.usable === true)}
+        hasApiKey={card.meta.hasApiKey} credentialVerificationPending={card.meta.credentialVerificationPending}
+        curatedModelsPublished={card.vendorModels.some((model) => model.availability?.usable === true)}
         onBack={goBack}
         onSaved={refresh}
         onContinueVerification={() => openWizard(undefined, card.directory.vendorKey)}
@@ -508,6 +490,16 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
           onOpenModel={(model) => openPage({ type: 'model', vendorKey: model.vendorKey, modelKey: model.modelKey })}
         />
       )
+    }
+    if (vendorKey === 'jimeng-web') {
+      return <WebBridgeConnectionCard bridgeKey="jimengWeb" name={t('onboardingProviders.jimengWeb.name')}
+        subtitle={t('onboardingProviders.jimengWeb.subtitle')} description={t('onboardingProviders.jimengWeb.description')}
+        status={jimengWebStatus} onChanged={refresh} />
+    }
+    if (vendorKey === 'pavo-web') {
+      return <WebBridgeConnectionCard bridgeKey="pavoWeb" name={t('onboardingProviders.pavoWeb.name')}
+        subtitle={t('onboardingProviders.pavoWeb.subtitle')} description={t('onboardingProviders.pavoWeb.description')}
+        status={pavoWebStatus} onChanged={refresh} />
     }
     return null
   }
@@ -574,7 +566,7 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
   const verificationHandoff = integrationHandoffs.find((item) => item.target === 'verification')
   if (page.type === 'home' && verificationHandoff) {
     return (
-      <IntegrationConfirmationPanel
+      <IntegrationSelfCheckPanel
         handoff={verificationHandoff as IntegrationVerificationHandoff}
         onDone={() => {
           void reloadIntegrationHandoffs()
@@ -753,7 +745,6 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
       </ModelSettingsDetailBoundary>,
     )
   }
-
   return (
     <ModelSettingsHome
       connections={homeConnections}
@@ -761,6 +752,7 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
       mappings={mappings}
       loaded={loaded}
       bridgeMissing={bridgeMissing}
+      loadError={loadError} readOnly={readOnly} onImported={refresh}
       taskCount={visibleAdapterTaskRuns.length}
       taskContent={
         <AdapterTaskList

@@ -1,3 +1,7 @@
+import { IconArrowUpRight, IconBoxMultiple } from '@tabler/icons-react'
+import { WorkbenchIconButton } from '../../../../design'
+import { StoryboardMediaPreview } from '../render/StoryboardTableCells'
+import type { JSX } from 'react'
 import type { ShotTableColumn } from '../../../../../electron/shared/canvas/shotTable'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../../utils/cn'
@@ -14,16 +18,18 @@ type Props = {
   onOpen?: (id: string) => void
   onEditCell?: (rowId: string, columnId: string, value: string) => void
   onColumnMenu?: (column: ShotTableColumn, point: { x: number; y: number }) => void
+  onConnectRow?: (rowId: string) => void
+  onToggleRowOutputs?: (rowId: string) => void
   onRetry?: (rowId: string) => void
 }
-export function ShotTableGrid({ rows, compact, selectedIds, onSelect, onOpen, factColumns, onEditCell, onColumnMenu, onRetry }: Props): JSX.Element {
+export function ShotTableGrid({ rows, compact, selectedIds, onSelect, onOpen, factColumns, onEditCell, onColumnMenu, onRetry, onConnectRow, onToggleRowOutputs }: Props): JSX.Element {
   const { t } = useTranslation()
   const facts = factColumns?.filter(column => column.visible).slice().sort((a, b) => a.order - b.order)
   const leading = compact ? ['index', 'thumbnail'] as const : ['index', 'thumbnail', 'duration'] as const
   return <div className={cn(NODE_SCROLL_REGION_CLASS_NAME, 'min-h-0 flex-1 overflow-auto')} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
     <table style={{ minWidth: facts && !compact ? 1100 : undefined }} className="w-full table-fixed border-collapse text-left text-body-sm text-nomi-ink">
       <colgroup>
-        <col style={{ width: 28 }} />{leading.map(column => <col key={column} style={{ width: column === 'index' ? 40 : column === 'duration' ? 92 : 60 }} />)}
+        <col style={{ width: 28 }} />{leading.map(column => <col key={column} style={{ width: column === 'index' ? 40 : column === 'duration' ? 92 : compact ? 72 : 180 }} />)}
         {!compact && (facts ? facts.map(column => <col key={column.columnId} style={{ width: column.columnId === 'visual' ? 220 : 112 }} />) : <><col /><col style={{ width: 160 }} /></>)}
         <col style={{ width: 112 }} />
       </colgroup>
@@ -37,12 +43,13 @@ export function ShotTableGrid({ rows, compact, selectedIds, onSelect, onOpen, fa
         onDoubleClick={event => { event.stopPropagation(); onOpen?.(row.id) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); onOpen?.(row.id) } }}>
         <td className="px-2"><input type="checkbox" checked={selectedIds.includes(row.id)} disabled={!onSelect} aria-label={t('shotTable.select', { index: row.index })} onChange={() => onSelect?.(row.id)} onDoubleClick={event => event.stopPropagation()} className="accent-nomi-accent" /></td>
         <td className="px-2 font-mono text-micro text-nomi-ink-60">{String(row.index).padStart(2, '0')}</td>
-        <td className="px-2">{row.thumbnail ? <img src={row.thumbnail} alt="" className="h-6 w-10 rounded-nomi-sm object-cover" /> : <div className="h-6 w-10 rounded-nomi-sm bg-nomi-ink-05" />}</td>
-        {!compact && <><td className="px-2 font-mono text-micro">{row.start != null && row.end != null ? t('shotTable.timeRange', { start: row.start, end: row.end }) : t('shotTable.duration', { duration: row.duration })}</td>
+        <td className="px-2 py-1">{row.exec?.node ? <div className="flex min-w-0 gap-1">{row.exec.keyframeNode?.result && <div className="min-w-0 flex-1"><StoryboardMediaPreview node={row.exec.keyframeNode} type="image" emptyLabel="" compact /></div>}<div className="min-w-0 flex-1"><StoryboardMediaPreview node={row.exec.node} type={row.exec.node.result?.type === "video" ? "video" : "image"} emptyLabel="" compact /></div></div> : row.thumbnail ? <img src={row.thumbnail} alt="" className="h-6 w-10 rounded-nomi-sm object-cover" /> : <div className="h-6 w-10 rounded-nomi-sm bg-nomi-ink-05" />}</td>
+        {!compact && <><td className="px-2 font-mono text-micro">{row.start != null && row.end != null ? t('shotTable.timeRange', { start: row.start, end: row.end }) : row.duration != null ? t('shotTable.duration', { duration: row.duration }) : '—'}</td>
           {facts ? facts.map(column => <td key={column.columnId} className="px-2" onDoubleClick={event => { event.stopPropagation(); onEditCell?.(row.id, column.columnId, row.cells?.[column.columnId] ?? '') }}><span className="block truncate" title={row.cells?.[column.columnId]}>{row.visionFailed && !row.cells?.[column.columnId] ? t('shotTable.unread') : row.cells?.[column.columnId] || '—'}</span></td>) : <><td className="px-2"><span className="block truncate" title={row.prompt}>{row.prompt}</span></td>
           <td className="px-2"><div className="flex gap-1 overflow-hidden">{row.references?.kind === 'cells' ? row.references.cells.map(cell => <span key={cell.key} className={cn('shrink-0 rounded-full border px-1.5 py-0.5 text-micro', cell.bindings.length ? 'border-nomi-accent/30 bg-nomi-accent-soft text-nomi-accent' : 'border-dashed border-nomi-line text-nomi-ink-40')}>{cell.label}</span>) : <span className="truncate text-micro text-nomi-ink-40">{t(row.references?.kind === 'none-accepted' ? 'shotTable.noReferences' : 'shotTable.unknownReferences')}</span>}</div></td></>}
         </>}
         <td className="px-2 text-micro"><span className={cn('inline-flex items-center gap-1.5', row.exec?.status === 'failed' || row.visionFailed ? 'text-nomi-danger' : row.exec?.status === 'generating' ? 'text-nomi-accent' : 'text-nomi-ink-60')}><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />{row.exec ? t(`shotTable.status.${row.exec.status}`) : row.visionFailed ? t('shotTable.unread') : '—'}{row.exec?.progressPercent != null ? ` ${row.exec.progressPercent}%` : ''}</span>
+          {(onConnectRow || onToggleRowOutputs) && <span className="inline-flex items-center gap-1">{onConnectRow && <WorkbenchIconButton label={t('shotTable.connectRow')} icon={<IconArrowUpRight size={14} />} onClick={() => onConnectRow(row.id)} />}{onToggleRowOutputs && <WorkbenchIconButton label={t('shotTable.toggleRowOutputs')} icon={<IconBoxMultiple size={14} />} onClick={() => onToggleRowOutputs(row.id)} />}</span>}
           {row.visionFailed && onRetry && <WorkbenchButton size="sm" variant="default" onClick={() => onRetry(row.id)}>{t('shotTable.retry')}</WorkbenchButton>}
         </td>
       </tr>)}</tbody>

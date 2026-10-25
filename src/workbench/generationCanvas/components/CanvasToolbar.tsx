@@ -1,6 +1,7 @@
+import { acceptAttrForSurface } from '../../../../electron/shared/contracts/mediaImportPolicy';
 import { CanvasAddPreferenceActions } from './CanvasAddPreferenceActions'
 import { useCanvasMenuPreferenceStore } from '../store/canvasMenuPreferenceStore'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { cn } from '../../../utils/cn'
@@ -10,7 +11,7 @@ import { getQuickAddGenerationNodePlugins } from '../nodes/renderRegistry'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { canvasPluginRegistry } from '../plugins/defaultCanvasPluginRegistry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../design'
-import { filterCanvasImportableLocalFiles, importLocalFilesToGenerationCanvas } from './canvasStageDrop'
+import { importLocalFilesToGenerationCanvas } from './canvasStageDrop'
 import {
   canvasFullAddSections,
   canvasMoreAddSections,
@@ -74,12 +75,14 @@ function useLocalFilePicker(onFiles: (files: File[]) => void): { input: JSX.Elem
       multiple
       // 画布上只有图片 / 视频有落点（音频的家是素材库 → 时间轴），让选择器自己筛掉，
       // 而不是让用户选完再被静默丢弃。
-      accept="image/*,video/*"
+      accept={acceptAttrForSurface('generation-canvas')}
       className="hidden"
       aria-hidden="true"
       tabIndex={-1}
       onChange={(event) => {
-        const files = filterCanvasImportableLocalFiles(Array.from(event.currentTarget.files || []))
+        // 不在这里筛：选中了却落不下的（音频在画布上没有节点可落）必须由导入那条路报出理由。
+        // 此前这里先筛一遍、筛空就什么都不做——用户选完一个 mp3，界面一个字都没有（实测静默）。
+        const files = Array.from(event.currentTarget.files || [])
         event.currentTarget.value = ''
         if (files.length) onFiles(files)
       }}
@@ -329,10 +332,6 @@ export default function CanvasToolbar({ getInsertionPosition, categoryId }: Canv
         'max-h-[calc(100%-32px)]',
       )}
       aria-label={t('canvas.toolbar')}
-      // 「我常驻在画布左缘，别把浮层排到我身上」——同 useCanvasBottomDockRects.ts 底部停靠
-      // 用的那个标记机制：`useComposerViewportPlacement` 用它量出自己的真实宽度来收窄
-      // 浮框可用区，不是抄一份硬编码宽度（2026-09-10 反馈 #10 的可用区遗漏）。
-      data-canvas-left-dock="true"
       // hover 容器 = **整条工具条**（菜单与它的间隙桥都是它的 DOM 后代，故指针在
       // 「工具条 ∪ 间隙桥 ∪ 菜单」这块连通区域里移动时一个 pointerleave 都不会发）。
       // 2026-09-11 走查根因：容器原来只有「更多」那颗 32×32 的按钮，而菜单向上高出它

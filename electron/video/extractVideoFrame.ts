@@ -12,10 +12,14 @@ import { spawn } from "node:child_process";
 import { resolveFfmpegPath } from "../export/ffmpegRunner";
 import { ensureExecutable } from "../export/ensureExecutable";
 import { probeMediaMetadata } from "../export/mediaProbe";
+import { localAssetUrl } from "../assets/assetPaths";
 import { absolutePathFromLocalAssetUrl } from "../assets/localAssetFile";
 import { hardenedFetch } from "../hardenedFetch";
-import { writeAsset } from "../runtime";
-import { writeProjectCacheFile } from "../assets/projectCacheFile";
+import { captureAssetWriteContext, type AssetWriteContext } from "../assets/assetWriteContext";
+import type { ProjectBinding } from "../shared/projectBinding";
+import { projectCacheRelativePath } from "../assets/projectCacheFile";
+import { writeAsset } from "../assets/projectAssetStore";
+import { resolveWorkspaceRelativePath } from "../workspace/workspacePaths";
 
 export type VideoFrameWhich = "first" | "last" | number;
 
@@ -23,11 +27,26 @@ export type ExtractVideoFramePayload = {
   videoUrl: string;
   which: VideoFrameWhich;
   projectId: string;
+  /** 交互动作签发的原项目完整绑定（renderer 抽帧/切镜落画布带上）；主进程据此拒绝发布到被替换的项目。 */
+  projectBinding?: ProjectBinding;
   /** 跳过缓存强制重抽（参考 fingerprintCache 的 forceRerun 语义）。 */
   forceRerun?: boolean;
 };
 
 export type ExtractVideoFrameResult = { url: string };
+
+export type ExtractVideoFramesPayload = Omit<ExtractVideoFramePayload, "which"> & {
+  times: number[];
+};
+
+export type ExtractVideoFramesResult = {
+  frames: Array<{ timeSeconds: number; url: string }>;
+};
+
+export type ExtractVideoFrameOptions = {
+  /** 可信主进程交互断言（IPC 按 sender 会话签发）；后台调用方（审片环/拆解）不传，只固定磁盘身份。 */
+  assertCurrent?: () => void;
+};
 
 export class VideoFrameError extends Error {
   constructor(message: string) {
@@ -36,9 +55,87 @@ export class VideoFrameError extends Error {
   }
 }
 
-/** (projectId, videoUrl, which) → nomi-local URL。会话内内存缓存，避免同源同帧重复抽。 */
+/** 缓存隔离到捕获的项目根与世代，避免同 projectId 换项目后沿用旧 URL。 */
 const frameCache = new Map<string, string>();
-const cacheKey = (p: ExtractVideoFramePayload) => `${p.projectId}::${p.videoUrl}::${String(p.which)}`;
+const projectCacheKey = (context: AssetWriteContext, videoUrl: string, which: VideoFrameWhich | "endpoints" | "filmstrip") =>
+  JSON.stringify([context.root, context.binding, videoUrl, which]);
+const cacheKey = (p: ExtractVideoFramePayload, context: AssetWriteContext) => projectCacheKey(context, p.videoUrl, p.which);
+const FRAME_CACHE_DIR = "assets/generated/video-frames";
+
+function frameLabel(which: VideoFrameWhich): string {
+  if (which === "first" || which === "last") return which;
+  return "at";
+}
+
+export function videoFrameCacheRelativePath(videoUrl: string, which: VideoFrameWhich): string {
+  const digest = crypto
+    .createHash("sha256")
+    .update(`${videoUrl}\0${String(which)}`)
+    .digest("hex")
+    .slice(0, 24);
+  return `${FRAME_CACHE_DIR}/frame-${frameLabel(which)}-${digest}.png`;
+}
+
+function isUsableFrameFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function persistentFrameLocation(payload: ExtractVideoFramePayload, context: AssetWriteContext): { absolutePath: string; url: string } {
+  context.assertCurrent();
+  const relativePath = videoFrameCacheRelativePath(payload.videoUrl, payload.which);
+  return {
+    absolutePath: resolveWorkspaceRelativePath(context.root, relativePath),
+    url: localAssetUrl(payload.projectId, relativePath),
+  };
+}
+
+function readCachedFrame(payload: ExtractVideoFramePayload, context: AssetWriteContext): string | null {
+  context.assertCurrent();
+  if (payload.forceRerun) return null;
+  const key = cacheKey(payload, context);
+  const cached = frameCache.get(key);
+  const persistent = persistentFrameLocation(payload, context);
+  if (!isUsableFrameFile(persistent.absolutePath)) {
+    frameCache.delete(key);
+    return null;
+  }
+  if (cached) return cached;
+  frameCache.set(key, persistent.url);
+  return persistent.url;
+}
+
+function writePersistentFrame(payload: ExtractVideoFramePayload, sourcePath: string, context: AssetWriteContext): string {
+  const target = persistentFrameLocation(payload, context);
+  fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+  if (!payload.forceRerun && isUsableFrameFile(target.absolutePath)) return target.url;
+
+  const tempPath = `${target.absolutePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.copyFileSync(sourcePath, tempPath);
+    // 暂存完成后重新验证身份和路径；发布始终使用起点捕获的根目录。
+    persistentFrameLocation(payload, context);
+    if (!payload.forceRerun && isUsableFrameFile(target.absolutePath)) return target.url;
+    if (payload.forceRerun) fs.rmSync(target.absolutePath, { force: true });
+    try {
+      fs.renameSync(tempPath, target.absolutePath);
+    } catch (error) {
+      if (!payload.forceRerun && isUsableFrameFile(target.absolutePath)) return target.url;
+      throw error;
+    }
+    return target.url;
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      /* non-fatal */
+    }
+  }
+}
 
 /**
  * 把源视频 URL 解析成磁盘可读的绝对路径；https 下载到 temp（返回 cleanup 删临时文件）。
@@ -74,7 +171,7 @@ export async function resolveVideoLocalPath(
   throw new VideoFrameError(`无法识别的视频地址：${videoUrl.slice(0, 80)}`);
 }
 
-/** 算出抽哪一秒。last 需先 probe 时长，取末尾 0.1s 处（避开 EOF 黑帧/解码边界）。 */
+/** 算出抽哪一秒。last 先 probe 时长，再留出尾部 margin 避开 EOF 黑帧/解码边界。 */
 async function resolveSeekSeconds(filePath: string, which: VideoFrameWhich): Promise<number> {
   if (which === "first") return 0;
   if (typeof which === "number") return Math.max(0, which);
@@ -84,7 +181,9 @@ async function resolveSeekSeconds(filePath: string, which: VideoFrameWhich): Pro
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new VideoFrameError("无法读取源视频时长，取不到尾帧");
   }
-  return Math.max(0, duration - 0.1);
+  // ffprobe/container duration may follow a slightly longer audio stream. Seeking only 0.1s
+  // before EOF can still land after the final video frame, so keep a conservative margin.
+  return Math.max(0, duration - Math.min(0.25, duration / 10));
 }
 
 function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
@@ -101,33 +200,21 @@ function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
   });
 }
 
-/**
- * 抽一帧落成项目素材。失败一律抛 VideoFrameError —— **绝不返回视频/封面冒充**
- * （resolver 的「不冒充」不变量靠这里兜底：上游拿到 error 就标人话错误、不裸跑）。
- */
-export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload): Promise<ExtractVideoFrameResult> {
-  const { videoUrl, which, projectId } = payload;
-  if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
-  if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
-
-  const key = cacheKey(payload);
-  if (!payload.forceRerun) {
-    const cached = frameCache.get(key);
-    if (cached) return { url: cached };
-  }
-
-  const ffmpegPath = resolveFfmpegPath();
-  if (!ffmpegPath) throw new VideoFrameError("找不到 ffmpeg 可执行文件");
-
-  const { filePath, cleanup } = await resolveVideoLocalPath(videoUrl, projectId);
+async function extractResolvedVideoFrame(
+  payload: ExtractVideoFramePayload,
+  ffmpegPath: string,
+  filePath: string,
+  context: AssetWriteContext,
+): Promise<ExtractVideoFrameResult> {
+  const { which } = payload;
+  context.assertCurrent();
   const outPath = path.join(os.tmpdir(), `nomi-frame-${crypto.randomUUID()}.png`);
   try {
     const ss = await resolveSeekSeconds(filePath, which);
-    // 输入端粗 seek（快速跳过）+ 输出端精 seek（解码精确到目标帧）—— 又快又准，
-    // 避开 -sseof 在部分封装上的不稳（handoff §5 坑）。
+    context.assertCurrent();
     const inputSeek = Math.max(0, ss - 2);
     const outputSeek = ss - inputSeek;
-    const args = [
+    await runFfmpeg(ffmpegPath, [
       "-y",
       "-ss", String(inputSeek),
       "-i", filePath,
@@ -136,25 +223,87 @@ export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload
       "-q:v", "3",
       "-update", "1",
       outPath,
-    ];
-    await runFfmpeg(ffmpegPath, args);
+    ]);
     if (!fs.existsSync(outPath) || fs.statSync(outPath).size === 0) {
       throw new VideoFrameError("ffmpeg 未产出有效帧图");
     }
-    const bytes = fs.readFileSync(outPath);
-    const label = which === "first" ? "first" : which === "last" ? "last" : `at-${which}s`;
-    const record = writeAsset(projectId, bytes, `frame-${label}-${crypto.randomUUID().slice(0, 8)}.png`, "image/png", {
-      kind: "generated",
-      source: "video-frame",
-    }) as { data?: { url?: string } };
-    const url = record?.data?.url;
-    if (!url) throw new VideoFrameError("抽出的帧图写盘失败");
-    frameCache.set(key, url);
+    const url = writePersistentFrame(payload, outPath, context);
+    frameCache.set(cacheKey(payload, context), url);
     return { url };
   } finally {
-    cleanup();
     try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch { /* non-fatal */ }
   }
+}
+
+/**
+ * 抽一帧落成项目素材。失败一律抛 VideoFrameError —— **绝不返回视频/封面冒充**
+ * （resolver 的「不冒充」不变量靠这里兜底：上游拿到 error 就标人话错误、不裸跑）。
+ */
+export async function extractVideoFrameToAsset(
+  payload: ExtractVideoFramePayload,
+  options: ExtractVideoFrameOptions = {},
+): Promise<ExtractVideoFrameResult> {
+  const [result] = await extractFramesToAssets(payload, [payload.which], options);
+  return result;
+}
+
+/** 单帧和批量共享一次身份捕获、缓存检查与源视频解析，不能绕过发布检查。 */
+async function extractFramesToAssets(
+  payload: Omit<ExtractVideoFramePayload, "which">,
+  whichs: VideoFrameWhich[],
+  options: ExtractVideoFrameOptions,
+): Promise<ExtractVideoFrameResult[]> {
+  const { videoUrl, projectId } = payload;
+  if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
+  if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
+
+  const context = await captureAssetWriteContext(projectId, payload.projectBinding, options.assertCurrent);
+  const results: ExtractVideoFrameResult[] = [];
+  const pending: Array<{ index: number; payload: ExtractVideoFramePayload }> = [];
+  for (const [index, which] of whichs.entries()) {
+    const framePayload = { ...payload, which };
+    const cached = readCachedFrame(framePayload, context);
+    if (cached) results[index] = { url: cached };
+    else pending.push({ index, payload: framePayload });
+  }
+  if (pending.length) {
+    const ffmpegPath = resolveFfmpegPath();
+    if (!ffmpegPath) throw new VideoFrameError("找不到 ffmpeg 可执行文件");
+    context.assertCurrent();
+    const { filePath, cleanup } = await resolveVideoLocalPath(videoUrl, projectId);
+    try {
+      for (const frame of pending) {
+        results[frame.index] = await extractResolvedVideoFrame(frame.payload, ffmpegPath, filePath, context);
+      }
+    } finally {
+      cleanup();
+    }
+  }
+  context.assertCurrent();
+  return results;
+}
+
+export function normalizeVideoFrameTimes(times: readonly number[]): number[] {
+  const unique = new Set<number>();
+  for (const raw of times) {
+    if (!Number.isFinite(raw)) continue;
+    unique.add(Math.round(Math.max(0, raw) * 1000) / 1000);
+  }
+  return [...unique].sort((a, b) => a - b);
+}
+
+/** Batch extraction shares one source download and limits FFmpeg work to one frame at a time. */
+export async function extractVideoFramesToAssets(
+  payload: ExtractVideoFramesPayload,
+  options: ExtractVideoFrameOptions = {},
+): Promise<ExtractVideoFramesResult> {
+  if (!Array.isArray(payload.times)) throw new VideoFrameError("缺少抽帧时间点");
+  const times = normalizeVideoFrameTimes(payload.times);
+  if (!times.length) throw new VideoFrameError("没有有效的抽帧时间点");
+  if (times.length > 24) throw new VideoFrameError("一次最多抽取 24 帧");
+
+  const results = await extractFramesToAssets(payload, times, options);
+  return { frames: times.map((timeSeconds, index) => ({ timeSeconds, url: results[index].url })) };
 }
 
 /** 测试用：清缓存。 */
@@ -191,8 +340,10 @@ export async function extractVideoEndpointsToAsset(payload: ExtractEndpointsPayl
   const { videoUrl, projectId } = payload;
   if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
   if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
+  const context = await captureAssetWriteContext(projectId);
 
-  const key = `${projectId}::${videoUrl}::endpoints`;
+  const key = projectCacheKey(context, videoUrl, "endpoints");
+  context.assertCurrent();
   if (!payload.forceRerun) {
     const cached = frameCache.get(key);
     if (cached) return { url: cached };
@@ -224,7 +375,7 @@ export async function extractVideoEndpointsToAsset(payload: ExtractEndpointsPayl
     const record = writeAsset(projectId, bytes, `frame-endpoints-${crypto.randomUUID().slice(0, 8)}.png`, "image/png", {
       kind: "generated",
       source: "video-frame",
-    }) as { data?: { url?: string } };
+    }, "image", context) as { data?: { url?: string } };
     const url = record?.data?.url;
     if (!url) throw new VideoFrameError("首尾拼图写盘失败");
     frameCache.set(key, url);
@@ -278,7 +429,6 @@ export function buildFilmstripArgs(params: {
 
 const filmstripCache = new Map<string, ExtractFilmstripResult>();
 const filmstripInflight = new Map<string, Promise<ExtractFilmstripResult>>();
-const filmstripKey = (p: ExtractFilmstripPayload) => `${p.projectId}::${p.videoUrl}`;
 
 /**
  * 抽 16 帧横向拼条落项目素材（jpg）。会话内缓存 + inflight 去重（时间轴多 clip 同源只抽一次）。
@@ -289,7 +439,9 @@ export async function extractVideoFilmstripToAsset(payload: ExtractFilmstripPayl
   if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
   if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
 
-  const key = filmstripKey(payload);
+  const context = await captureAssetWriteContext(projectId);
+  const key = projectCacheKey(context, videoUrl, "filmstrip");
+  context.assertCurrent();
   if (!payload.forceRerun) {
     const cached = filmstripCache.get(key);
     if (cached) return cached;
@@ -311,8 +463,12 @@ export async function extractVideoFilmstripToAsset(payload: ExtractFilmstripPayl
       const bytes = fs.readFileSync(outPath);
       // 胶片条是**缓存**不是用户素材：写 .nomi/cache/ 而非 assets/。
       // （曾写成素材 → 26:1 长条涌进素材库把真素材挤成细线，素材库看着像空的。）
-      const { url } = writeProjectCacheFile(projectId, bytes, "filmstrip", ".jpg");
-      if (!url) throw new VideoFrameError("胶片条写盘失败");
+      context.assertCurrent();
+      const relativePath = projectCacheRelativePath("filmstrip", `filmstrip-${crypto.randomUUID().slice(0, 8)}.jpg`);
+      const absolutePath = resolveWorkspaceRelativePath(context.root, relativePath);
+      fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+      fs.writeFileSync(absolutePath, bytes);
+      const url = localAssetUrl(projectId, relativePath);
       const result: ExtractFilmstripResult = { url, tiles: FILMSTRIP_TILES, tileHeight: FILMSTRIP_TILE_HEIGHT };
       filmstripCache.set(key, result);
       return result;

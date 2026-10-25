@@ -9,10 +9,10 @@
 // 若在这里另写一份「别家应该可以吧」的乐观判断，就会出现「提示说换到 KIE 能用、换过去发现照样没有」，
 // 那比静默隐藏更糟。本模块只做「换一条渠道再问一遍同一个判据」，不新增任何可达性规则。
 import React from 'react'
-import { modeTransportFor, type ArchetypeMode, type ModelArchetype } from '../../../../config/modelArchetypes'
+import { modeTransportFor, type ArchetypeMode, type ModelArchetype } from '../../../../../electron/shared/modelArchetypes'
 import type { ModelOption } from '../../../../config/models'
 import { archetypeModeIsVisible, type ModeChannelBody } from './channelModeReach'
-import { readModeChannelBody } from './useChannelCreateBody'
+import { createVendorMappingsReader, readModeChannelBody } from './useChannelCreateBody'
 import { resolveArchetypeForOption } from '../nodeModelArchetype'
 
 /** 一个候选渠道：把 (vendor, model) 连同它的显示名一起带上，提示里要直接说人话。 */
@@ -64,7 +64,7 @@ export function hiddenModesForChannel(
  *
  * `candidates` 由调用方从 `modelOptions` 里筛出「同一档案身份、不同 (vendor, model)」的行。**实测确认过
  * `modelOptions` 只含已接入（enabled 且有 key / 免鉴权）的供应商**（src/config/modelCatalogCache.ts 的
- * getRunnableVendorKeys → keepRunnableVendorOptions 硬过滤），所以这里的候选天然都是「切过去立刻能用」的，
+ * 主进程 availability → keepUsableModelRows 硬过滤），所以这里的候选天然都是「切过去立刻能用」的，
  * 不需要也**拿不到**凭证状态。样张 C（「别家有但那家还没接入」）因此在渲染层没有数据源可依据，**不做**，
  * 也绝不用猜的去谎称——见本次交付报告与根因合同。
  *
@@ -114,6 +114,7 @@ export function useNarrowedModeGuidance(params: {
       currentVendor: selectedModelOption.vendor,
       currentValue: selectedModelOption.value,
     })
+    const readMappings = createVendorMappingsReader()
     return resolveNarrowedModeGuidance({
       archetype,
       bodyForMode: (mode) => modeBodies[mode.id],
@@ -124,6 +125,7 @@ export function useNarrowedModeGuidance(params: {
           candidate.value,
           modeTransportFor(mode, archetype, candidate.vendor) ?? '',
           mode.id,
+          readMappings,
         ),
     })
   }, [archetype, selectedModelOption, modelOptions, modeBodies, nodeMeta])

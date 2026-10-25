@@ -1,4 +1,5 @@
-import React from 'react'
+import { isCardRenderKind, resolveNodeRenderKind } from '../nodes/resolveRenderKind'
+import React, { type JSX } from 'react'
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -7,7 +8,6 @@ import {
   Position,
   getBezierPath,
   useStore,
-  useViewport,
   type EdgeProps,
   type NodeProps,
 } from '@xyflow/react'
@@ -17,18 +17,23 @@ import { cn } from '../../../utils/cn'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { getGenerationNodeComponentForNode } from '../nodes/renderRegistry'
 import { canvasPluginRegistry } from '../plugins/defaultCanvasPluginRegistry'
-import { getNodeSizeBounds, resolveNodeVisualSize } from '../nodes/nodeSizing'
+import { CARD_FIXED_WIDTH, getNodeResizeBounds, readNodeMediaAspectRatio, resolveNodeVisualSize } from '../nodes/nodeSizing'
 import { emitCanvasGesture } from '../events/canvasEventEmitter'
 import { availableEdgeModes } from '../components/edgeModeMenu'
 import { LightweightGenerationNode } from '../components/LightweightGenerationNode'
 import {
+  isLargeCanvas,
+  isZoomedOutForLightweight,
   retainLargeCanvasLightweightRendering,
   shouldRenderFullNodeContent,
   shouldUseLightweightNodeRenderingForSelection,
 } from '../components/canvasNodeLevelOfDetail'
 import type { GenerationFlowEdge, GenerationFlowNode } from './generationCanvasReactFlowAdapter'
+import { selectFlowZoom } from './canvasViewportScale'
 import { GenerationFlowNodeScope } from './generationFlowNodeContext'
-import { resolveGenerationFlowConnectionAffordance } from './generationCanvasReactFlowVisualContract'
+import { readGroupPort } from '../model/groupPort'
+import { resolveGenerationFlowConnectionAffordance, type GenerationFlowConnectionAffordance } from './generationCanvasReactFlowVisualContract'
+import { edgeLabelTransform, useCanvasLiveZoom } from './canvasViewportScale'
 import type { CanvasPluginNodeState } from '../plugins/canvasPluginTypes'
 
 const MAGNETIC_HANDLE_ICON_RADIUS = 14.5
@@ -62,8 +67,10 @@ function resetMagneticHandlePosition(event: React.PointerEvent<HTMLSpanElement>)
 type GenerationFlowConnectionHandleProps = {
   side: 'left' | 'right'
   type: 'source' | 'target'
-  affordance: 'dot' | 'magnetic' | 'hidden'
+  affordance: GenerationFlowConnectionAffordance
   active: boolean
+  /** `null` = 没有连线在进行；`''` = 有连线但端点不在这张卡上；否则是这张卡上被吸住的把手 id。 */
+  activeHandleId: string | null
   label: string
 }
 
@@ -72,10 +79,16 @@ function GenerationFlowConnectionHandle({
   type,
   affordance,
   active,
+  activeHandleId,
   label,
 }: GenerationFlowConnectionHandleProps): JSX.Element {
   const position = side === 'left' ? Position.Left : Position.Right
   const id = `${type}-${side}`
+  const connecting = activeHandleId !== null
+  // 两件不同的事实，两个不同的属性。`data-active` =「有连线在进行、我是合法候选」——整段拖拽里
+  // 每个候选都为真；`data-snapped` =「端点此刻就吸在我身上」——同一时刻只属于一个把手。
+  // 它们曾共用 `data-active`，于是吸附不可观测：正向断言对任意候选都过（假绿），反向永远清不掉（真红）。
+  const snapped = activeHandleId === id
   const homeX = side === 'left' ? 'calc(100% - 28px)' : '28px'
   return (
     <Handle
@@ -88,10 +101,20 @@ function GenerationFlowConnectionHandle({
       data-side={side}
       data-affordance={type === 'source' ? affordance : 'target'}
       data-active={active ? 'true' : undefined}
+      data-snapped={snapped ? 'true' : undefined}
+      // 拖拽中源把手让开：它和目标热区叠在同一条卡片边上，不让它抢走落点。
+      // `hidden` 档（没选中的编组端口）同样不接指针：把手在，只为让挂在它上面的边画得出来。
+      style={type === 'source' && (connecting || affordance === 'hidden') ? { pointerEvents: 'none' } : undefined}
       className={cn(
         'generation-canvas-react-flow__handle',
         `generation-canvas-react-flow__handle--${type}`,
         type === 'source' && `generation-canvas-react-flow__handle--${affordance}`,
+        // 目标侧外侧热区：伪元素命中返回 Handle 自身（XYHandle 优先 elementFromPoint），
+        // 量出来的锚点仍是卡片边上那 1px。只在连线进行时开 pointer-events——空闲时是 none，
+        // 于是画在节点层之下的连线照旧随处点得到（常驻带子把边吞掉正是被否掉的那版）。
+        type === 'target' && 'after:absolute after:top-0 after:w-[112px] after:h-[min(168px,calc(var(--generation-flow-node-height)+28px))] after:-translate-y-1/2 after:content-[""]',
+        type === 'target' && (side === 'left' ? 'after:right-0' : 'after:left-0'),
+        type === 'target' && (connecting ? 'after:pointer-events-auto' : 'after:pointer-events-none'),
       )}
     >
       {type === 'source' && affordance !== 'hidden' ? (
@@ -116,37 +139,54 @@ function GenerationFlowConnectionHandle({
   )
 }
 
+/**
+ * 卡片上只有显式标了 draggable 的元素（拖进时间轴的把手、版本托盘条目）能起原生拖放。文字选区、图片这类隐式拖放
+ * 一旦开始，浏览器就不再派发 pointerup / mouseup，React Flow 的节点拖动收不到松手（2026-09-25 粘鼠标实测）。
+ */
+function blockImplicitNativeDrag(event: React.DragEvent<HTMLDivElement>): void {
+  if (event.target instanceof Element && event.target.closest('[draggable="true"]')) return
+  event.preventDefault()
+}
+
 export function GenerationFlowNodeView({ data, selected }: NodeProps<GenerationFlowNode>): JSX.Element {
   const { t } = useTranslation()
   const node = data.generationNode
-  const collapsedGroupProxy = node.meta?.collapsedGroupProxy === true
+  // 每张卡一个标量订阅：同一对把手之间的指针移动不会让它重渲染。
+  const activeHandleId = useStore((state) => {
+    const connection = state.connection
+    if (!connection.inProgress) return null
+    if (connection.fromHandle.nodeId === node.id) return connection.fromHandle.id ?? ''
+    return connection.isValid && connection.toHandle?.nodeId === node.id ? connection.toHandle.id ?? '' : ''
+  })
+  // 编组端口节点（model/groupPort.ts）：不画卡面，只挂把手。左右收 / 发两对把手都要渲染——折叠编组的
+  // 聚合边就挂在它们上面，没有把手 React Flow 不画这条边；没选中时源把手只是不可见、不接指针（见下）。
+  const groupPort = Boolean(readGroupPort(node))
   const NodeComponent = getGenerationNodeComponentForNode(node)
   const size = resolveNodeVisualSize(node)
-  const bounds = getNodeSizeBounds(node.kind)
+  const bounds = getNodeResizeBounds(node)
+  const keepMediaAspect = Boolean(readNodeMediaAspectRatio(node)) && !isCardRenderKind(resolveNodeRenderKind(node))
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const captureHistory = useGenerationCanvasStore((state) => state.captureHistory)
   const commitPersistedChange = useGenerationCanvasStore((state) => state.commitPersistedChange)
-  const nodeCount = useGenerationCanvasStore((state) => state.nodes.length)
+  const largeCanvas = useGenerationCanvasStore((state) => isLargeCanvas(state.nodes.length))
   const pendingConnectionSourceId = useGenerationCanvasStore((state) => state.pendingConnectionSourceId)
   const multiSelectionActive = useStore((state) => state.multiSelectionActive && data.primarySelection)
-  const { zoom } = useViewport()
+  const zoomedOut = useStore((state) => isZoomedOutForLightweight(selectFlowZoom(state)))
   const primarySelection = data.primarySelection && !multiSelectionActive
   const retainedLightweightRef = React.useRef(false)
   retainedLightweightRef.current = retainLargeCanvasLightweightRendering({
     retained: retainedLightweightRef.current,
-    nodeCount,
+    largeCanvas,
     selected,
     primarySelection,
   })
   const lightweightMode = retainedLightweightRef.current || shouldUseLightweightNodeRenderingForSelection({
-    nodeCount,
-    zoom,
+    largeCanvas,
+    zoomedOut,
     selected,
     primarySelection,
   })
-  const connectionAffordance = collapsedGroupProxy
-    ? 'hidden'
-    : resolveGenerationFlowConnectionAffordance(node, primarySelection, pendingConnectionSourceId)
+  const connectionAffordance = resolveGenerationFlowConnectionAffordance(node, primarySelection, pendingConnectionSourceId)
   const isPendingConnectionSource = pendingConnectionSourceId === node.id
   const isPendingConnectionTarget = Boolean(pendingConnectionSourceId && !isPendingConnectionSource)
   const startConnectionLabel = t('generationCommon.node.startConnection')
@@ -166,16 +206,21 @@ export function GenerationFlowNodeView({ data, selected }: NodeProps<GenerationF
   return (
     <div
       className="generation-canvas-react-flow__node-shell"
+      onDragStart={blockImplicitNativeDrag}
+      // 卡面与自己把手的上下层由把手档位派生（见 generationCanvasReactFlow.css 的同名选择器）：
+      // 只有磁吸档才把卡面抬到带子之上，小圆点档的把手必须压在卡面上。
+      data-connection-affordance={connectionAffordance}
       style={{
         width: size.width,
         height: size.height,
-        pointerEvents: collapsedGroupProxy ? 'none' : undefined,
+        pointerEvents: groupPort ? 'none' : undefined,
         '--generation-flow-node-height': `${size.height}px`,
       } as React.CSSProperties}
-      aria-hidden={collapsedGroupProxy || undefined}
+      aria-hidden={groupPort || undefined}
     >
       <NodeResizer
-        isVisible={selected && !data.readOnly}
+        isVisible={selected && !data.readOnly && CARD_FIXED_WIDTH[resolveNodeRenderKind(node) ?? ''] === undefined}
+        keepAspectRatio={keepMediaAspect}
         minWidth={bounds.minWidth}
         minHeight={bounds.minHeight}
         maxWidth={bounds.maxWidth}
@@ -213,11 +258,11 @@ export function GenerationFlowNodeView({ data, selected }: NodeProps<GenerationF
       />
       {!data.readOnly ? (
         <>
-          <GenerationFlowConnectionHandle side="left" type="target" affordance="hidden" active={isPendingConnectionTarget} label={targetConnectionLabel} />
-          <GenerationFlowConnectionHandle side="right" type="target" affordance="hidden" active={isPendingConnectionTarget} label={targetConnectionLabel} />
+          <GenerationFlowConnectionHandle activeHandleId={activeHandleId} side="left" type="target" affordance="hidden" active={isPendingConnectionTarget} label={targetConnectionLabel} />
+          <GenerationFlowConnectionHandle activeHandleId={activeHandleId} side="right" type="target" affordance="hidden" active={isPendingConnectionTarget} label={targetConnectionLabel} />
         </>
       ) : null}
-      {!collapsedGroupProxy ? (
+      {!groupPort ? (
         <GenerationFlowNodeScope>
           {shouldRenderFullNodeContent({ lightweightMode, selected: primarySelection, focusFlash: data.focusFlash }) ? (
             // 节点渲染器按种类懒加载（renderRegistry 的 React.lazy）。第一次建某种节点时 chunk 还没到，
@@ -256,11 +301,47 @@ export function GenerationFlowNodeView({ data, selected }: NodeProps<GenerationF
       ) : null}
       {!data.readOnly ? (
         <>
-          <GenerationFlowConnectionHandle side="left" type="source" affordance={connectionAffordance} active={isPendingConnectionSource} label={startConnectionLabel} />
-          <GenerationFlowConnectionHandle side="right" type="source" affordance={connectionAffordance} active={isPendingConnectionSource} label={startConnectionLabel} />
+          <GenerationFlowConnectionHandle activeHandleId={activeHandleId} side="left" type="source" affordance={connectionAffordance} active={isPendingConnectionSource} label={startConnectionLabel} />
+          <GenerationFlowConnectionHandle activeHandleId={activeHandleId} side="right" type="source" affordance={connectionAffordance} active={isPendingConnectionSource} label={startConnectionLabel} />
         </>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * 边模式胶囊的壳：落点 + 恒定屏幕尺寸。
+ *
+ * **落点**（2026-09-11 拍板，迁移等价审计 §③ 行 11）：胶囊恒落在贝塞尔中点，
+ * 而不是旧版的「用户点下去的那一点」。中点是这条边的身份位置——同一条边无论从哪里点开，
+ * 标签都在同一处，多条边同时亮起时也不会挤成一堆；代价是点长边的一端时菜单弹在边中间。
+ * 有意保留，不必再改。
+ *
+ * **尺寸**：`EdgeLabelRenderer` 把内容 portal 进 `.react-flow__edgelabel-renderer`，
+ * 那个容器在 `.react-flow__viewport` 里面，**跟着视口一起缩放**——固定 12px 字号于是
+ * 缩到 30% 小得看不清、放到 300% 大得离谱（迁移前旧边层用 `scale(1/zoom)` 抵消过）。
+ * 这里用同一条：`edgeLabelTransform` 反缩放回恒定屏幕尺寸。
+ *
+ * 订阅收在这一层（而不是提到 `GenerationFlowEdgeView`）是刻意的：
+ * 胶囊只给「选中节点的边」画，缩放时因此只重渲这几条，不惊动整张图的边。
+ */
+function EdgeModeLabelLayer({ id, labelX, labelY, children }: {
+  id: string
+  labelX: number
+  labelY: number
+  children: React.ReactNode
+}): JSX.Element {
+  const zoom = useCanvasLiveZoom()
+  return (
+    <EdgeLabelRenderer>
+      <div
+        className="generation-canvas-react-flow__edge-label generation-canvas-v2__edge-control"
+        style={{ transform: edgeLabelTransform(labelX, labelY, zoom) }}
+        data-edge-id={id}
+      >
+        {children}
+      </div>
+    </EdgeLabelRenderer>
   )
 }
 
@@ -327,12 +408,7 @@ export function GenerationFlowEdgeView({ id, sourceX, sourceY, targetX, targetY,
       ) : null}
       <circle className="generation-canvas-v2__edge-dot" cx={targetX} cy={targetY} r={3.2} />
       {showLabel ? (
-        <EdgeLabelRenderer>
-          <div
-            className="generation-canvas-react-flow__edge-label generation-canvas-v2__edge-control"
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-            data-edge-id={id}
-          >
+        <EdgeModeLabelLayer id={id} labelX={labelX} labelY={labelY}>
             <button
               type="button"
               className="generation-canvas-react-flow__edge-label-button generation-canvas-v2__edge-tag-pill"
@@ -393,8 +469,7 @@ export function GenerationFlowEdgeView({ id, sourceX, sourceY, targetX, targetY,
                 </button>
               </div>
             ) : null}
-          </div>
-        </EdgeLabelRenderer>
+        </EdgeModeLabelLayer>
       ) : null}
     </g>
   )

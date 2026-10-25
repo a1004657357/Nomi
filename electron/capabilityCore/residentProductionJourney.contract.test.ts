@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { agentToolsForRequest } from "../harness/agentChatPolicy";
+import { modelFacingToolSpecs } from "../shared/agentCapabilities/modelFacingToolRegistry";
 import type { RuntimeToolCall } from "../shared/agentCapabilities/transportContracts";
 import { createCanvasReadSurfaceRegistry, createSurfaceOwnerAuthority } from "./canvasReadSurfaceRegistry";
 import { createMainCapabilityExecutorRegistry } from "./capabilityExecutorRegistry";
@@ -16,6 +16,10 @@ import { createModuleRegistry } from "./moduleRegistry";
 import { createPiTimelineWriteTransportAdapter } from "./timelineTransportAdapters";
 import { createProductionRunRepository } from "../productionRun/productionRunRepository";
 import type { ProductionGenerationShot } from "../productionRun/productionRunTypes";
+import { createPiGenerationTransportAdapter } from './generationTransportAdapters';
+import { GENERATION_METHODS } from '../shared/agentCapabilities/generation';
+import type { ProjectLeaseV2 } from './projectLease';
+import { bindLaneProjectSession } from '../agentLane/laneProjectSession';
 
 /**
  * A zero-quota contract fixture for the resident Agent's long-form seam.
@@ -157,7 +161,7 @@ async function createSurfaceAdapters() {
   });
   const suspension = registry.suspend(owner, { surfaceInstanceId: "resident-workbench" });
   const binding = await registry.commitCanvasRead(owner, { projectId: PROJECT_ID, suspension });
-  const capturedPort = registry.captureCanvasReadPort(owner, binding);
+  const session = registry.openProjectSession(owner, binding.binding);
 
   const timelineWrites: unknown[] = [];
   const exportWrites: unknown[] = [];
@@ -195,10 +199,11 @@ async function createSurfaceAdapters() {
     }),
   });
   return {
+    registry, session, binding: binding.binding,
     timelineWrites,
     exportWrites,
-    timeline: createPiTimelineWriteTransportAdapter({ registry, capturedPort, requestId: "resident-request", executor }),
-    exporter: createPiPhase4SurfaceTransportAdapter({ registry, capturedPort, requestId: "resident-request", executor }),
+    timeline: createPiTimelineWriteTransportAdapter({ registry, session, requestId: "resident-request", executor }),
+    exporter: createPiPhase4SurfaceTransportAdapter({ registry, session, requestId: "resident-request", executor }),
   };
 }
 
@@ -207,6 +212,53 @@ afterEach(() => {
 });
 
 describe("resident Agent production journey (zero quota contract)", () => {
+  it.each(['after-result', 'before-result'])('keeps a submitted Run in its original project when lane closes %s', async timing => {
+    const { shots, topContract } = buildStoryboardShots('Create a short brand film');
+    const { repository } = createRunFixture(shots, topContract);
+    const surface = await createSurfaceAdapters();
+    let finish!: () => void;
+    const deferred = new Promise<void>(resolve => { finish = resolve });
+    let background: Promise<unknown> | undefined;
+    const schedulerFinished = vi.fn();
+    const planning = vi.fn(async (input) => {
+      expect(input.capability).toBe('start');
+      expect(input.lease.projectId).toBe(PROJECT_ID);
+      expect(input).not.toHaveProperty('signal');
+      const result = await startSemanticMultiShotBatch({ projectId: input.lease.projectId, operationId: OPERATION_ID, shots }, {
+        readRun: (projectId, runId) => repository.read(projectId, runId),
+        submitPlan: run => repository.execute(run.projectId, run.runId, {
+          commandId: 'session:generation.submit', expectedRevision: run.revision, type: 'generation.submit', payload: {}, issuedAt: NOW,
+        }),
+        createScheduler: run => ({ runToQuiescence: async () => {
+          await deferred;
+          schedulerFinished(run.projectId, repository.read(run.projectId, run.runId)?.generationPlan?.state);
+        } }),
+        driveScheduler: scheduler => { background = scheduler.runToQuiescence() },
+      });
+      if (timing === 'before-result') await closeLane();
+      return result;
+    });
+    const adapter = createPiGenerationTransportAdapter(surface.binding, {
+      leaseFor: () => ({ ...surface.binding } as ProjectLeaseV2), planning,
+    });
+    const signal = surface.registry.resolveProjectSession(surface.session).signal;
+    const onClosed = vi.fn();
+    const lane = bindLaneProjectSession({ close: async () => { adapter.dispose() } }, surface.registry, surface.session, onClosed);
+    const closeLane = lane.close;
+    const decision = await adapter.tryExecute({ toolCallId: 'start', toolName: GENERATION_METHODS.start, args: { operationId: OPERATION_ID } }, signal);
+    if (timing === 'after-result') expect(decision).toMatchObject({ ok: true, result: { state: 'submitted' } });
+    else expect(decision).toMatchObject({ ok: false, code: 'generation_cancelled' });
+    await lane.close();
+    expect(onClosed).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(true);
+    expect(schedulerFinished).not.toHaveBeenCalled();
+    finish();
+    await background;
+    expect(schedulerFinished).toHaveBeenCalledWith(PROJECT_ID, 'submitted');
+    expect(repository.read(PROJECT_ID, OPERATION_ID)?.generationPlan?.state).toBe('submitted');
+    expect(planning).toHaveBeenCalledOnce();
+  });
+
   it("turns a 5-minute goal into one durable multi-shot Run and hands it to timeline/export", async () => {
     const { plan, shots, topContract } = buildStoryboardShots("帮我做一个5分钟品牌视频，剧本你决定，然后生成并导出");
     expect(plan.targetDurationSeconds).toBe(300);
@@ -214,7 +266,7 @@ describe("resident Agent production journey (zero quota contract)", () => {
     expect(shots.reduce((total, shot) => total + Number(shot.candidate.parameters.duration), 0)).toBe(300);
 
     const { repository, sealed } = createRunFixture(shots, topContract);
-    expect(sealed.generationPlan).toMatchObject({ state: "sealed", planHash: "fixture-plan-5m" });
+    expect(sealed.generationPlan).toMatchObject({ state: "sealed" });
     expect(sealed.generationPlan?.shots).toHaveLength(20);
 
     const providerSubmit = vi.fn();
@@ -236,7 +288,7 @@ describe("resident Agent production journey (zero quota contract)", () => {
       readRun: (projectId, runId) => {
         const run = repository.read(projectId, runId);
         return run
-          ? { projectId: run.projectId, runId: run.runId, revision: run.revision, generationPlan: run.generationPlan! }
+          ? { projectId: run.projectId, runId: run.runId, revision: run.revision, planVersion: run.planVersion, generationPlan: run.generationPlan! }
           : null;
       },
       submitPlan,
@@ -254,20 +306,18 @@ describe("resident Agent production journey (zero quota contract)", () => {
     expect(providerSubmit).not.toHaveBeenCalled();
     expect(repository.read(PROJECT_ID, OPERATION_ID)?.generationPlan?.state).toBe("submitted");
 
-    const tools = agentToolsForRequest({
-      capability: "canvas-agent",
-      projectId: PROJECT_ID,
-      history: { kind: "ephemeral" },
-      prompt: "帮我做一个5分钟品牌视频，写剧本、拆分镜、生成并导出",
-    });
-    const toolNames = tools.map((tool) => tool.name);
+    // 模型面上真有这条长片旅程需要的每一个动词（内部 profile 由注册表派生，不再按意图路由裁剪）。
+    const toolNames = modelFacingToolSpecs("internal").map((tool) => tool.name);
+    // 20 动词（设计正本 §5）：写文稿 / 排镜头 / 出卡 / 跟任务 / 剪 / 导出；Run 家族不上模型面（§5.3）。
     expect(toolNames).toEqual(expect.arrayContaining([
-      "start_production_run",
-      "nomi_canvas_plan",
-      "nomi_generation_plan",
-      "nomi_generation_status",
-      "export_timeline",
+      "write_script",
+      "draft_shots",
+      "generate",
+      "check_job",
+      "edit_timeline",
+      "export_video",
     ]));
+    expect(toolNames).not.toContain("start_production_run");
 
     const adapters = await createSurfaceAdapters();
     const signal = new AbortController().signal;

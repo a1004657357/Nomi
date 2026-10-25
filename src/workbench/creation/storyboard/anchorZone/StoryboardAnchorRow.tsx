@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconBox,
@@ -17,16 +17,18 @@ import { cn } from '../../../../utils/cn'
 import { NomiImage } from '../../../../design/media'
 import { NomiSelect } from '../../../../design'
 import type { ModelOption } from '../../../../config/models'
-import { translateModelDisplayText } from '../../../../i18n/modelDisplayText'
 import { AutoGrowTextarea } from '../../../ai/composer/AutoGrowTextarea'
-import type { PlanAnchor, PlanAnchorKind } from '../../../generationCanvas/agent/storyboardPlan'
-import { ANCHOR_KINDS } from '../../../generationCanvas/agent/storyboardPlanEdits'
+import type { PlanAnchorKind } from '../../../generationCanvas/agent/storyboardPlan'
+import { ANCHOR_KINDS, planModelSelection, type PlanAnchorPatch } from '../../../generationCanvas/agent/storyboardPlanEdits'
+import { modelVisibilityFooterAction, useDedupedModelSelect } from '../../../common/useDedupedModelSelect'
+import { useVendorPreferenceOrder } from '../../../common/useVendorPreference'
+import { findModelOptionByIdentifier } from '../../../../config/modelOptionResolvers'
 import type { AnchorCardRuntime } from '../exec/storyboardRowStatus'
 import StoryboardRowShell from '../shotRow/StoryboardRowShell'
-import { REFERENCE_COLUMN_WIDTH } from '../shotRow/shotReferenceStackGeometry'
+import { referenceColumnWidthOf, useStoryboardRowNarrow } from '../shotRow/storyboardRowDensity'
 import ShotReferenceZone from '../shotRow/ShotReferenceZone'
 import { frameMediaBox, FRAME_COLUMN_WIDTH } from '../shotRow/shotFrameGeometry'
-import { resolveShotArchetypeMode } from '../shotRow/shotRowModel'
+import { missingRequiredSlotsOf, resolveShotArchetypeMode } from '../shotRow/shotRowModel'
 
 /**
  * 锚区的**展开态**（合同 v6 §2.2）——与镜头行**完全同一套解剖**：
@@ -53,7 +55,7 @@ type Props = {
   aspect: string
   modelOptions?: ModelOption[]
   nameInvalid?: boolean
-  onUpdate: (patch: Partial<PlanAnchor>) => void
+  onUpdate: (patch: PlanAnchorPatch) => void
   onChangeKind: (kind: PlanAnchorKind) => void
   onRemove: () => void
   onGenerate: () => void
@@ -79,6 +81,21 @@ function ActButton({ label, onClick, children }: { label: string; onClick: () =>
   )
 }
 
+/**
+ * 纯文字锚没有参考槽，但它仍要**占住参考列**——否则同一张表里两种行的提示词列起点对不齐。
+ * 列宽跟着行的密度档走（窄档 65px），这一格也就跟着收；单独一层只是为了在组件里读到 context。
+ */
+function AnchorTextRefZone({ minHeight }: { minHeight: number }): JSX.Element {
+  const { t } = useTranslation()
+  const narrow = useStoryboardRowNarrow()
+  const text = t('storyboardEditor.anchor.textNoRefs')
+  return (
+    <div className="flex shrink-0 items-start" style={{ width: referenceColumnWidthOf(narrow), minHeight }} data-storyboard-refzone="anchor-text">
+      <span className={cn('text-micro leading-relaxed text-nomi-ink-30', narrow && 'line-clamp-3')} title={text}>{text}</span>
+    </div>
+  )
+}
+
 export default function StoryboardAnchorRow({
   runtime,
   aspect,
@@ -99,7 +116,16 @@ export default function StoryboardAnchorRow({
   const displayName = anchor.name.trim() || t('storyboardEditor.unnamed')
   const KindIcon = KIND_ICON[anchor.kind]
   const box = frameMediaBox(aspect)
-  const modelOption = modelOptions.find((option) => option.value === anchor.modelKey) ?? null
+  // 锚的模型框与镜头卡、画布节点**同一个选择 owner**（useDedupedModelSelect）：同名模型按供应商区分，
+  // (modelKey, modelVendor) 成对读、成对写。这里以前是一只原生下拉，option value 是裸 modelKey——
+  // 两家同名就是两个同值选项，选哪家都只写 modelKey（2026-09-21 分镜三处复现之一）。
+  const onAnchorModelChange = React.useCallback(
+    (value: string, vendor?: string) => onUpdate(planModelSelection(value, vendor)),
+    [onUpdate],
+  )
+  const modelSelect = useDedupedModelSelect(modelOptions, anchor.modelKey ?? '', onAnchorModelChange, anchor.modelVendor)
+  const orderedVendorKeys = useVendorPreferenceOrder()
+  const modelOption = findModelOptionByIdentifier(modelOptions, anchor.modelKey, anchor.modelVendor, orderedVendorKeys)
   const resolvedArchetype = resolveShotArchetypeMode(modelOption, anchor.modeId)
   const resolvedMode = resolvedArchetype?.mode ?? null
 
@@ -122,7 +148,7 @@ export default function StoryboardAnchorRow({
         >
           <NomiImage src={runtime.resultUrl} alt={t('storyboardEditor.anchor.resultAlt', { name: displayName })} className="absolute inset-0 h-full w-full object-cover" />
           {runtime.locked ? (
-            <span className="absolute right-1 top-1 z-[2] inline-flex items-center gap-0.5 rounded-pill bg-nomi-overlay-chip-strong px-1 py-0.5 text-micro text-nomi-paper">
+            <span className="absolute right-1 top-1 z-[2] inline-flex items-center gap-0.5 rounded-pill bg-nomi-overlay-chip-strong px-1 py-0.5 text-micro text-nomi-media-ink">
               <IconLock size={10} stroke={2} aria-label={t('storyboardEditor.frame.lockedBadge')} />
             </span>
           ) : null}
@@ -132,14 +158,22 @@ export default function StoryboardAnchorRow({
     if (runtime.generating) {
       return (
         <div className="relative overflow-hidden rounded-nomi border border-nomi-line bg-nomi-ink-05" style={style} data-anchor-face="generating">
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-nomi-scrim p-2 text-center text-nomi-paper">
-            <div className="h-1 w-[64px] overflow-hidden rounded-pill bg-nomi-paper/25">
-              <div className="h-full bg-nomi-paper transition-[width]" style={{ width: `${runtime.progressPercent ?? 12}%` }} />
-            </div>
-            <span className="text-micro leading-tight">
-              {runtime.progressPercent !== null
-                ? t('storyboardEditor.frame.generatingPercent', { percent: Math.round(runtime.progressPercent) })
-                : t('storyboardEditor.frame.generating')}
+          {/* scrim 只负责压暗底图，**不负责托住字**：它只有 0.42 alpha，白字压在亮底图上实测 1.8:1
+              （2026-09-11 用户说「生成中」看不清）。字与进度条搬进 overlay-chip-strong 那枚胶囊——
+              那个 token 存在的理由就是「在任意亮度的媒体上托住白字」，最坏情况（纯白底图）4.5:1。 */}
+          <div className="absolute inset-0 flex items-center justify-center bg-nomi-scrim p-2">
+            <span
+              className="inline-flex flex-col items-center gap-1.5 rounded-nomi-sm bg-nomi-overlay-chip-strong px-2 py-1 text-center text-nomi-media-ink"
+              data-anchor-generating-chip="true"
+            >
+              <span className="block h-1 w-[64px] overflow-hidden rounded-pill bg-nomi-media-ink/25">
+                <span className="block h-full bg-nomi-media-ink transition-[width]" style={{ width: `${runtime.progressPercent ?? 12}%` }} />
+              </span>
+              <span className="text-micro leading-tight">
+                {runtime.progressPercent !== null
+                  ? t('storyboardEditor.frame.generatingPercent', { percent: Math.round(runtime.progressPercent) })
+                  : t('storyboardEditor.frame.generating')}
+              </span>
             </span>
           </div>
         </div>
@@ -243,13 +277,13 @@ export default function StoryboardAnchorRow({
             archetype={resolvedArchetype?.archetype ?? null}
             bindings={anchor.referenceBindings}
             onChangeBindings={(next) => onUpdate({ referenceBindings: next })}
+            // 锚行没有计划首帧、也不引用别的锚：缺不缺只看它自己的绑定——同一个 owner，零额外来源。
+            missingSlots={missingRequiredSlotsOf(resolvedMode, anchor.referenceBindings, { plannedFirstFrame: null })}
             anchors={[]}
             mentionEnabled={false}
           />
         ) : (
-          <div className="flex shrink-0 items-start" style={{ width: REFERENCE_COLUMN_WIDTH, minHeight: box.height }} data-storyboard-refzone="anchor-text">
-            <span className="text-micro leading-relaxed text-nomi-ink-30">{t('storyboardEditor.anchor.textNoRefs')}</span>
-          </div>
+          <AnchorTextRefZone minHeight={box.height} />
         )
       }
       prompt={
@@ -284,12 +318,6 @@ export default function StoryboardAnchorRow({
               <IconTrash size={13} stroke={1.6} />
             </button>
           </div>
-
-          {runtime.visual && runtime.referencedByCount > runtime.consumedByShotCount ? (
-            <p className="text-micro text-nomi-warning" data-anchor-consumption-warning={anchor.id}>
-              {t('storyboardEditor.anchorPolicy.countWarning', { total: runtime.referencedByCount, ignored: runtime.referencedByCount - runtime.consumedByShotCount })}
-            </p>
-          ) : null}
 
           <AutoGrowTextarea
             value={anchor.description}
@@ -333,15 +361,30 @@ export default function StoryboardAnchorRow({
             </button>
             {anchor.carrier === 'visual' ? (
               modelOptions.length > 0 ? (
-                <NomiSelect
-                  ariaLabel={t('storyboardEditor.anchor.modelAria')}
-                  leadingLabel={t('storyboardEditor.anchor.modelLabel')}
-                  size="xs"
-                  triggerMaxWidth={150}
-                  value={anchor.modelKey || ''}
-                  options={[{ value: '', label: t('storyboardEditor.defaultModel') }, ...modelOptions.map((option) => ({ value: option.value, label: translateModelDisplayText(option.label) }))]}
-                  onChange={(value) => onUpdate({ modelKey: value || undefined, modeId: undefined, params: undefined })}
-                />
+                <>
+                  <NomiSelect
+                    ariaLabel={t('storyboardEditor.anchor.modelAria')}
+                    leadingLabel={t('storyboardEditor.anchor.modelLabel')}
+                    size="xs"
+                    triggerMaxWidth={150}
+                    value={anchor.modelKey ? modelSelect.modelValue : ''}
+                    options={[{ value: '', label: t('storyboardEditor.defaultModel') }, ...modelSelect.modelOptions]}
+                    onChange={(id) => (id ? modelSelect.onModelPick(id) : onAnchorModelChange(''))}
+                    onChipChange={modelSelect.onModelProviderPick}
+                    footerAction={modelVisibilityFooterAction()}
+                    hiddenNote={modelSelect.hiddenNote}
+                  />
+                  {modelSelect.providerOptions.length > 1 ? (
+                    <NomiSelect
+                      ariaLabel={t('storyboardEditor.provider')}
+                      size="xs"
+                      triggerMaxWidth={110}
+                      value={modelSelect.providerValue}
+                      options={modelSelect.providerOptions}
+                      onChange={modelSelect.onProviderPick}
+                    />
+                  ) : null}
+                </>
               ) : (
                 <span className="text-micro text-nomi-warning" data-anchor-model-empty="true">
                   {t('storyboardEditor.anchor.noImageModel')}

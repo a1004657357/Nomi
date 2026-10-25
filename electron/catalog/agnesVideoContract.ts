@@ -1,5 +1,5 @@
 // Pure Agnes wire guards run before localization/spend and again immediately before HTTP.
-// Sources: agnes-ai.com/zh-Hans/docs/agnes-video-{v20,25,25-flash}, checked 2026-08-26.
+// Sources: agnes-ai.com/en/docs/agnes-video-{v20,25,25-flash}; 2.5 limits checked 2026-09-12.
 import { registerRequestTransform, type RequestTransformContext } from "../tasks/requestTransforms";
 import { isJsonRecord } from "../jsonUtils";
 
@@ -68,9 +68,16 @@ export function normalizeAgnesVideo25(body: unknown, context?: RequestTransformC
   const extras = isJsonRecord(request) && isJsonRecord(request.extras) ? request.extras : {};
   const active = isJsonRecord(extras.archetypeInput) ? extras.archetypeInput : extras;
   if (flash && (present(active.videos) || (!isJsonRecord(extras.archetypeInput) && present(extras.referenceVideoUrls)))) throw new Error("Agnes Video 2.5 Flash: video references are not supported.");
-  if (typeof body.size !== "string" || !(flash ? ["720P"] : ["720P", "960P", "2K"]).includes(body.size)) throw new Error(`Agnes Video 2.5: size must be ${flash ? "720P" : "720P, 960P or 2K"}.`);
+  if (typeof body.size !== "string" || !(flash ? ["720P"] : ["720P", "1080P", "1K", "2K"]).includes(body.size)) throw new Error(`Agnes Video 2.5: size must be ${flash ? "720P" : "720P, 1080P, 1K or 2K"}.`);
   if (flash && images.length > 5) throw new Error("Agnes Video 2.5 Flash: use at most five reference images.");
   if (flash && videos.length) throw new Error("Agnes Video 2.5 Flash: video references are not supported.");
+  if (!flash && images.length > 8) throw new Error("Agnes Video 2.5: use at most eight reference images.");
+  if (audios.length > 3) throw new Error("Agnes Video 2.5: use at most three reference audio files.");
+  if (videos.length > 1) throw new Error("Agnes Video 2.5: use at most one reference video.");
+  if (body.n !== undefined) {
+    if (numeric(body.n, "n", true) !== 1) throw new Error("Agnes Video 2.5: n must be 1.");
+    normalized.n = 1;
+  }
   if (present(body.aspect_ratio) && (typeof body.aspect_ratio !== "string" || !["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"].includes(body.aspect_ratio))) throw new Error("Agnes Video 2.5: unsupported aspect_ratio.");
   normalized.mode = mode;
   normalized.seconds = String(seconds);

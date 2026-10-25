@@ -1,17 +1,26 @@
+import { desktopT } from "../desktopStrings";
+import { assetIdentityOf, findProjectAssetById } from "./assetReferenceIdentity";
 import { contentHashForFile, isContentAddressedUpload, persistUploadBytes, persistUploadFile, storedAssetRecord } from './uploadContentStore';
+import { captureAssetWriteContext, type AssetWriteContext } from './assetWriteContext';
+import type { ProjectBinding } from '../shared/projectBinding';
 import type { ProjectAgentAttachmentClaim, ProjectAgentAttachmentRef } from '../shared/workbenchInput'
 import fs from "node:fs";
 import crypto from "node:crypto";
-import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { providerDispatcher, type ProviderNetworkConfig } from "../providerNetwork";
-import { hardenedFetch } from "../hardenedFetch";
+import type { ProviderNetworkConfig } from "../providerNetwork";
+import { fetchProviderMedia } from "./providerMediaFetch";
 import { isJsonRecord, nowIso, type JsonRecord } from "../jsonUtils";
-import { projectDirById, sanitizeName } from "../projects/repository";
+import { projectDirById, sanitizeName, SANITIZED_NAME_MAX_LENGTH } from "../projects/repository";
 import { ensureDir } from "../runtimePaths";
 import { broadcastAssetsUpdated } from "./assetEvents";
+import { readAssetSidecarMeta, writeAssetSidecarMeta } from "./assetSidecar";
+import { absolutePathFromLocalAssetUrl } from "./localAssetFile";
+import { attachStoredAssetPreview, isStoredAssetPreviewPath, type StoredAssetPreview } from "./assetPreview";
+import { copyFileWithProgress, type AssetCopyProgress } from "./assetImportProgress";
+import { renameSyncWithRetry, retryOnSharingViolation } from "../jsonFile";
+import { reapAbandonedUploadStaging, removeScratchAfterUse, removeScratchAfterUseSync, UPLOAD_STAGING_PREFIX } from "./scratchCleanup";
 import { collectFilesRecursively, parseDataUrl } from "./assetBytes";
+import { absolutePathFromLocalAssetUrlAnyProject } from "./localAssetFile";
 import {
   assetBucketFromMeta,
   type AssetBucket,
@@ -24,10 +33,12 @@ import {
   sanitizeAssetMetaForKind,
   stableAssetId,
 } from "./assetPaths";
-import { contentTypeFromMagicBytes, isCertifiableMediaContentType, resolveContentType } from "./mediaTypes";
+import { inspectGlb, type GlbValidationReport } from "./glbValidation";
+import { runTechnicalCheck, type TechnicalCheckVerdict } from "../review/technicalCheck";
+import { contentTypeFromMagicBytes, mediaKindFromContentType, resolveContentType } from "./mediaTypes";
 import { validateGlbStructure } from "./model3dValidation";
-import { resolveFfmpegPath } from "../export/ffmpegRunner";
-import { MEDIA_DECODER_PROTOCOL_WHITELIST } from "../export/mediaProbe";
+import { validatedGenerated } from "./generatedAssetValidation";
+import { localizedAssetTypeOf, type LocalizedAssetType } from "./localizedAsset";
 import type { CertificationMediaEvidence } from "../providerAdapter/certificationMedia";
 
 import type { UsageStatus, IntendedRole } from "../connectors/connectorDefinition";
@@ -50,29 +61,8 @@ type LocalAssetRecord = {
   } & JsonRecord;
 };
 
-function readAssetSidecarMeta(absolutePath: string): JsonRecord {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(`${absolutePath}.meta`, "utf8"));
-    return isJsonRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeAssetSidecarMeta(absolutePath: string, meta: JsonRecord): void {
-  const sidecar: JsonRecord = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (value !== undefined) sidecar[key] = value;
-  }
-  if (Object.keys(sidecar).length === 0) return;
-  try {
-    fs.writeFileSync(`${absolutePath}.meta`, JSON.stringify(sidecar));
-  } catch {
-    /* non-fatal */
-  }
-}
-
-function contentTypeFromStoredFile(absolutePath: string): string {
+/** 已落盘文件的内容类型：先按扩展名，认不出再嗅文件头。列表与补封面共用这一份判定。 */
+export function contentTypeFromStoredFile(absolutePath: string): string {
   const extensionType = contentTypeFromPath(absolutePath);
   if (extensionType !== "application/octet-stream") return extensionType;
   try {
@@ -114,107 +104,32 @@ function validateStructuredAsset(contentType: string, bytes: Uint8Array): void {
   if (contentType === "model/gltf-binary") validateGlbStructure(bytes);
 }
 
-function generatedMediaKind(contentType: string): "image" | "video" | "audio" | "model3d" | null {
-  if (contentType.startsWith("image/")) return "image";
-  if (contentType.startsWith("video/")) return "video";
-  if (contentType.startsWith("audio/")) return "audio";
-  return contentType === "model/gltf-binary" ? "model3d" : null;
-}
-
-/** Generated outputs are executable evidence, not ordinary user imports: fail closed before disk. */
-function validatedGeneratedMeta(meta: JsonRecord, declaredRaw: string, bytes: Uint8Array, sourcePath?: string): JsonRecord {
-  if (String(meta.kind || "").toLowerCase() !== "generated") return meta;
-  const prefix = Buffer.from(bytes.subarray(0, 4096)).toString("utf8").trimStart();
-  if (/^(?:<!doctype\s+html|<html\b|<\?xml\b|<svg\b|<(?:error|response|message)\b)/i.test(prefix)) {
-    throw new Error("Generated media validation failed (markup_masquerade)");
-  }
-  const detected = bytes.byteLength >= 12 && Buffer.from(bytes.subarray(0, 4)).toString("ascii") === "glTF"
-    ? "model/gltf-binary"
-    : contentTypeFromMagicBytes(bytes);
-  const normalizedDeclared = String(declaredRaw || "").toLowerCase().split(";", 1)[0].trim();
-  const declared = !normalizedDeclared || normalizedDeclared === "application/octet-stream"
-    ? detected || normalizedDeclared
-    : normalizedDeclared;
-  const expectedKind = generatedMediaKind(declared);
-  if (!expectedKind) return meta;
-  if (!detected) throw new Error("Generated media validation failed (unknown_bytes)");
-  const detectedKind = generatedMediaKind(detected);
-  const ambiguousAudioContainer = expectedKind === "audio"
-    && (declared === "audio/mp4" && detected === "video/mp4"
-      || declared === "audio/webm" && detected === "video/webm");
-  if (!detectedKind || (detectedKind !== expectedKind && !ambiguousAudioContainer)) {
-    throw new Error("Generated media validation failed (kind_mismatch)");
-  }
-  if (!isCertifiableMediaContentType(detected) && !ambiguousAudioContainer) {
-    throw new Error("Generated media validation failed (unsupported_format)");
-  }
-  const claimed = meta.certificationEvidence && typeof meta.certificationEvidence === "object"
-    ? meta.certificationEvidence as Partial<CertificationMediaEvidence>
-    : undefined;
-  const cleanMeta = { ...meta };
-  delete cleanMeta.certificationEvidence;
-  if (claimed) {
-    const digest = crypto.createHash("sha256").update(bytes).digest("hex");
-    if (claimed.sha256 !== digest || claimed.byteLength !== bytes.byteLength || claimed.kind !== expectedKind
-      || claimed.contentType !== declared) throw new Error("Generated media validation failed (evidence_mismatch)");
-    return cleanMeta;
-  }
-  if (expectedKind === "model3d") {
-    validateGlbStructure(bytes);
-    return cleanMeta;
-  }
-  const map = expectedKind === "audio" ? "0:a:0" : "0:v:0";
-  const decodeLimit = expectedKind === "video" ? ["-frames:v", "1"] : expectedKind === "audio" ? ["-t", "1"] : ["-frames:v", "1"];
-  // MP4/MOV commonly stores its index (moov atom) at the end of the file.
-  // Feeding such a container through stdin makes ffmpeg report "partial file"
-  // because a pipe cannot seek. Validate the exact bytes from a 0600 temporary
-  // file when the caller has not already got a Nomi-owned path.
-  let validationPath = sourcePath;
-  let validationDir = "";
-  if (!validationPath || !fs.existsSync(validationPath)) {
-    validationDir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-generated-validation-"));
-    validationPath = path.join(validationDir, "artifact.media");
-    fs.writeFileSync(validationPath, Buffer.from(bytes), { mode: 0o600, flag: "wx" });
-  }
-  try {
-    const result = spawnSync(resolveFfmpegPath(), [
-      "-hide_banner", "-v", "error", "-xerror", "-err_detect", "explode",
-      "-protocol_whitelist", MEDIA_DECODER_PROTOCOL_WHITELIST,
-      "-i", validationPath, "-map", map, ...decodeLimit, "-f", "null", "-",
-    ], { timeout: 12_000, maxBuffer: 64 * 1024, windowsHide: true });
-    if (result.error || result.status !== 0) throw new Error("Generated media validation failed (decode_failed)");
-    return cleanMeta;
-  } finally {
-    if (validationDir) fs.rmSync(validationDir, { recursive: true, force: true });
-  }
-}
-
-async function writeAssetSidecarMetaAsync(absolutePath: string, meta: JsonRecord): Promise<void> {
-  const sidecar: JsonRecord = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (value !== undefined) sidecar[key] = value;
-  }
-  if (Object.keys(sidecar).length === 0) return;
-  try {
-    await fs.promises.writeFile(`${absolutePath}.meta`, JSON.stringify(sidecar));
-  } catch {
-    /* non-fatal */
-  }
+/**
+ * 落盘文件名的**唯一**裁法：扩展名取自字节嗅出的内容类型（canonicalAssetFileName），**只截主干**；后缀不是
+ * 合法扩展名（`.[a-z0-9]{1,8}`）就整段算主干、另补 `.bin`。以前整段交给 sanitizeName 截到 90 字——供应商 URL 的
+ * 长 basename 连扩展名一起被截掉落成 `.bin`，出了 App（下载、双击、MCP 预览、再上传）就认不出（2026-09-26）。
+ */
+function storedAssetFileParts(fileName: string, contentType: string): { stem: string; ext: string } {
+  const parsed = path.parse(canonicalAssetFileName(fileName, contentType));
+  const ext = /^\.[a-z0-9]{1,8}$/i.test(parsed.ext) ? parsed.ext : ".bin";
+  const rawStem = ext === parsed.ext ? parsed.name : parsed.base;
+  const stem = sanitizeName(rawStem, "asset").slice(0, SANITIZED_NAME_MAX_LENGTH - ext.length).trim();
+  return { stem: stem || "asset", ext };
 }
 
 function uniqueAssetPath(
   projectId: string,
   fileName: string,
+  contentType: string,
   bucket: AssetBucket = "generated",
+  context?: AssetWriteContext,
 ): { absolutePath: string; relativePath: string } {
-  const projectDir = projectDirById(projectId);
+  const projectDir = context?.root ?? projectDirById(projectId);
   if (!projectDir) throw new Error("Project not found");
   const today = new Date().toISOString().slice(0, 10);
   const assetDir = path.join(projectDir, "assets", bucket, today);
   ensureDir(assetDir);
-  const parsed = path.parse(sanitizeName(fileName, "asset.bin"));
-  const base = parsed.name || "asset";
-  const ext = parsed.ext || ".bin";
+  const { stem: base, ext } = storedAssetFileParts(fileName, contentType);
   let absolutePath = path.join(assetDir, `${base}${ext}`);
   for (let index = 2; fs.existsSync(absolutePath); index += 1) {
     absolutePath = path.join(assetDir, `${base}-${index}${ext}`);
@@ -245,19 +160,24 @@ export function writeAsset(
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  /** 生成产物该是哪一类（必填）；不是生成产物给 null。见 validatedGenerated。 */
+  expectedKind: LocalizedAssetType | null,
+  context?: AssetWriteContext,
 ): unknown {
   // 唯一 sidecar 写入者之一：capture 族 originalUrl 恒 null 的不变量在此收口（见 assetPaths）。
-  const meta = validatedGeneratedMeta(sanitizeAssetMetaForKind(rawMeta), contentType, bytes);
-  const actualContentType = effectiveContentType(fileName, contentType, bytes);
+  const checked = validatedGenerated(sanitizeAssetMetaForKind(rawMeta), contentType, bytes, expectedKind);
+  const meta = checked.meta;
+  const actualContentType = effectiveContentType(fileName, checked.contentType, bytes);
   validateStructuredAsset(actualContentType, bytes);
   const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  if (isContentAddressedUpload(meta)) return persistUploadBytes(projectId, bytes, storageFileName, actualContentType, meta);
-  const { absolutePath } = uniqueAssetPath(projectId, storageFileName, assetBucketFromMeta(meta));
+  if (isContentAddressedUpload(meta)) return persistUploadBytes(projectId, bytes, storageFileName, actualContentType, meta, context);
+  context?.assertCurrent();
+  const { absolutePath } = uniqueAssetPath(projectId, storageFileName, actualContentType, assetBucketFromMeta(meta), context);
   fs.writeFileSync(absolutePath, bytes);
   writeAssetSidecarMeta(absolutePath, meta);
   broadcastAssetsUpdated(projectId);
   const contentHash = crypto.createHash("sha256").update(bytes).digest("hex");
-  return storedAssetRecord(projectId, absolutePath, sanitizeName(fileName, "asset"), actualContentType, meta, contentHash);
+  return storedAssetRecord(projectId, absolutePath, sanitizeName(fileName, "asset"), actualContentType, meta, contentHash, context);
 }
 
 /**
@@ -270,18 +190,19 @@ export function writeDeterministicAsset(
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  expectedKind: LocalizedAssetType,
   materializationKey: string,
 ): unknown {
-  const meta = validatedGeneratedMeta(sanitizeAssetMetaForKind(rawMeta), contentType, bytes);
-  const actualContentType = effectiveContentType(fileName, contentType, bytes);
+  const checked = validatedGenerated(sanitizeAssetMetaForKind(rawMeta), contentType, bytes, expectedKind);
+  const meta = checked.meta;
+  const actualContentType = effectiveContentType(fileName, checked.contentType, bytes);
   validateStructuredAsset(actualContentType, bytes);
-  const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  const parsed = path.parse(sanitizeName(storageFileName, "asset"));
+  const { stem, ext } = storedAssetFileParts(fileName, actualContentType);
   const keyHash = crypto.createHash("sha256").update(materializationKey).digest("hex").slice(0, 24);
   const projectDir = projectDirById(projectId);
   if (!projectDir) throw new Error("Project not found");
   const bucket = assetBucketFromMeta(meta);
-  const relativePath = path.posix.join("assets", bucket, "materialized", `${parsed.name || "asset"}-${keyHash}${parsed.ext || ".bin"}`);
+  const relativePath = path.posix.join("assets", bucket, "materialized", `${stem}-${keyHash}${ext}`);
   const absolutePath = path.join(projectDir, relativePath);
   const contentHash = crypto.createHash("sha256").update(bytes).digest("hex");
   ensureDir(path.dirname(absolutePath));
@@ -317,13 +238,26 @@ export function writeDeterministicAsset(
 }
 
 /** Copy an existing native file into the project without materializing it as a main-process Buffer. */
+export type CopyAssetFileOptions = {
+  /** 拷贝流的字节回调：导入中节点的渐显靠它驱动（没有就走原来的整块 copyFile）。 */
+  onCopyProgress?: AssetCopyProgress
+  /** 与拷贝并行派生的那一帧预览；落盘后由 attachStoredAssetPreview 认领，不重派生。 */
+  preparedPreview?: StoredAssetPreview | Promise<StoredAssetPreview | undefined>
+};
+
 export async function copyAssetFile(
   projectId: string,
   sourcePath: string,
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  /** 同 writeAsset：生成产物给它该是的那一类，其余给 null。 */
+  expectedKind: LocalizedAssetType | null,
+  captured?: AssetWriteContext,
+  options: CopyAssetFileOptions = {},
 ): Promise<unknown> {
+  const context = captured ?? await captureAssetWriteContext(projectId);
+  context.assertCurrent();
   let meta = sanitizeAssetMetaForKind(rawMeta);
   // 文件头无条件读：声明对不对要靠字节验，只在 octet-stream 时读等于「只在声明已经认输时才查证」。
   const header = await (async () => {
@@ -336,17 +270,36 @@ export async function copyAssetFile(
       await handle.close();
     }
   })();
-  const actualContentType = effectiveContentType(fileName, contentType, header);
-  if (String(meta.kind || "").toLowerCase() === "generated") meta = validatedGeneratedMeta(meta, contentType, await fs.promises.readFile(sourcePath), sourcePath);
+  let declaredType = contentType;
+  if (String(meta.kind || "").toLowerCase() === "generated") ({ meta, contentType: declaredType } = validatedGenerated(meta, contentType, await fs.promises.readFile(sourcePath), expectedKind, sourcePath));
+  const actualContentType = effectiveContentType(fileName, declaredType, header);
   if (actualContentType === "model/gltf-binary") validateStructuredAsset(actualContentType, await fs.promises.readFile(sourcePath));
   const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  if (isContentAddressedUpload(meta)) return persistUploadFile(projectId, sourcePath, storageFileName, actualContentType, meta);
-  const { absolutePath } = uniqueAssetPath(projectId, storageFileName, assetBucketFromMeta(meta));
-  await fs.promises.copyFile(sourcePath, absolutePath);
-  const contentHash = await contentHashForFile(absolutePath);
-  await writeAssetSidecarMetaAsync(absolutePath, meta);
-  broadcastAssetsUpdated(projectId);
-  return storedAssetRecord(projectId, absolutePath, sanitizeName(fileName, "asset"), actualContentType, meta, contentHash);
+  const stored = isContentAddressedUpload(meta)
+    ? await persistUploadFile(projectId, sourcePath, storageFileName, actualContentType, meta, context, options.onCopyProgress)
+    : await copyNativeFileToBucket(context, sourcePath, fileName, storageFileName, actualContentType, meta, options.onCopyProgress);
+  // 原生路径拷贝是本地导入 / Finder 粘贴拖入 / MCP import_asset / 跨项目复制的共用门：预览在这里派生一次。
+  return attachStoredAssetPreview(stored, await options.preparedPreview);
+}
+
+// 拷贝仍然先落暂存、再 link 进桶（AssetWriteContext 那条「写回世代必须还是发起时那个项目」的规矩不动）；
+// 本次只把**字节回调**接进来：进度是拷贝过程的副产物，不是另一条写盘路（P1：不开第二条）。
+async function copyNativeFileToBucket(context: AssetWriteContext, sourcePath: string, fileName: string, storageFileName: string, contentType: string, meta: JsonRecord, onCopyProgress?: AssetCopyProgress): Promise<unknown> {
+  context.assertCurrent();
+  const { projectId } = context;
+  reapAbandonedUploadStaging(context.root);
+  const staging = fs.mkdtempSync(path.join(context.root, UPLOAD_STAGING_PREFIX));
+  const snapshot = path.join(staging, 'content');
+  try {
+    await copyFileWithProgress(sourcePath, snapshot, onCopyProgress);
+    const contentHash = await contentHashForFile(snapshot);
+    context.assertCurrent();
+    const { absolutePath } = uniqueAssetPath(projectId, storageFileName, contentType, assetBucketFromMeta(meta), context);
+    retryOnSharingViolation(() => fs.linkSync(snapshot, absolutePath));
+    writeAssetSidecarMeta(absolutePath, meta);
+    broadcastAssetsUpdated(projectId);
+    return storedAssetRecord(projectId, absolutePath, sanitizeName(fileName, "asset"), contentType, meta, contentHash, context);
+  } finally { await removeScratchAfterUse(staging); }
 }
 
 /**
@@ -384,12 +337,15 @@ export async function copyProjectAsset(input: {
   }
   const stat = await fs.promises.stat(realSourcePath)
   if (!stat.isFile()) throw new Error('source asset is not a file')
+  const storedContentType = contentTypeFromStoredFile(realSourcePath)
   return copyAssetFile(
     targetProjectId,
     realSourcePath,
     path.basename(relativePath),
-    contentTypeFromStoredFile(realSourcePath),
+    storedContentType,
     readAssetSidecarMeta(realSourcePath),
+    // 跨项目复制一份已落过关的产物：它该是的就是它存着的那一类（关口照样重核字节）。
+    localizedAssetTypeOf(mediaKindFromContentType(storedContentType)),
   )
 }
 
@@ -399,6 +355,7 @@ export function moveAssetFile(
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  expectedKind: LocalizedAssetType | null,
 ): unknown {
   // 唯一 sidecar 写入者之二：与 writeAsset 同一道 capture 族隐私收口。
   let meta = sanitizeAssetMetaForKind(rawMeta);
@@ -413,17 +370,20 @@ export function moveAssetFile(
       fs.closeSync(handle);
     }
   })();
-  const actualContentType = effectiveContentType(fileName, contentType, header);
-  if (String(meta.kind || "").toLowerCase() === "generated") meta = validatedGeneratedMeta(meta, contentType, fs.readFileSync(sourcePath), sourcePath);
+  let declaredType = contentType;
+  if (String(meta.kind || "").toLowerCase() === "generated") ({ meta, contentType: declaredType } = validatedGenerated(meta, contentType, fs.readFileSync(sourcePath), expectedKind, sourcePath));
+  const actualContentType = effectiveContentType(fileName, declaredType, header);
   if (actualContentType === "model/gltf-binary") validateStructuredAsset(actualContentType, fs.readFileSync(sourcePath));
   const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  const { absolutePath, relativePath } = uniqueAssetPath(projectId, storageFileName, assetBucketFromMeta(meta));
+  const { absolutePath, relativePath } = uniqueAssetPath(projectId, storageFileName, actualContentType, assetBucketFromMeta(meta));
   try {
-    fs.renameSync(sourcePath, absolutePath);
+    // 刚下载 / 刚生成的文件常被杀毒实时扫描短暂开着：改名先按共享冲突退避重试。
+    renameSyncWithRetry(sourcePath, absolutePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
     fs.copyFileSync(sourcePath, absolutePath);
-    fs.rmSync(sourcePath, { force: true });
+    // 已经拷进项目：删源文件只是收尾，删不掉不能把这次落盘报成失败。
+    removeScratchAfterUseSync(sourcePath);
   }
   const stat = fs.statSync(absolutePath);
   writeAssetSidecarMeta(absolutePath, meta);
@@ -449,6 +409,7 @@ export function moveAssetFile(
 }
 
 type RemoteAssetImportOptions = {
+  assertCurrent?: () => void;
   /** 仅供 main 进程内部已配置的本地生成服务使用；renderer IPC 无法注入第二参数。 */
   trustedPrivateOrigin?: string;
   certificationEvidence?: CertificationMediaEvidence;
@@ -560,14 +521,33 @@ export function sanitizeSourceEvidence(raw: unknown): JsonRecord | undefined {
   return undefined;
 }
 
-export async function importRemoteAsset(payload: unknown, options: RemoteAssetImportOptions = {}): Promise<unknown> {
+/**
+ * 远端（http / data: / nomi-local）导入的载荷。expectedKind 必填：kind 缺省即生成产物，生成产物给它该是的那一类，
+ * 其余（reference / upload）给 null。渲染层经 IPC 来的载荷不过类型系统，主进程照样按 localizedAssetTypeOf 再读一遍。
+ */
+export type RemoteAssetImportPayload = JsonRecord & { projectId: string; url: string; expectedKind: LocalizedAssetType | null };
+
+export async function importRemoteAsset(payload: RemoteAssetImportPayload, options: RemoteAssetImportOptions = {}): Promise<unknown> {
+  // 画布预览（图片缩略 / 视频 poster）在落盘边界统一派生：三种来源（项目内引用 / data: / http(s)）出同一扇门。
+  return attachStoredAssetPreview(await importRemoteAssetToStore(payload, options));
+}
+
+async function importRemoteAssetToStore(payload: unknown, options: RemoteAssetImportOptions): Promise<unknown> {
   const raw = payload as JsonRecord;
   const projectId = String(raw.projectId || "").trim();
   const url = String(raw.url || "").trim();
   if (!projectId) throw new Error("projectId is required");
   if (!url) throw new Error("url is required");
+  const context = await captureAssetWriteContext(projectId, raw.projectBinding as ProjectBinding | undefined, options.assertCurrent);
   const sourceEvidence = sanitizeSourceEvidence(raw.sourceEvidence);
+  // 生成产物应是哪一类，由调用方说（渲染层 / 主进程都一样）；没说或说不清，生成产物在关口被拒。
+  const expectedKind = localizedAssetTypeOf(raw.expectedKind);
   if (url.startsWith("nomi-local://")) {
+    // 已在项目里的文件（自定义调用 / 本地流程产物经 localizeTaskAsset 回到这里）：不复制，
+    // 但同样走一次预览派生，画布对它和远端产物一视同仁。
+    const absolutePath = absolutePathFromLocalAssetUrl(url, projectId);
+    context.assertCurrent();
+    const relativePath = absolutePath ? path.relative(context.root, absolutePath).replace(/\\/g, "/") : "";
     return {
       id: stableLocalReferenceId(projectId, url),
       name: String(raw.fileName || "local asset"),
@@ -575,35 +555,42 @@ export async function importRemoteAsset(payload: unknown, options: RemoteAssetIm
       projectId,
       createdAt: nowIso(),
       updatedAt: nowIso(),
-      data: { url, kind: raw.kind || "local" },
+      data: {
+        url,
+        kind: raw.kind || "local",
+        ...(absolutePath && relativePath ? { absolutePath, relativePath, contentType: contentTypeFromStoredFile(absolutePath) } : {}),
+      },
     };
   }
   if (url.startsWith("data:")) {
     const parsed = parseDataUrl(url);
     const ext = extensionFromMime(parsed.contentType, "bin");
+    const fileName = String(raw.fileName || `asset-${Date.now()}.${ext}`);
+    const model3dValidation = shouldValidateGlb(raw, fileName, parsed.contentType)
+      ? inspectGlb(parsed.bytes)
+      : undefined;
     return writeAsset(
       projectId,
       parsed.bytes,
-      String(raw.fileName || `asset-${Date.now()}.${ext}`),
+      fileName,
       options.certificationEvidence?.contentType || parsed.contentType,
-      { kind: raw.kind || "generated", originalUrl: null, ...(sourceEvidence ? { sourceEvidence } : {}), ...(options.certificationEvidence ? { certificationEvidence: options.certificationEvidence } : {}) },
+      {
+        kind: raw.kind || "generated",
+        originalUrl: null,
+        ...(typeof raw.mediaType === "string" ? { mediaType: raw.mediaType } : {}),
+        ...(model3dValidation ? { model3dValidation } : {}),
+        ...(sourceEvidence ? { sourceEvidence } : {}),
+        ...(options.certificationEvidence ? { certificationEvidence: options.certificationEvidence } : {}),
+      },
+      expectedKind,
+      context,
     );
   }
   if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s), data, and nomi-local assets are supported");
-  const providerRoute = options.providerNetwork ? providerDispatcher({ network: options.providerNetwork }) : undefined;
-  let fetched;
-  try {
-    fetched = await hardenedFetch(url, {
-      timeoutMs: 60_000,
-      maxBytes: 200 * 1024 * 1024,
-      allowContentTypes: ["image/", "video/", "audio/", "application/octet-stream"],
-      ...(options.trustedPrivateOrigin ? { allowedPrivateOrigins: [options.trustedPrivateOrigin] } : {}),
-      ...(providerRoute ? { dispatcher: providerRoute } : {}),
-    });
-  } finally {
-    // per-download 连接池只属于这一次取回（与 vendorHttp 的同一条纪律）。
-    if (providerRoute) void providerRoute.close().catch(() => undefined);
-  }
+  const fetched = await fetchProviderMedia(url, {
+    ...(options.trustedPrivateOrigin ? { trustedPrivateOrigin: options.trustedPrivateOrigin } : {}),
+    ...(options.providerNetwork ? { providerNetwork: options.providerNetwork } : {}),
+  });
   const bytes = fetched.bytes;
   const hintedContentType = fetched.contentType || "application/octet-stream";
   const rawFileName = String(raw.fileName || path.basename(new URL(url).pathname) || "").trim();
@@ -612,13 +599,49 @@ export async function importRemoteAsset(payload: unknown, options: RemoteAssetIm
     : hintedContentType);
   const ext = extensionFromMime(contentType, extensionFromUrl(url));
   const fileName = rawFileName || `asset-${Date.now()}.${ext}`;
+  const model3dValidation = shouldValidateGlb(raw, fileName, contentType)
+    ? inspectGlb(bytes)
+    : undefined;
   return writeAsset(projectId, bytes, fileName.includes(".") ? fileName : `${fileName}.${ext}`, contentType, {
     kind: raw.kind || "generated",
     originalUrl: url,
     ownerNodeId: raw.ownerNodeId || null,
+    ...(typeof raw.mediaType === "string" ? { mediaType: raw.mediaType } : {}),
+    ...(model3dValidation ? { model3dValidation } : {}),
     ...(sourceEvidence ? { sourceEvidence } : {}),
     ...(options.certificationEvidence ? { certificationEvidence: options.certificationEvidence } : {}),
-  });
+  }, expectedKind, context);
+}
+
+function shouldValidateGlb(raw: JsonRecord, fileName: string, contentType: string): boolean {
+  return raw.mediaType === "model3d"
+    || path.extname(fileName).toLowerCase() === ".glb"
+    || contentType.toLowerCase().split(";")[0]?.trim() === "model/gltf-binary";
+}
+
+export function inspectProjectModel3dAsset(payload: unknown): GlbValidationReport {
+  const raw = payload as JsonRecord;
+  const sourceUrl = String(raw.url || "").trim();
+  const sourcePath = absolutePathFromLocalAssetUrlAnyProject(sourceUrl);
+  if (!sourcePath) throw new Error(desktopT("custom.assets.projectAssetStore.text1"));
+  if (path.extname(sourcePath).toLowerCase() !== ".glb") throw new Error(desktopT("custom.assets.projectAssetStore.text2"));
+  return inspectGlb(fs.readFileSync(sourcePath));
+}
+
+type InspectProjectVideoAssetDeps = {
+  resolvePath?: typeof absolutePathFromLocalAssetUrlAnyProject;
+  inspectVideo?: typeof runTechnicalCheck;
+};
+
+export async function inspectProjectVideoAsset(
+  payload: unknown,
+  deps: InspectProjectVideoAssetDeps = {},
+): Promise<TechnicalCheckVerdict> {
+  const raw = payload as JsonRecord;
+  const sourceUrl = String(raw.url || "").trim();
+  const sourcePath = (deps.resolvePath ?? absolutePathFromLocalAssetUrlAnyProject)(sourceUrl);
+  if (!sourcePath) throw new Error(desktopT("custom.assets.projectAssetStore.text3"));
+  return (deps.inspectVideo ?? runTechnicalCheck)(sourcePath, "video");
 }
 
 export function listProjectAssets(payload: unknown): { items: LocalAssetRecord[]; cursor: string | null } {
@@ -635,7 +658,8 @@ export function listProjectAssets(payload: unknown): { items: LocalAssetRecord[]
   const records = collectFilesRecursively(assetsDir)
     .flatMap((absolutePath): LocalAssetRecord[] => {
       try {
-        if (absolutePath.endsWith(".meta")) return [];
+        // 画布预览是源文件的派生物，不是独立素材：留在源旁边便于本地解析，但不进素材库列表。
+        if (absolutePath.endsWith(".meta") || isStoredAssetPreviewPath(absolutePath)) return [];
         const stat = fs.statSync(absolutePath);
         const relativePath = path.relative(projectDir, absolutePath).replace(/\\/g, "/");
         const contentType = contentTypeFromStoredFile(absolutePath);
@@ -701,6 +725,30 @@ function projectAgentAttachmentClaim(value: unknown): ProjectAgentAttachmentClai
   return Object.freeze({ assetId: record.assetId, version: 1 });
 }
 
+/**
+ * 一份项目素材的**可引用身份**（内容哈希 + 版本）。全仓只此一处算它。
+ *
+ * 版本恒 1 是内容寻址的推论，不是占位：素材按 `sha256/<hash>/` 落盘，改内容就是另一份素材、另一个
+ * `assetId`（`core.ts` 导入那条路同样写死 1）。
+ */
+
+/**
+ * assetId → 可引用身份。**模型只知道 assetId**（`look_at_media` 返回的就是它），内容哈希与版本
+ * 归项目素材库管；生成计划的参考素材由宿主在这里补齐，而不是要求模型发明它拿不到的字段
+ * （2026-09-18 根因，与「多镜不再要求模型发明 candidate」同一条纪律）。
+ * 素材不属于本项目、或文件已经不在盘上 → `undefined`，由调用方给出人话拒绝。
+ */
+export function resolveProjectAssetReferenceIdentity(
+  projectId: string,
+  assetId: string,
+): Readonly<{ contentHash: string; version: 1 }> | undefined {
+  const wanted = assetId.trim();
+  if (!wanted) return undefined;
+  const asset = findProjectAssetById(wanted, cursor => listProjectAssets({ projectId, limit: 500, cursor }));
+  if (!asset || asset.projectId !== projectId) return undefined;
+  return assetIdentityOf(asset);
+}
+
 /** Resolve untrusted renderer claims against the exact main-owned project asset index. */
 export function resolveProjectAgentAttachmentClaims(
   projectId: string,
@@ -718,14 +766,12 @@ export function resolveProjectAgentAttachmentClaims(
     if (!asset || asset.projectId !== projectId) throw new Error("project_agent_attachment_invalid");
     const absolutePath = asset.data.absolutePath;
     const relativePath = asset.data.relativePath;
-    if (
-      typeof absolutePath !== "string" ||
-      typeof relativePath !== "string" ||
-      !fs.existsSync(absolutePath)
-    ) {
+    if (typeof absolutePath !== "string" || typeof relativePath !== "string") {
       throw new Error("project_agent_attachment_invalid");
     }
-    const contentHash = crypto.createHash("sha256").update(fs.readFileSync(absolutePath)).digest("hex");
+    const identity = assetIdentityOf(asset);
+    if (!identity) throw new Error("project_agent_attachment_invalid");
+    const { contentHash } = identity;
     const contentType = asset.data.contentType;
     const size = asset.data.size;
     if (typeof contentType !== "string" || !Number.isSafeInteger(size) || (size as number) < 0) {
@@ -734,7 +780,7 @@ export function resolveProjectAgentAttachmentClaims(
     return Object.freeze({
       assetId: asset.id,
       contentHash,
-      version: 1,
+      version: identity.version,
       display: Object.freeze({
         url: localAssetUrl(projectId, relativePath),
         fileName: path.basename(absolutePath),

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -9,8 +9,9 @@ import { useVideoPlaybackHeal } from '../../media/useVideoPlaybackHeal'
 import { usePreviewVideoPlayheadSync } from '../preview/usePreviewVideoPlayheadSync'
 import { findTimelineTransitionForClipType, resolveTimelineTransitionsAtFrame } from './timelineTransition'
 import { TimelineTransitionLayer } from '../preview/TimelineTransitionLayer'
-import { getDesktopActiveProjectId } from '../../desktop/activeProject'
 import { recordVideoPlaybackState } from '../../media/videoPlaybackTelemetry'
+import { withProjectAction } from '../project/projectCanvasReadSurface'
+import { useDockCollapsed } from '../generation/useDockCollapsed'
 
 /**
  * 生成页时间轴的迷你画面窗：跟随播放头显示当前帧，治「画布上盲剪」——
@@ -21,17 +22,8 @@ export default function TimelineMiniPreview(): JSX.Element | null {
   const { t } = useTranslation()
   const playheadFrame = useWorkbenchStore((state) => state.timeline.playheadFrame)
   const fps = useWorkbenchStore((state) => state.timeline.fps)
-  const [collapsed, setCollapsed] = React.useState(
-    () => globalThis.localStorage?.getItem('nomi.timelineMiniPreview.collapsed') === '1',
-  )
-  const setCollapsedPersist = (next: boolean) => {
-    setCollapsed(next)
-    try {
-      globalThis.localStorage?.setItem('nomi.timelineMiniPreview.collapsed', next ? '1' : '0')
-    } catch {
-      /* 私有模式等存不了就算了 */
-    }
-  }
+  // 默认收起成小签、点开一次就记住（偏好的唯一 owner：generation/dockCollapsePrefs.ts）。
+  const [collapsed, setCollapsedPersist] = useDockCollapsed('timelineMiniPreview')
 
   const timeline = useWorkbenchStore((state) => state.timeline)
   const activeClips = React.useMemo(() => resolveActiveClipsAtFrame(timeline, playheadFrame), [timeline, playheadFrame])
@@ -133,14 +125,14 @@ export default function TimelineMiniPreview(): JSX.Element | null {
             playsInline
             preload="metadata"
             onError={(event) => {
-              recordVideoPlaybackState(getDesktopActiveProjectId(), { phase: 'error', rawUrl: videoClip?.url ?? '', readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState, mediaErrorCode: event.currentTarget.error?.code })
+              recordVideoPlaybackState(withProjectAction((project) => project.binding.projectId) ?? '', { phase: 'error', rawUrl: videoClip?.url ?? '', readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState, mediaErrorCode: event.currentTarget.error?.code })
               heal.onError(event)
             }}
             onLoadedMetadata={(event) => {
-              recordVideoPlaybackState(getDesktopActiveProjectId(), { phase: 'metadata', rawUrl: videoClip?.url ?? '', readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState })
+              recordVideoPlaybackState(withProjectAction((project) => project.binding.projectId) ?? '', { phase: 'metadata', rawUrl: videoClip?.url ?? '', readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState })
               heal.onLoadedMetadata(event)
             }}
-            onCanPlay={(event) => recordVideoPlaybackState(getDesktopActiveProjectId(), { phase: 'canplay', rawUrl: videoClip?.url ?? '', readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState })}
+            onCanPlay={(event) => recordVideoPlaybackState(withProjectAction((project) => project.binding.projectId) ?? '', { phase: 'canplay', rawUrl: videoClip?.url ?? '', readyState: event.currentTarget.readyState, networkState: event.currentTarget.networkState })}
           />
         ) : null}
         {videoTransition ? (

@@ -8,7 +8,20 @@ import {
   hasClipOverlap,
   findAppendFrame,
   timelineHasVisualClips,
+  pushTimelineUndo,
+  TIMELINE_UNDO_LIMIT,
 } from './timelineMath'
+
+describe('timeline undo history', () => {
+  it('keeps the most recent 30 states without mutating the prior stack', () => {
+    const stack = Array.from({ length: TIMELINE_UNDO_LIMIT }, () => createDefaultTimeline())
+    const previous = createDefaultTimeline()
+    const next = pushTimelineUndo(stack, previous)
+    expect(stack).toHaveLength(TIMELINE_UNDO_LIMIT)
+    expect(next).toEqual([...stack.slice(1), previous])
+    expect(next.at(-1)).toBe(previous)
+  })
+})
 
 // 构造一个合法 TimelineClip（喂给纯数学函数；这些函数收 trusted state）
 function clip(

@@ -27,9 +27,11 @@ import type { NomiPricingBasis } from './laneModelConfig.js';
 import { LANE_LEGACY_NOTE, LANE_LEGACY_COMPLETE_NOTE, LANE_LEGACY_TOOLS_NOTE, laneLegacyFacts } from './laneLegacyNote.js';
 import {
   LANE_TASK_NOTE_TYPE, isLaneTaskNote,
-  type LaneMetric, type LanePart, type LanePendingApproval, type LaneProjection,
+  type LaneAttachmentResolver, type LaneMetric, type LanePart, type LanePendingApproval, type LaneProjection,
   type LaneQueueKind, type LaneQueuedMessage, type LaneTaskFacts, type LaneThinking, type LaneThinkingLevel,
 } from './laneContracts.js';
+import { laneToolNextActionOf } from './laneToolNextAction.js';
+import { laneToolFailureOf } from './laneToolFailureEnvelope.js';
 
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -43,12 +45,13 @@ function textOf(content: unknown): string {
 
 function pushAssistantParts(
   message: AssistantMessage, entrySeq: number, streaming: boolean,
-  runningToolCallIds: ReadonlySet<string>, out: LanePart[], entryId?: string,
+  runningToolCallIds: ReadonlySet<string>, out: LanePart[], entryId?: string, inputEntryId?: string,
 ): void {
   message.content.forEach((part, contentIndex) => {
-    const identity = { sequence: out.length, entrySeq, contentIndex };
+    const identity = { sequence: out.length, entrySeq, contentIndex, ...(entryId ? { entryId } : {}) };
     if (part.type === 'text') {
       out.push({ ...identity, kind: 'assistant-text', text: part.text, streaming,
+        ...(inputEntryId ? { retryInputEntryId: inputEntryId } : {}),
         ...(message.stopReason === 'aborted' ? { interrupted: true as const,
           ...(entryId && part.text.trim() ? { continuationEntryId: entryId } : {}) } : {}) });
       return;
@@ -62,15 +65,26 @@ function pushAssistantParts(
         args: part.arguments, running: runningToolCallIds.has(part.id) });
     }
   });
+  // 「停止」的回执不是正文的一个属性，是**这一回合的终局**。上面那圈只按 `content` 发段，
+  // 所以一次在模型吐出第一个字之前就被叫停的回合（`stopReason:'aborted'` + `content: []`）
+  // 一段都不产出——面板上停止不留任何痕迹，用户只能判断成「没停下来」。
+  // 真实会话 2026-09-12 的 5 次停止全是这个形状（`nomi.ui.trace` 记的停止时延是 3–11ms，
+  // 停是真停了，只是**没人看见**）。缺席的是回执，不是取消。
+  //
+  // 空正文不给 `continuationEntryId`：没有半句话可接，「继续」在那里就是一颗按下去没有去处的钮。
+  if (!streaming && message.stopReason === 'aborted'
+    && !message.content.some((part) => part.type === 'text')) {
+    out.push({ sequence: out.length, entrySeq, ...(entryId ? { entryId } : {}), contentIndex: message.content.length,
+      kind: 'assistant-text', text: '', streaming: false, interrupted: true,
+      ...(inputEntryId ? { retryInputEntryId: inputEntryId } : {}) });
+  }
 }
 
 /**
  * 把一份 lane 快照摊成有序段。
  *
- * 没有排序、没有 join 第二真相、没有缓存正文——三条都是刻意的：
- * 排序会引入第二个顺序来源；join 会引入第二份真相；缓存正文就是今天
- * `residentToolProjection` 把工具正文写进 localStorage 的那条路（清浏览器存储 =
- * 历史收据静默清空）。
+ * 历史行可来自同一 pi 分支的只读分页缓存；运行状态和用量仍只读原运行快照。
+ * 缓存不落盘、不回灌模型，不创建另一个转录 owner。原 entry ID 是跨页身份。
  */
 export interface LaneModelFacts {
   /**
@@ -172,8 +186,8 @@ const QUEUE_KIND: Readonly<Record<'steer' | 'followUp' | 'nextRun', LaneQueueKin
 };
 
 function contextMetric(walk: ReturnType<typeof walkUsage>): LaneMetric {
-  if (!walk.sawSettledTurn) return { state: 'unknown', reason: 'no-settled-turn' };
   if (walk.compactedAfterLastTurn) return { state: 'unknown', reason: 'just-compacted' };
+  if (!walk.sawSettledTurn) return { state: 'unknown', reason: 'no-settled-turn' };
   return walk.lastPrompt === undefined ? { state: 'unknown', reason: 'no-settled-turn' } : KNOWN(walk.lastPrompt);
 }
 
@@ -200,12 +214,20 @@ export function projectLaneSnapshot(
    * 不传 = 卡上只有标题，那是诚实的「这一刻没 join 到」。
    */
   tasks?: (productionRunId: string) => LaneTaskFacts | undefined,
+  history?: readonly LaneSnapshot['transcript'][number][],
+  previousInputId?: string,
+  /**
+   * 用户消息上的附件 claim → 展示快照。claim 是转录里已有的事实，文件名要按 assetId 现查，
+   * 而查询只有主进程做得了（项目素材索引在那边），所以和 `tasks` 一样从参数进来。
+   */
+  attachments?: LaneAttachmentResolver,
 ): LaneProjection {
   const parts: LanePart[] = [];
+  let inputEntryId = previousInputId;
   let legacy: ReturnType<typeof laneLegacyFacts>;
   const running = snapshot.operation?.runningTools ?? [];
   const runningToolCallIds = new Set(running.filter((tool) => tool.status === 'running').map((tool) => tool.toolCallId));
-  for (const entry of snapshot.transcript) {
+  for (const entry of history ?? snapshot.transcript) {
     if (entry.type === 'custom') {
       if (entry.customType === LANE_LEGACY_NOTE) {
         const facts = laneLegacyFacts(entry.data);
@@ -216,39 +238,57 @@ export function projectLaneSnapshot(
       // 其余宿主记录仍是 `host-note`：它们不占行，只用来修正别的行的状态（审批那条）。
       if (entry.customType === LANE_TASK_NOTE_TYPE && isLaneTaskNote(entry.data)) {
         const facts = tasks?.(entry.data.productionRunId);
-        parts.push({ sequence: parts.length, entrySeq: entry.seq, contentIndex: 0, kind: 'task',
+        parts.push({ sequence: parts.length, entryId: entry.id, entrySeq: entry.seq, contentIndex: 0, kind: 'task',
           productionRunId: entry.data.productionRunId,
           ...(entry.data.operationId === undefined ? {} : { operationId: entry.data.operationId }),
           ...(facts === undefined ? {} : { facts }) });
         continue;
       }
-      parts.push({ sequence: parts.length, entrySeq: entry.seq, contentIndex: 0,
+      parts.push({ sequence: parts.length, entryId: entry.id, entrySeq: entry.seq, contentIndex: 0,
         kind: 'host-note', noteType: entry.customType, data: entry.data });
       continue;
     }
     if (entry.type !== 'message') continue;
     const message = entry.message;
     if (message.role === 'user' || isLaneInputMessage(message)) {
+      inputEntryId = entry.id;
       // 技能只从**这条消息自己**的 context 读。用「当前选中的技能」去补历史那几条，
       // 会把今天选的技能追认到昨天那句话上——那是编一个用户没做过的操作。
       const skillKey = isLaneInputMessage(message) ? message.context.skillKey : undefined;
-      parts.push({ sequence: parts.length, entrySeq: entry.seq, contentIndex: 0,
+      // 附件同理只从**这条消息自己**的 context 读——发出去的那一刻挂了什么，重开项目后就还是什么。
+      const claims = isLaneInputMessage(message) ? message.context.attachments : undefined;
+      const attached = claims?.length
+        ? (attachments?.(claims) ?? claims.map(claim => ({ assetId: claim.assetId, version: claim.version })))
+        : undefined;
+      parts.push({ sequence: parts.length, entryId: entry.id, entrySeq: entry.seq, contentIndex: 0,
         kind: 'user', text: isLaneInputMessage(message) ? message.context.displayText ?? message.content : textOf(message.content),
-        ...(skillKey ? { skillKey } : {}) });
+        ...(skillKey ? { skillKey } : {}),
+        ...(attached?.length ? { attachments: attached } : {}),
+        ...(isLaneInputMessage(message) && message.context.storyboardTarget ? { storyboardTarget: message.context.storyboardTarget } : {}),
+        ...(isLaneInputMessage(message) && message.context.skillSnapshot ? { skillSnapshot: message.context.skillSnapshot } : {}) });
       continue;
     }
     if (message.role === 'assistant') {
-      pushAssistantParts(message, entry.seq, false, runningToolCallIds, parts, entry.id);
+      pushAssistantParts(message, entry.seq, false, runningToolCallIds, parts, entry.id, inputEntryId);
       if (message.stopReason === 'error' && message.errorMessage) {
         parts.push({ kind: 'error', text: message.errorMessage, sequence: parts.length,
-          entrySeq: entry.seq, contentIndex: message.content.length });
+          entryId: entry.id, entrySeq: entry.seq, contentIndex: message.content.length });
       }
       continue;
     }
     if (message.role === 'toolResult') {
-      parts.push({ sequence: parts.length, entrySeq: entry.seq, contentIndex: 0, kind: 'tool-result',
+      // 正文逐字带上来（这一层不做取舍），信封另起一个字段——渲染层要靠它把「给模型看的那行尾巴」
+      // 按结构摘掉。信封是这条消息自己的 `details.nextAction`，不是从别处 join 来的第二份真相。
+      const nextAction = laneToolNextActionOf(message.details);
+      // 失败的结构化信封同理：这一层只走一遍、不翻译。翻译（按 code 查 i18n 词条）是渲染层的事，
+      // 而它必须拿到**结构**才翻得了——否则只能去正则那段英文散文，那条老路只认得出
+      // schema 校验一种，其余一律落回英文（C5 / 审计 §5）。
+      const failure = laneToolFailureOf(message.details);
+      parts.push({ sequence: parts.length, entryId: entry.id, entrySeq: entry.seq, contentIndex: 0, kind: 'tool-result',
         toolCallId: message.toolCallId, toolName: message.toolName,
-        text: textOf(message.content), isError: message.isError });
+        text: textOf(message.content), isError: message.isError,
+        ...(nextAction ? { nextAction } : {}),
+        ...(failure ? { failure } : {}) });
     }
   }
   // 流式中的那条助手消息还没落成 entry。它接在转录末尾，用同一套编号继续往下走——

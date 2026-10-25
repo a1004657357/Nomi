@@ -1,6 +1,5 @@
-import path from "node:path";
 import { readNestedRecord, trim, type JsonRecord } from "../../jsonUtils";
-import { findSkillRecord, type SkillRecord } from "../../skills/skillStore";
+import { findSkillRecord, readSkillRecords, type SkillRecord } from "../../skills/skillStore";
 import { sanitizeForBroadCompat } from "../../ai/promptSanitize";
 import { getDesktopLocale } from "../../desktopLocale";
 
@@ -41,9 +40,31 @@ export const NOMI_AGENT_IDENTITY = [
   // 面板上根本没有确认卡。旧版铁律写「所有写入/生成都要等用户在卡片上确认」，与运行时自相矛盾，模型据此
   // 把「建了草稿」说成「已提交生成，去右侧预览区看结果」，还让用户去找一张不存在的卡。规则必须如实描述
   // 两类动作的真实分界：不花钱的本地写入立刻生效，花钱的生成才等确认卡。
+  // 2026-09-21：这一条原来只有前半句「该调工具就调」。真实模型 16 句实测（investigate-askback.md
+  // §2.3/§3.3）显示它**恒赢**——含糊的话（「把那个删了」「改成竖的」）六成直接动手、猜错对象，
+  // 反问卡触发 0/16。修法不是把它改软（那会换来另一头的毛病：什么都先问一句），
+  // 而是把它说完整：默认动手，只有「猜错了代价高」那一档先问。
+  // **具体怎么判、用哪个工具问，只写在那个工具自己的说明书里**（`verbs/askVerbs.ts`），
+  // 这里不复述——同一条规矩两个地方写，迟早说得不一样。
+  // 2026-09-22：两条的**顺序**对调。ask_user 上线后第一轮真实模型实测「该问时问了」只有 3/12，
+  // 而仪器核过不是管道问题（工具在常驻表里、guideline 确实进了系统提示词）。同一段里先读到
+  // 「该调工具就调」再读到「但有三种情况先问」，前者天然是默认、后者是例外；对调之后读到的顺序是
+  // 「先判断要不要问，不用问就动手」。这是 run1 → run2 之间**唯一**动的提示词变量，好让那个数字说得清是谁的功劳。
+  "- 默认动手，不默认发问：能用合理默认就直接做，做完用一句话说明你按了哪个默认。但当用户的话指向好几个不同的东西、或缺一个会明显改变成品的关键信息、或下一步要花钱/撤不回时，先问一句再动手——那一刻猜错的代价比多问一句高得多。",
   "- 主动但不越权：该调工具就调。建草稿、改草稿这类不花钱的本地改动会立刻生效，不需要确认；只有付费生成要等用户在确认卡上点头之后才开始。",
   "- 建好草稿只能说「草稿已建好，模型和参数以确认卡为准」，绝不能说「已提交」「已开始生成」「去预览区看结果」——生成还没开始，预览区也不会有东西。",
   "- 如果模型是你替用户选的，要明说这是你选的、以及为什么这么选，别让用户以为是他自己定的。",
+  "",
+  // 2026-09-15 真实模型实测（22 句 · `docs/evidence/2026-09-15-skill-real-run/`）：在一个**空项目**里说
+  // 「给我做一条 30 秒的雨夜便利店短片」，模型 3/4 会自己去读对的技能（索引这条路是通的），但
+  // **视觉锚 0/5**——唯一真的把镜头建出来的那一轮，4 个镜头全是 text_to_video，没有任何锚、没有任何
+  // 引用。这与 2026-09-12 用户截图里 Agent 自己那句「镜头语言规则用了、视觉锚引用没用上」是同一件事。
+  // 它不是不知道方法（读到的技能里写着），是没有一条**它每次都看得见**的规矩说「锚是先决条件」。
+  // 所以这三句放在身份层，不放在某个 skill 里：一致性是 Nomi 这个产品的事，不是某种片型的事。
+  "出片原则（每次都适用）：",
+  "- 一次要出两个以上镜头时，先建一个视觉锚（人物卡或场景定场图），再让后续镜头**引用**它（图生视频 / 参考槽）。每镜各自文生视频等于同一部片子里换了几个人、换了几座城——这是用户最常抱怨的那个问题。",
+  "- 用户已经给了图或素材时，它就是锚：真的挂到参考槽/参考边上。只把它写进提示词文字里不算用上——模型看不见你在文字里提过它。",
+  "- 只有在用户明确说不要一致性、或这条片子本来就没有可复现的主体（纯风景快剪）时才跳过锚；跳过就在回复里说一句为什么跳过。",
 ].join("\n");
 
 /**
@@ -77,33 +98,18 @@ export function buildLanguageRule(): string {
       ].join("\n");
 }
 
-export function resolveRequestedSkill(payload: JsonRecord): SkillRecord | null {
+/**
+ * 用户为这一轮点的那条技能。目录每次现扫（pi 的加载器，async）：他刚导入的技能这一轮就找得到。
+ *
+ * 它进提示词的那一段**不在这里拼**：唯一注入点是岛上的 `electron/agentLane/laneSkillPrompt.mts`
+ * （信封来自 pi 的 `formatSkillInvocation`，权威节走它的 `additionalInstructions`），CJS 侧经
+ * `laneNativeLoader.cts` 的桥调它。本文件被 `FORBIDDEN_OWNER_IMPORT` 钉死不许摸 pi，所以 2026-09-18
+ * 之前那份逐字手拼 pi 信封的 `buildSelectedSkillPrompt` 同 commit 删掉了（P1：不留并行版）。
+ */
+export async function resolveRequestedSkill(payload: JsonRecord): Promise<SkillRecord | null> {
   const requested = readRequestedSkill(payload);
-  return requested.key || requested.name ? findSkillRecord(requested.key, requested.name) : null;
-}
-
-export function buildSkillSystemPrompt(
-  payload: JsonRecord,
-  skill: SkillRecord | null = resolveRequestedSkill(payload),
-): string {
-  const requested = readRequestedSkill(payload);
-  if (!requested.key && !requested.name) return "";
-  if (!skill) {
-    return [
-      "Nomi 桌面 Agent skill 提示：",
-      `请求的 skill 未在本地 skills 目录找到：${requested.key || requested.name}`,
-      "继续按用户请求和当前上下文完成任务；不要声称已经加载不存在的 skill。",
-    ].join("\n");
-  }
-  return [
-    "Nomi 桌面 Agent 已加载本地 skill。以下内容是本次回复必须参考的领域方法论和输出约束。",
-    "注意：本桌面运行时只把 skill 作为本地知识注入；skill 中提到的外部 CLI、HTTP 或文件工具不会自动执行，除非当前对话/界面明确提供了对应能力。",
-    `skillKey: ${requested.key || skill.name}`,
-    `skillName: ${requested.name || skill.name}`,
-    `skillFile: ${path.relative(process.cwd(), skill.filePath)}`,
-    "",
-    skill.body,
-  ].join("\n");
+  if (!requested.key && !requested.name) return null;
+  return findSkillRecord(requested.key, requested.name, await readSkillRecords());
 }
 
 /**

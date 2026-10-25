@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getArchetypeById, specializeArchetypeForVariant, type ModelArchetype } from '../../../../config/modelArchetypes'
+import { getArchetypeById, specializeArchetypeForVariant, type ModelArchetype } from '../../../../../electron/shared/modelArchetypes'
 import { archetypeModeModelEnum, type ResolvedReferenceValues } from './archetypeMeta'
 import { archetypeModeChoices } from './channelModeReach'
 import {
@@ -402,6 +402,14 @@ describe('C4 HappyHorse — 档案 + per-mode enum + 模型契约 input 键', ()
     const meta = { archetype: { id: 'happyhorse', modeId: 'edit' }, sourceVideoUrl: 'src.mp4', referenceImageUrls: ['r1'] }
     expect(buildArchetypeInputParams(meta, HAPPY)).toEqual({ video_url: 'src.mp4', reference_image: ['r1'], model: 'happyhorse/video-edit' })
   })
+  it('edit：画布视频边可填充 source_video，不要求重复手工上传', () => {
+    const meta = { archetype: { id: 'happyhorse', modeId: 'edit' }, referenceImageUrls: ['r1'] }
+    expect(buildArchetypeInputParams(meta, HAPPY, { referenceVideos: ['edge-source.mp4'] })).toEqual({
+      video_url: 'edge-source.mp4',
+      reference_image: ['r1'],
+      model: 'happyhorse/video-edit',
+    })
+  })
 
   it('t2v：无参考槽，只带 model enum', () => {
     const meta = { archetype: { id: 'happyhorse', modeId: 't2v' } }
@@ -544,6 +552,25 @@ describe('变体轴 — currentArchetypeVariant 回落', () => {
   })
   it('无 variants 档案 → null（如 HappyHorse）', () => {
     expect(currentArchetypeVariant(getArchetypeById('happyhorse')!, {})).toBeNull()
+  })
+  it('按当前模式隐藏不兼容型号，并在切模式时回落到可用默认型号', () => {
+    const jimengImage = getArchetypeById('jimeng-web-image')!
+    expect(archetypeVariantChoices(jimengImage, 't2i').map((variant) => variant.id)).toContain('v3_0')
+    expect(archetypeVariantChoices(jimengImage, 'edit').map((variant) => variant.id)).not.toContain('v3_0')
+
+    const switched = applyArchetypeModeSwitch(
+      { archetype: { id: 'jimeng-web-image', modeId: 't2i', variantId: 'v3_0' } },
+      jimengImage,
+      'edit',
+    )
+    expect(switched.archetype).toEqual({
+      id: 'jimeng-web-image',
+      modeId: 'edit',
+      variantId: 'v5_0_pro',
+    })
+    expect(currentArchetypeVariant(jimengImage, {
+      archetype: { id: 'jimeng-web-image', modeId: 'edit', variantId: 'v3_0' },
+    })?.id).toBe('v5_0_pro')
   })
   it('kie Seedance 合并后有标准/快速两变体（默认标准）', () => {
     const kie = getArchetypeById('seedance-2')!
@@ -736,7 +763,6 @@ describe('变体轴 — ensureArchetypeNodeMeta 初始化变体', () => {
 // ───── apimart 参数补全（2026-06-16）：fixedParams 注入 + flat 合并 + 新变体 model 串 ─────
 describe('apimart 参数补全 — fixedParams / flat 合并 / 变体 model', () => {
   const VEO = getArchetypeById('veo-3.1')!
-  const SORA = getArchetypeById('sora-2')!
   const HAILUO = getArchetypeById('hailuo-2.3')!
   const QWEN = getArchetypeById('qwen-image')!
   const OMNI = getArchetypeById('omni-flash-ext')!
@@ -760,19 +786,11 @@ describe('apimart 参数补全 — fixedParams / flat 合并 / 变体 model', ()
     expect(buildArchetypeInputParams(meta, VEO)).toEqual({ image_urls: ['F.png'], generation_type: 'frame', model: 'veo3.1-fast' })
   })
 
+  // Sora 2 已于 2026-09-28 退役（上游关停），档案随之删除；变体 model 串由下面三家继续覆盖。
   it('变体 model 串：选 Pro/quality/Fast → out.model = 变体 modelKey', () => {
-    expect(buildArchetypeInputParams({ archetype: { id: 'sora-2', modeId: 't2v', variantId: 'pro' } }, SORA).model).toBe('sora-2-pro')
     expect(buildArchetypeInputParams({ archetype: { id: 'veo-3.1', modeId: 't2v', variantId: 'quality' } }, VEO).model).toBe('veo3.1-quality')
     expect(buildArchetypeInputParams({ archetype: { id: 'hailuo-2.3', modeId: 't2v', variantId: 'fast' } }, HAILUO).model).toBe('MiniMax-Hailuo-2.3-Fast')
     expect(buildArchetypeInputParams({ archetype: { id: 'qwen-image', modeId: 't2i', variantId: 'pro' } }, QWEN).model).toBe('qwen-image-2.0-pro')
-  })
-
-  it('Sora Pro 变体：resolution 经 paramOverrides 放宽到 1080p（标准只 720p）', () => {
-    const std = specializeArchetypeForVariant(SORA, 'standard')
-    const pro = specializeArchetypeForVariant(SORA, 'pro')
-    const resOf = (a: ModelArchetype) => a.modes[0].params.find((p) => p.key === 'resolution')!.options.map((o) => o.value)
-    expect(resOf(std)).toEqual(['720p'])
-    expect(resOf(pro)).toEqual(['720p', '1024p', '1080p'])
   })
 
   it('Omni 参考图融合：fixedParams 注入 generation_type=reference（避 3 图被拒）', () => {
@@ -783,9 +801,9 @@ describe('apimart 参数补全 — fixedParams / flat 合并 / 变体 model', ()
   })
 
   it('duration 用数值 option 的 select：option value 是 number（发整数避 400）', () => {
-    const dur = SORA.modes[0].params.find((p) => p.key === 'duration')!
+    const dur = HAILUO.modes[0].params.find((p) => p.key === 'duration')!
     expect(dur.type).toBe('select')
-    expect(dur.options.map((o) => o.value)).toEqual([4, 8, 12, 16, 20])
+    expect(dur.options.map((o) => o.value)).toEqual([6, 10])
   })
 })
 
@@ -804,7 +822,7 @@ describe('火山方舟 Seedance — 档案投影', () => {
   it('首帧模式：ratio 字段 + 默认变体 model 使用火山官方 Model ID', () => {
     const meta = { archetype: { id: 'volcengine-seedance-2', modeId: 'first' }, firstFrameUrl: 'F.png' }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
-      volcengine_first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
+      first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
       model: 'doubao-seedance-2-0-260128',
     })
     // **刻意没有 seed**：2026-08-26 照官方一手文档（doc 1520757 参数表）逐项对账，seed / camera_fixed
@@ -827,8 +845,8 @@ describe('火山方舟 Seedance — 档案投影', () => {
   it('首尾帧：图像 item 带 first_frame / last_frame role', () => {
     const meta = { archetype: { id: 'volcengine-seedance-2', modeId: 'firstlast' }, firstFrameUrl: 'F.png', lastFrameUrl: 'L.png' }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
-      volcengine_first_role_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
-      volcengine_last_role_image_content: { type: 'image_url', image_url: { url: 'L.png' }, role: 'last_frame' },
+      first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
+      last_image_content: { type: 'image_url', image_url: { url: 'L.png' }, role: 'last_frame' },
       model: 'doubao-seedance-2-0-260128',
     })
   })
@@ -843,10 +861,42 @@ describe('火山方舟 Seedance — 档案投影', () => {
       referenceAudioUrls: ['a1.mp3'],
     }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
-      volcengine_image_contents: [{ type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' }],
-      volcengine_video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
-      volcengine_audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
+      image_contents: [{ type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' }],
+      video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
+      audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
       model: 'doubao-seedance-2-0-260128',
+    })
+  })
+})
+
+describe('Pixstag MiniMax-H3 — 档案投影（asContentItem 同一构造层，2026-09-12）', () => {
+  const PIX = getArchetypeById('minimax-h3-pixstag')!
+
+  it('四模式：文生 / 首帧 / 首尾帧 / 多模态参考', () => {
+    expect(PIX.modes.map((m) => m.id)).toEqual(['t2v', 'first', 'firstlast', 'ref'])
+  })
+
+  it('首帧模式：首/尾帧转 MiniMax v2 content 项（type + 嵌套 url + role）', () => {
+    const meta = { archetype: { id: 'minimax-h3-pixstag', modeId: 'first' }, firstFrameUrl: 'F.png' }
+    expect(buildArchetypeInputParams(meta, PIX)).toEqual({
+      first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
+    })
+  })
+
+  it('多模态参考：图/视频/音频数组各转 content 项数组，role 全来自官方 content[].role 枚举', () => {
+    const meta = {
+      archetype: { id: 'minimax-h3-pixstag', modeId: 'ref' },
+      referenceImageUrls: ['c1.png', 'c2.png'],
+      referenceVideoUrls: ['v1.mp4'],
+      referenceAudioUrls: ['a1.mp3'],
+    }
+    expect(buildArchetypeInputParams(meta, PIX)).toEqual({
+      image_contents: [
+        { type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' },
+        { type: 'image_url', image_url: { url: 'c2.png' }, role: 'reference_image' },
+      ],
+      video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
+      audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
     })
   })
 })

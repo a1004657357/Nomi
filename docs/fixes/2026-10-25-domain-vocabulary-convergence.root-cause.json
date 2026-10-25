@@ -1,0 +1,707 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-domain-vocabulary-convergence",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "领域状态与导演台合同重复定义",
+  "symptom": "新增词表未登记，任务状态和本地截图重试存在平行实现，导致主线词表门岗阻断。",
+  "direct_cause": "各类型、Zod 与执行器复制相同值集合，未消费既有领域真相源。",
+  "class_root": "定制功能主线整合未同步共享合同与可重复验证。",
+  "affected_population": [
+    "当前定制 Nomi 的离线主线整合，不迁移日常项目"
+  ],
+  "scope_paths": [
+    "electron/ai/vendorLanguageModel.ts",
+    "electron/blender/blenderRunner.ts",
+    "electron/blender/directorCli.ts",
+    "electron/blender/vibingDirectorRunner.ts",
+    "electron/capabilityCore/directorRender.ts",
+    "electron/outboundDispatchEvidence.ts",
+    "electron/shared/agentCapabilities/localCanvasOperations.ts",
+    "electron/shared/taskStatus.ts",
+    "electron/submissionLedger.ts",
+    "electron/tasks/idempotencyStore.ts",
+    "electron/tasks/responseParsing.ts",
+    "electron/vendor/vendorHttp.ts",
+    "src/desktop/bridge.ts",
+    "src/desktop/vibingDirectorBridgeTypes.ts",
+    "src/workbench/domain/cinematicSchema.ts",
+    "src/workbench/domain/cinematicTypes.ts",
+    "src/workbench/generationCanvas/model/generationCanvasSchema.ts",
+    "src/workbench/generationCanvas/model/generationCanvasTypes.ts",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts",
+    "electron/shared/blenderDirectorContract.ts",
+    "electron/shared/blenderDirectorContract.test.ts",
+    "electron/shared/taskStatus.test.ts",
+    "src/workbench/domain/cinematicVocabulary.test.ts",
+    "scripts/vocabularies-baseline.json",
+    "scripts/check-vocabularies-baseline.node-test.mjs"
+  ],
+  "entry_points": [
+    "electron/ai/vendorLanguageModel.ts::resolveTextBrainStatus",
+    "electron/ai/vibingDirectorTools.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "electron/blender/directorCli.ts::BlenderDirectorStagePreset",
+    "electron/blender/directorCli.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "electron/blender/vibingDirectorRunner.ts::BlenderSpatialCheckStatus",
+    "electron/capabilityCore/directorRender.ts::BlenderDirectorStagePreset",
+    "electron/capabilityCore/directorRender.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "electron/capabilityCore/generationRuntimeAdapter.ts::GenerationProviderTaskState",
+    "electron/catalog/comfyuiCandidateLifecycle.ts::TaskStatus",
+    "electron/integrationCertification/comfyuiConnector.ts::TaskStatus",
+    "electron/outboundDispatchEvidence.ts::OutboundDispatchState",
+    "electron/productionRun/productionRunTypes.ts::GenerationProviderTaskState",
+    "electron/promptLibrary/promptLibraryIpc.ts::resolveTextBrainStatus",
+    "electron/runtime.ts::TaskStatus",
+    "electron/shared/agentCapabilities/localCanvasOperations.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "electron/shared/blenderDirectorContract.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "electron/shared/blenderDirectorContract.ts::BLENDER_SPATIAL_CHECK_STATUSES",
+    "electron/shared/taskStatus.ts::GenerationProviderTaskState",
+    "electron/shared/taskStatus.ts::TaskStatus",
+    "electron/shared/taskStatus.ts::TASK_STATUS_PHASE",
+    "electron/shared/taskStatus.ts::TASK_STATUSES",
+    "electron/submissionLedger.ts::TASK_STATUSES",
+    "electron/tasks/idempotencyStore.ts::TaskStatus",
+    "electron/tasks/responseParsing.ts::TaskStatus",
+    "electron/tasks/responseParsing.ts::KNOWN_TASK_STATUSES",
+    "electron/tasks/taskResultReading.ts::TaskStatus",
+    "electron/vendor/vendorHttp.ts::OutboundDispatchState",
+    "src/desktop/bridge.ts::BlenderDirectorStagePreset",
+    "src/desktop/vibingDirectorBridgeTypes.ts::BlenderSpatialCheckStatus",
+    "src/workbench/api/taskApi.ts::TaskStatus",
+    "src/workbench/domain/cinematicSchema.ts::SHOT_STATUSES",
+    "src/workbench/domain/cinematicSchema.ts::ASSET_REVISION_STATUSES",
+    "src/workbench/domain/cinematicTypes.ts::SHOT_STATUSES",
+    "src/workbench/domain/cinematicTypes.ts::ASSET_REVISION_STATUSES",
+    "src/workbench/generationCanvas/model/generationCanvasSchema.ts::GENERATION_COLLECTION_ITEM_STATUSES",
+    "src/workbench/generationCanvas/model/generationCanvasSchema.ts::GENERATION_QUALITY_STATUSES",
+    "src/workbench/generationCanvas/model/generationCanvasTypes.ts::GENERATION_COLLECTION_ITEM_STATUSES",
+    "src/workbench/generationCanvas/model/generationCanvasTypes.ts::GENERATION_QUALITY_STATUSES",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx::BlenderDirectorStagePreset",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts::BlenderSpatialCheckStatus",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts::BlenderDirectorStagePreset",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts::BLENDER_DIRECTOR_STAGE_PRESETS",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts::BlenderSpatialCheckStatus",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts::BlenderDirectorStagePreset"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "仅使用现有仓库、真实 Git 前后快照和已锁定依赖，没有新的第三方 API 假设。",
+  "invariants": [
+    "精确保持所有旧状态成员、顺序及含义；TaskStatus 由已有 GenerationProviderTaskState 派生。",
+    "导演台五场景只定义一份；类型和 Zod 消费同一声明。",
+    "本地截图保持原 3 次/800ms/30s 行为，不新增 Provider 自动重试或媒体提交。",
+    "20 个独立领域词表逐项登记；重复定义收敛后 debtCap 从 54 降至 52，不放宽预算。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/shared/taskStatus.ts",
+    "tests": [
+      "electron/shared/blenderDirectorContract.test.ts",
+      "electron/shared/taskStatus.test.ts",
+      "src/workbench/domain/cinematicVocabulary.test.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.test.ts",
+      "scripts/check-vocabularies-baseline.node-test.mjs"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/ai/vendorLanguageModel.ts",
+      "symbol": "resolveTextBrainStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/directorCli.ts",
+      "symbol": "BlenderDirectorStagePreset"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/directorCli.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "electron/blender/vibingDirectorRunner.ts",
+      "symbol": "BlenderSpatialCheckStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/directorRender.ts",
+      "symbol": "BlenderDirectorStagePreset"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/directorRender.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/generationRuntimeAdapter.ts",
+      "symbol": "GenerationProviderTaskState"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/comfyuiCandidateLifecycle.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/comfyuiConnector.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/outboundDispatchEvidence.ts",
+      "symbol": "OutboundDispatchState"
+    },
+    {
+      "kind": "read",
+      "path": "electron/productionRun/productionRunTypes.ts",
+      "symbol": "GenerationProviderTaskState"
+    },
+    {
+      "kind": "read",
+      "path": "electron/promptLibrary/promptLibraryIpc.ts",
+      "symbol": "resolveTextBrainStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/runtime.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/localCanvasOperations.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/blenderDirectorContract.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/blenderDirectorContract.ts",
+      "symbol": "BLENDER_SPATIAL_CHECK_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/taskStatus.ts",
+      "symbol": "GenerationProviderTaskState"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/taskStatus.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/taskStatus.ts",
+      "symbol": "TASK_STATUS_PHASE"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/taskStatus.ts",
+      "symbol": "TASK_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/submissionLedger.ts",
+      "symbol": "TASK_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/idempotencyStore.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/responseParsing.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/responseParsing.ts",
+      "symbol": "KNOWN_TASK_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskResultReading.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "OutboundDispatchState"
+    },
+    {
+      "kind": "read",
+      "path": "src/desktop/bridge.ts",
+      "symbol": "BlenderDirectorStagePreset"
+    },
+    {
+      "kind": "read",
+      "path": "src/desktop/vibingDirectorBridgeTypes.ts",
+      "symbol": "BlenderSpatialCheckStatus"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/api/taskApi.ts",
+      "symbol": "TaskStatus"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicSchema.ts",
+      "symbol": "SHOT_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicSchema.ts",
+      "symbol": "ASSET_REVISION_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicTypes.ts",
+      "symbol": "SHOT_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicTypes.ts",
+      "symbol": "ASSET_REVISION_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/model/generationCanvasSchema.ts",
+      "symbol": "GENERATION_COLLECTION_ITEM_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/model/generationCanvasSchema.ts",
+      "symbol": "GENERATION_QUALITY_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/model/generationCanvasTypes.ts",
+      "symbol": "GENERATION_COLLECTION_ITEM_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/model/generationCanvasTypes.ts",
+      "symbol": "GENERATION_QUALITY_STATUSES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "BlenderDirectorStagePreset"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+      "symbol": "BlenderSpatialCheckStatus"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+      "symbol": "BlenderDirectorStagePreset"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+      "symbol": "BLENDER_DIRECTOR_STAGE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts",
+      "symbol": "BlenderSpatialCheckStatus"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts",
+      "symbol": "BlenderDirectorStagePreset"
+    }
+  ],
+  "door_reduction": {
+    "before": 16,
+    "after": 45,
+    "why_not": "保留各消费者职责，合并重复定义与旁路，不删除用户入口来降低计数；新增共享引用会增加门数，预算并未放宽。"
+  },
+  "generality_proof": "真实成员、终态、同一引用和不同重试次数矩阵均被测试。类型、Zod 和执行器的重复定义改为共享引用；数门数量是消费者数量，不伪装成删除调用入口。",
+  "shared_boundaries": [
+    {
+      "path": "electron/shared/taskStatus.ts",
+      "symbol": "TASK_STATUS_PHASE",
+      "responsibility": "精确保持所有旧状态成员、顺序及含义；TaskStatus 由已有 GenerationProviderTaskState 派生。"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/ai/vendorLanguageModel.ts",
+      "entry_point": "resolveTextBrainStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/blender/directorCli.ts",
+      "entry_point": "BlenderDirectorStagePreset",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/blender/directorCli.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/blender/vibingDirectorRunner.ts",
+      "entry_point": "BlenderSpatialCheckStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/capabilityCore/directorRender.ts",
+      "entry_point": "BlenderDirectorStagePreset",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/capabilityCore/directorRender.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/capabilityCore/generationRuntimeAdapter.ts",
+      "entry_point": "GenerationProviderTaskState",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/catalog/comfyuiCandidateLifecycle.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/integrationCertification/comfyuiConnector.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/outboundDispatchEvidence.ts",
+      "entry_point": "OutboundDispatchState",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/productionRun/productionRunTypes.ts",
+      "entry_point": "GenerationProviderTaskState",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/promptLibrary/promptLibraryIpc.ts",
+      "entry_point": "resolveTextBrainStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/runtime.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/agentCapabilities/localCanvasOperations.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/blenderDirectorContract.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/blenderDirectorContract.ts",
+      "entry_point": "BLENDER_SPATIAL_CHECK_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/taskStatus.ts",
+      "entry_point": "GenerationProviderTaskState",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/taskStatus.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/taskStatus.ts",
+      "entry_point": "TASK_STATUS_PHASE",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/taskStatus.ts",
+      "entry_point": "TASK_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/submissionLedger.ts",
+      "entry_point": "TASK_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/tasks/idempotencyStore.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/tasks/responseParsing.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/tasks/responseParsing.ts",
+      "entry_point": "KNOWN_TASK_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/tasks/taskResultReading.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/vendor/vendorHttp.ts",
+      "entry_point": "OutboundDispatchState",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/desktop/bridge.ts",
+      "entry_point": "BlenderDirectorStagePreset",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/desktop/vibingDirectorBridgeTypes.ts",
+      "entry_point": "BlenderSpatialCheckStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/api/taskApi.ts",
+      "entry_point": "TaskStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/domain/cinematicSchema.ts",
+      "entry_point": "SHOT_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/domain/cinematicSchema.ts",
+      "entry_point": "ASSET_REVISION_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/domain/cinematicTypes.ts",
+      "entry_point": "SHOT_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/domain/cinematicTypes.ts",
+      "entry_point": "ASSET_REVISION_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/model/generationCanvasSchema.ts",
+      "entry_point": "GENERATION_COLLECTION_ITEM_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/model/generationCanvasSchema.ts",
+      "entry_point": "GENERATION_QUALITY_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/model/generationCanvasTypes.ts",
+      "entry_point": "GENERATION_COLLECTION_ITEM_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/model/generationCanvasTypes.ts",
+      "entry_point": "GENERATION_QUALITY_STATUSES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "entry_point": "BlenderDirectorStagePreset",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+      "entry_point": "BlenderSpatialCheckStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+      "entry_point": "BlenderDirectorStagePreset",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+      "entry_point": "BLENDER_DIRECTOR_STAGE_PRESETS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts",
+      "entry_point": "BlenderSpatialCheckStatus",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts",
+      "entry_point": "BlenderDirectorStagePreset",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增入口或迁移可能再次脱离共享实现。",
+    "same_class_scan": [
+      "coordinator-closeout-door-evidence.json；before=bb451850747b05499da9d31bc6cc03b5ee4c445e",
+      "src/electron 的 2966 份实际非测试源文件 AST",
+      "electron/shared/blenderDirectorContract.test.ts",
+      "electron/shared/taskStatus.test.ts",
+      "src/workbench/domain/cinematicVocabulary.test.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.test.ts",
+      "scripts/check-vocabularies-baseline.node-test.mjs"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/taskStatus.ts",
+    "invariant": "精确保持所有旧状态成员、顺序及含义；TaskStatus 由已有 GenerationProviderTaskState 派生。 导演台五场景只定义一份；类型和 Zod 消费同一声明。 本地截图保持原 3 次/800ms/30s 行为，不新增 Provider 自动重试或媒体提交。 20 个独立领域词表逐项登记；重复定义收敛后 debtCap 从 54 降至 52，不放宽预算。",
+    "failure_mode": "成员、线协议、原因或共享报告退化时，聚焦回归和原门岗失败。",
+    "exception_policy": "none",
+    "strategy": "修复已有 owner 与消费者，不另设并行实现或放宽预算。",
+    "artifacts": [
+      "electron/ai/vendorLanguageModel.ts",
+      "electron/blender/blenderRunner.ts",
+      "electron/blender/directorCli.ts",
+      "electron/blender/vibingDirectorRunner.ts",
+      "electron/capabilityCore/directorRender.ts",
+      "electron/outboundDispatchEvidence.ts",
+      "electron/shared/agentCapabilities/localCanvasOperations.ts",
+      "electron/shared/taskStatus.ts",
+      "electron/submissionLedger.ts",
+      "electron/tasks/idempotencyStore.ts",
+      "electron/tasks/responseParsing.ts",
+      "electron/vendor/vendorHttp.ts",
+      "src/desktop/bridge.ts",
+      "src/desktop/vibingDirectorBridgeTypes.ts",
+      "src/workbench/domain/cinematicSchema.ts",
+      "src/workbench/domain/cinematicTypes.ts",
+      "src/workbench/generationCanvas/model/generationCanvasSchema.ts",
+      "src/workbench/generationCanvas/model/generationCanvasTypes.ts",
+      "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.test.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorTypes.ts",
+      "electron/shared/blenderDirectorContract.ts",
+      "electron/shared/blenderDirectorContract.test.ts",
+      "electron/shared/taskStatus.test.ts",
+      "src/workbench/domain/cinematicVocabulary.test.ts",
+      "scripts/vocabularies-baseline.json",
+      "scripts/check-vocabularies-baseline.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "electron/shared/blenderDirectorContract.test.ts",
+    "electron/shared/taskStatus.test.ts",
+    "src/workbench/domain/cinematicVocabulary.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.test.ts",
+    "scripts/check-vocabularies-baseline.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "electron/shared/blenderDirectorContract.test.ts",
+    "electron/shared/taskStatus.test.ts",
+    "src/workbench/domain/cinematicVocabulary.test.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.test.ts",
+    "scripts/check-vocabularies-baseline.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "保留用户功能模块和数据，仅替换重复定义与无消费者实现。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "无新增或升级依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不改日常项目、素材、账号、密钥、Cookie 或共享代理进程。",
+  "residual_risks": [
+    "完整整合树、UI、CI、独立审查和合并 SHA 收据仍待最终验证。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "electron/shared/blenderDirectorContract.test.ts"
+  }
+}

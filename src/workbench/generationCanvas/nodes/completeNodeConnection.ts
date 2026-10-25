@@ -1,3 +1,4 @@
+import { toast as showInfoToast } from '../../../ui/toast'
 import { notify } from '../../../ui/notificationPolicy'
 import { FOCUS_GENERATION_NODE_EVENT } from './nodeSizing'
 // 完成一次「画布连线」到 targetNode（拖把柄 / 点输入口共用，捷径 B）。
@@ -50,12 +51,20 @@ export function completeNodeConnection(connectedNodeId: string, present?: (messa
     reportFeedback(filled ? i18n.t('connection.slotsFull', { max: declared.length }) : i18n.t('connection.unsupported'))
     return
   }
+  if (!verdict.ok && verdict.reason === 'target_input_full') {
+    showInfoToast(i18n.t("customWorkflow.imageComparisonAlreadyHasTwoInputsDisconnectOne"))
+    return
+  }
   // D4：边建了，但目标参考槽已满 → placeAt 把它丢弃（显示/发送都不含它）= 连了等于没连。
   // 用 resolveReferenceSlots(单源)判断这条新边有没有落进任一槽 fill；没落=槽满，明着提示而非静默。
   if (verdict.ok && sourceNodeId) {
     const { nodes, edges } = useGenerationCanvasStore.getState()
     const source = nodes.find((n) => n.id === sourceNodeId)
     const target = nodes.find((n) => n.id === targetNodeId)
+    // SkillNode is an orchestration target, not a provider reference slot.
+    // Its incoming edges are consumed by the skill body/Agent, so the generic
+    // reference-slot fullness check below does not apply.
+    if (target?.kind === 'skill' || target?.kind === 'compare') return
     const hasPromptEdge = source && target && edges.some(
       (edge) => edge.source === sourceNodeId && edge.target === targetNodeId && isTextPromptEdge(source, target, edge.mode),
     )
@@ -63,6 +72,9 @@ export function completeNodeConnection(connectedNodeId: string, present?: (messa
     if (target) {
       if (resolveParameterReferenceAssignments(target, nodes, edges).some(({ edge }) => edge?.source === sourceNodeId)) return
       const slots = resolveReferenceSlots(target, nodes, edges)
+      // 目标还没有模型档案（刚从连线菜单新建、模型稍后才挂上）= 没有声明任何槽，谈不上「满」：
+      // 与 validateReferenceEdge「无档案一律放行」同口径。此前这里照报「该参考已满」，连线新建节点次次误报。
+      if (slots.length === 0) return
       const landed = slots.some((s) => s.fills.some((f) => f.origin.type === 'edge' && f.origin.sourceNodeId === sourceNodeId))
       const hasEdge = edges.some((e) => e.source === sourceNodeId && e.target === targetNodeId)
       if (hasEdge && !landed) {

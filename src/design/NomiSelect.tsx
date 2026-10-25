@@ -1,7 +1,7 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Combobox, useCombobox } from '@mantine/core'
-import { IconCheck, IconChevronDown } from '@tabler/icons-react'
+import { IconCheck, IconChevronDown, IconEyeOff } from '@tabler/icons-react'
 import { cn } from '../utils/cn'
 import { NOMI_OVERLAY_Z_INDEX } from './overlayLayers'
 import { NomiIdentityIcon, type NomiIdentityIconSource } from './NomiIdentityIcon'
@@ -12,8 +12,9 @@ import { NomiIdentityIcon, type NomiIdentityIconSource } from './NomiIdentityIco
  * ⚠️ **不是「全仓统一」**（这句话在 2026-09-07 之前写在这里，而全仓仍有 6 处原生 `<select>`）：
  *   · `generationCanvas/nodes/scene3d/scene3dMoveHub.tsx:166`、
  *     `generationCanvas/components/SelectionPromptSaveController.tsx:215`、
- *     `creation/storyboard/StoryboardSelectionToolbar.tsx:70,85`、
- *     `creation/storyboard/shotRow/StoryboardFrameActions.tsx:126` —— 这 5 处是真该迁的；
+ *     `creation/storyboard/StoryboardSelectionToolbar.tsx:76`、
+ *     `creation/storyboard/shotRow/StoryboardFrameActions.tsx:126` —— 这 4 处是真该迁的
+ *     （原本是 5 处：分镜多选条的「统一模型」2026-09-12 已并进 `BulkModelPicker`）；
  *   · `generationCanvas/components/CanvasToolbar.tsx:392` 是**有意的例外**：一个 `opacity-0`
  *     的原生 select 铺在图标上当菜单触发器，形态是「图标钮弹菜单」不是「选择面板」。
  *     它真正该等的是菜单原语（D 档刀 1），不是本组件。
@@ -67,6 +68,15 @@ export type NomiSelectProps = {
   size?: 'sm' | 'xs'
   /** 长值（模型名）截断上限 px。 */
   triggerMaxWidth?: number
+  /**
+   * 触发 pill 的**宽度下限**（CSS 长度，如 `calc(8ch + 56px)`）。
+   *
+   * 为什么需要它：`flex-shrink` 只说了「谁先让位」，没说「让到哪儿为止」。给了优先级不给下限，
+   * 最先让位的那枚就会被一路压到 0——2026-09-17 分镜底栏的模型胶囊被压成一颗图标、型号名一个字
+   * 不剩，就是这条缺口（§1.5.4「模型是一等决策，不许埋」）。传了它，值区照旧 `truncate`，
+   * 但整枚不会再缩到没字。
+   */
+  triggerMinWidth?: string | number
   disabled?: boolean
   title?: string
   className?: string
@@ -74,6 +84,33 @@ export type NomiSelectProps = {
   searchable?: boolean
   /** Nested floating panels own their portal so outside-click handling and scrolling stay correct. */
   portalTarget?: React.RefObject<HTMLElement | null>
+  /**
+   * 下拉朝哪边长。默认 `start`（左对齐触发器，向右长）。
+   *
+   * `end` 用在**窄列里靠右的触发器**上（2026-09-17，W-05）：下拉宽度是内容驱动的
+   * （`width="max-content"`，最宽可到 280/380px），而分镜行所在的列在 1280 视口下只有 ~570px。
+   * 左对齐 + 向右长 = 浮层画到右侧 Agent 面板上，盖住那里的卡。floating-ui 的 `shift`
+   * 钳的是**视口**边界，不是这一列的边界，所以它不会帮忙。右对齐让它朝列内长。
+   */
+  dropdownAlign?: 'start' | 'end'
+  /**
+   * 列表底部的一行动作——**不是一个选项**，点它不选中任何值。
+   *
+   * 给「在这个列表本身上做点什么」用（第一个用例：模型框底部的「隐藏模型」）。与「更多」那行
+   * 同一处摆放、同一种形态，所以它不会长成下拉里的第二种心智。图标由调用方给：
+   * 这是设计系统组件，不该知道「隐藏」该用哪个图标。
+   */
+  footerAction?: { label: string; icon?: React.ReactNode; onSelect: () => void }
+  /**
+   * 列表底部那一行「有些选项被你藏起来了」的脚注（模型框：「已隐藏 N 个 · 在设置里找回」）。
+   *
+   * 为什么它是这个组件的一个具名槽、而不是一个通用的 footer：一个通用插槽会立刻被拿去塞
+   * 别的东西（提示、广告、第二个动作），而这里要表达的只有一件事——**这个列表不是全部**。
+   * 空串/缺省 = 什么都不渲染：没藏过东西的下拉不该无缘无故多一条脚注。
+   *
+   * 它与 footerAction 是两件事，不是两份实现：一个可点（做点什么），一个只陈述（这不是全部）。
+   */
+  hiddenNote?: string
 }
 
 const SURFACE_SHADOW = 'var(--workbench-shadow-pop)'
@@ -104,11 +141,15 @@ export function NomiSelect({
   triggerBadge,
   size = 'sm',
   triggerMaxWidth,
+  triggerMinWidth,
   disabled,
   title,
   className,
   searchable = false,
   portalTarget,
+  dropdownAlign = 'start',
+  footerAction,
+  hiddenNote,
 }: NomiSelectProps): JSX.Element {
   const { t } = useTranslation()
   const [more, setMore] = React.useState(false)
@@ -146,7 +187,7 @@ export function NomiSelect({
       // 选项标签（auto/1:1/16:9…）被 truncate 成空 → 看着「点开是空白」。改 max-content 后
       // 下拉跟着最长选项自然撑开；超长模型名由 maxWidth + 选项内 truncate 兜底，不会撑成怪物。
       width="max-content"
-      position="bottom-start"
+      position={dropdownAlign === 'end' ? 'bottom-end' : 'bottom-start'}
       offset={6}
       zIndex={NOMI_OVERLAY_Z_INDEX.popover}
       middlewares={{ flip: true, shift: true }}
@@ -188,6 +229,7 @@ export function NomiSelect({
             heightClass,
             className,
           )}
+          style={triggerMinWidth === undefined ? undefined : { minWidth: triggerMinWidth }}
         >
           {leadingLabel ? (
             <span className="shrink-0 text-micro leading-none text-nomi-ink-40">{leadingLabel}</span>
@@ -208,7 +250,7 @@ export function NomiSelect({
         </button>
       </Combobox.Target>
 
-      <Combobox.Dropdown data-nomi-select-dropdown>
+      <Combobox.Dropdown data-nomi-select-dropdown className="nokey">
         {searchable ? (
           <Combobox.Search
             // Focus after the visible search input mounts, including nested-portal reparenting.
@@ -300,7 +342,28 @@ export function NomiSelect({
           {!more && !query && options.some((option) => option.more && option.value !== value) ? (
             <button type="button" onClick={() => { setMore(true); combobox.resetSelectedOption() }} className="w-full px-2 py-1.5 text-left text-caption text-nomi-ink-60">{t('onboardingProviders.modelControls.more')}</button>
           ) : null}
+          {footerAction ? (
+            <button
+              type="button"
+              onClick={() => { combobox.closeDropdown(); footerAction.onSelect() }}
+              className="mt-0.5 flex w-full items-center gap-1.5 border-t border-nomi-line px-2 py-1.5 text-left text-caption text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink"
+            >
+              {footerAction.icon}
+              {footerAction.label}
+            </button>
+          ) : null}
         </Combobox.Options>
+        {hiddenNote ? (
+          // 不是选项：它点不了、也不该被键盘导航选中——藏起来的东西要找回在设置里，
+          // 这行只负责让「列表变短了」这件事说出来（放在 Options 外面就自然不进 Mantine 的选项序列）。
+          <div
+            data-nomi-select-hidden-note
+            className="mt-0.5 flex h-7 items-center gap-1.5 border-t border-nomi-line px-2.5 text-micro leading-none text-nomi-ink-40"
+          >
+            <IconEyeOff size={12} stroke={1.7} aria-hidden="true" />
+            {hiddenNote}
+          </div>
+        ) : null}
       </Combobox.Dropdown>
     </Combobox>
   )

@@ -46,6 +46,8 @@ export type ArchetypeReferenceSlot = {
   max?: number;
   inputKey?: string;
   asArray?: boolean;
+  /** Serialize a reference as a typed content item with its declared role. */
+  asContentItem?: boolean;
   characterIndexed?: boolean;
   requiresAnyOf?: ArchetypeReferenceSlotKind[];
   roleName?: string;
@@ -72,6 +74,14 @@ export type ArchetypeTransportTaskKind =
   | "transcribe"
   | "text_to_3d"
   | "image_to_3d";
+
+export type ModelCapabilityTier = "native" | "compatible" | "experimental";
+
+export type ModelCapabilitySupport = {
+  capabilityId: string;
+  tier: ModelCapabilityTier;
+  maxOutputs?: number;
+};
 
 export type ArchetypeMode = {
   id: string;
@@ -101,10 +111,12 @@ export type ArchetypeMode = {
   vendorTransportTaskKind?: Record<string, ArchetypeTransportTaskKind>;
   combineSlotsInto?: { key: string; flat?: boolean };
   fixedParams?: Record<string, string>;
+  capabilities?: ModelCapabilitySupport[];
 };
 
 export type ModelArchetypeVariant = {
   id: string;
+  supportedModeIds?: string[];
   label: string;
   modelKey: string;
   identifierPatterns?: string[];

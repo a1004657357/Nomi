@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:dangling-tokens /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-dangling-tokens.mjs
+
+✓ 悬空 token 门岗通过：扫 1631 文件，已定义 177 个 token，无悬空引用。

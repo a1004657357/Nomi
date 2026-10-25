@@ -1,0 +1,1720 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-custom-station-observed-completion",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "定制走查脱离共享等待预算且未证明观测",
+  "symptom": "定制走查脱离共享等待预算且未证明观测",
+  "direct_cause": "定制入口合入主线时没有沿用既有 owner 和真实消费者证据。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "scripts/check-test-waits.node-test.mjs",
+    "scripts/station-waits-baseline.json",
+    "tests/ux/capability-recipes.e2e.mjs",
+    "tests/ux/cliproxy-config-ui.walk.mjs",
+    "tests/ux/cliproxy-size-warning.walk.mjs",
+    "tests/ux/goal-feature-smoke.e2e.mjs",
+    "tests/ux/jimeng-web-parameters.e2e.mjs",
+    "tests/ux/media-outcome.walk.mjs",
+    "tests/ux/smoke.e2e.mjs",
+    "tests/ux/vibing-director.e2e.mjs",
+    "tests/ux/canvas-performance-benchmark.e2e.mjs",
+    "tests/ux/b1-camera-move.walk.mjs"
+  ],
+  "entry_points": [
+    "tests/ux/_assert.mjs::stationTimeout",
+    "tests/ux/_directorLab.mjs::stationTimeout",
+    "tests/ux/_goldenOriginalStoryboard.mjs::stationTimeout",
+    "tests/ux/_spendRemainingWalk.mjs::stationTimeout",
+    "tests/ux/agent-askback-real-model.walk.mjs::stationTimeout",
+    "tests/ux/agent-default-model-real.paid.mjs::stationTimeout",
+    "tests/ux/agent-dock-dismiss.walk.mjs::stationTimeout",
+    "tests/ux/agent-domain-owners.walk.mjs::stationTimeout",
+    "tests/ux/agent-draft-not-queued.walk.mjs::stationTimeout",
+    "tests/ux/agent-inflight-shots-reload.walk.mjs::stationTimeout",
+    "tests/ux/agent-lane-models-block.e2e.mjs::stationTimeout",
+    "tests/ux/agent-long-chat-real.paid.mjs::stationTimeout",
+    "tests/ux/agent-panel-form.walk.mjs::stationTimeout",
+    "tests/ux/agent-panel-mechanics.walk.mjs::stationTimeout",
+    "tests/ux/agent-question-card.walk.mjs::stationTimeout",
+    "tests/ux/agent-queued-shot-not-regenerable.walk.mjs::stationTimeout",
+    "tests/ux/agent-queued-shots.paid.mjs::stationTimeout",
+    "tests/ux/agent-real-user-conversation.walk.mjs::stationTimeout",
+    "tests/ux/agent-runtime-editing.walk.mjs::stationTimeout",
+    "tests/ux/agent-runtime-production.walk.mjs::stationTimeout",
+    "tests/ux/agent-shot-kind-real.paid.mjs::stationTimeout",
+    "tests/ux/agent-spend-confirm-executes.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-generate-remaining.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-long-output-name.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-nonapimart-vendor.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-per-shot-real.paid.mjs::stationTimeout",
+    "tests/ux/agent-spend-per-shot.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-priced-card.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-r30.mjs::stationTimeout",
+    "tests/ux/agent-spend-real-image.paid.mjs::stationTimeout",
+    "tests/ux/agent-spend-stop-midway.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-unknown-price.walk.mjs::stationTimeout",
+    "tests/ux/agent-spend-video-landing.walk.mjs::stationTimeout",
+    "tests/ux/agent-storyboard-real-model.walk.mjs::stationTimeout",
+    "tests/ux/agent-v4-retry-storm.walk.mjs::stationTimeout",
+    "tests/ux/agent-video-landing.paid.mjs::stationTimeout",
+    "tests/ux/anchor-real-planner.mjs::stationTimeout",
+    "tests/ux/asset-audio-upload.walk.mjs::stationTimeout",
+    "tests/ux/asset-library-interactions.walk.mjs::stationTimeout",
+    "tests/ux/asset-tab-overlap-and-nomi-entry.walk.mjs::stationTimeout",
+    "tests/ux/build-artifact-url-migration.walk.mjs::stationTimeout",
+    "tests/ux/canvas-drop-at-cursor.walk.mjs::stationTimeout",
+    "tests/ux/canvas-follow-hand/session.mjs::stationTimeout",
+    "tests/ux/canvas-handles-alt-drag.walk.mjs::stationTimeout",
+    "tests/ux/canvas-image-aspect.walk.mjs::stationTimeout",
+    "tests/ux/canvas-open-fit.walk.mjs::stationTimeout",
+    "tests/ux/canvas-shortcut-parity.walk.mjs::stationTimeout",
+    "tests/ux/canvas-spend-policy.paid.mjs::stationTimeout",
+    "tests/ux/capability-recipes.e2e.mjs::stationTimeout",
+    "tests/ux/clip-node-editing.walk.mjs::stationTimeout",
+    "tests/ux/cliproxy-config-ui.walk.mjs::stationTimeout",
+    "tests/ux/cliproxy-size-warning.walk.mjs::stationTimeout",
+    "tests/ux/composer-overlap-and-fast-typing.walk.mjs::stationTimeout",
+    "tests/ux/core-a-blank-storyboard.e2e.mjs::stationTimeout",
+    "tests/ux/core-a-creation-plans.e2e.mjs::stationTimeout",
+    "tests/ux/core-a-old-project.packaged.mjs::stationTimeout",
+    "tests/ux/core-a-storyboard-undo.e2e.mjs::stationTimeout",
+    "tests/ux/core-a-storyboard.paid.mjs::stationTimeout",
+    "tests/ux/core-smoke/fixture.mjs::stationTimeout",
+    "tests/ux/creation-plan-delete-undo.walk.mjs::stationTimeout",
+    "tests/ux/design-lab-ask-card-in-panel.walk.mjs::stationTimeout",
+    "tests/ux/design-lab-question-card-generality.walk.mjs::stationTimeout",
+    "tests/ux/director-assets.walk.mjs::stationTimeout",
+    "tests/ux/director-electron.walk.mjs::stationTimeout",
+    "tests/ux/director-j2-walk-to-b.walk.mjs::stationTimeout",
+    "tests/ux/director-j4-kneel-stand-look.walk.mjs::stationTimeout",
+    "tests/ux/director-j5-splat-valley.walk.mjs::stationTimeout",
+    "tests/ux/director-j6-outputs.walk.mjs::stationTimeout",
+    "tests/ux/director-mobile.walk.mjs::stationTimeout",
+    "tests/ux/director-windowbar.walk.mjs::stationTimeout",
+    "tests/ux/find-reference.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/actions.mjs::stationTimeout",
+    "tests/ux/full-walk/brain.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb01-two-page-card.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb02-reference-image.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb03-default-models.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb04-script-attachment-long-chat.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb05-pause-resume.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb06-failure-small-window.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb07-failure-kinds.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb07-storyboard-prompt-truth.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb08-cover-card-kind.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb10-node-display-rules.walk.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb90-seedream5.paid.mjs::stationTimeout",
+    "tests/ux/full-walk/playbooks/pb91-storyboard-dragon.paid.mjs::stationTimeout",
+    "tests/ux/g1/c0-real-budget.node-test.mjs::stationTimeout",
+    "tests/ux/g1/c0-real-scheduler.mjs::stationTimeout",
+    "tests/ux/g1/c0-short-film.walk.mjs::stationTimeout",
+    "tests/ux/g1/sweep-c0.mjs::stationTimeout",
+    "tests/ux/g1/sweep-surfaces.mjs::stationTimeout",
+    "tests/ux/g1/sweep-timeline.mjs::stationTimeout",
+    "tests/ux/goal-feature-smoke.e2e.mjs::stationTimeout",
+    "tests/ux/golden-path.e2e.mjs::stationTimeout",
+    "tests/ux/import-reveal.walk.mjs::stationTimeout",
+    "tests/ux/jimeng-web-parameters.e2e.mjs::stationTimeout",
+    "tests/ux/library-category-collapse.walk.mjs::stationTimeout",
+    "tests/ux/library-sync-badge.walk.mjs::stationTimeout",
+    "tests/ux/mcp-connection-truthfulness.walk.mjs::stationTimeout",
+    "tests/ux/mcp-workbuddy-client-profile.walk.mjs::stationTimeout",
+    "tests/ux/media-outcome.walk.mjs::stationTimeout",
+    "tests/ux/model-box-tidy.walk.mjs::stationTimeout",
+    "tests/ux/node-label-outside.e2e.mjs::stationTimeout",
+    "tests/ux/node-label-project-journey.mjs::stationTimeout",
+    "tests/ux/node-params-and-version-pill.walk.mjs::stationTimeout",
+    "tests/ux/node-prompt-presets.walk.mjs::stationTimeout",
+    "tests/ux/pr619-reference-task.walk.mjs::stationTimeout",
+    "tests/ux/pr720-apimart-key.walk.mjs::stationTimeout",
+    "tests/ux/production-flow-fixes.walk.mjs::stationTimeout",
+    "tests/ux/production-shot-claim.paid.mjs::stationTimeout",
+    "tests/ux/project-asset-healthcheck.walk.mjs::stationTimeout",
+    "tests/ux/project-switch-background-run.walk.mjs::stationTimeout",
+    "tests/ux/prompt-library-remote-media.walk.mjs::stationTimeout",
+    "tests/ux/prompt-translate.walk.mjs::stationTimeout",
+    "tests/ux/renderer-failure-diagnostics.walk.mjs::stationTimeout",
+    "tests/ux/resident-composer-receipt-fix.e2e.mjs::stationTimeout",
+    "tests/ux/shot-nodes-lifecycle.e2e.mjs::stationTimeout",
+    "tests/ux/shot-table-storyboard-projection.walk.mjs::stationTimeout",
+    "tests/ux/skill-cover-wall.walk.mjs::stationTimeout",
+    "tests/ux/skill-library-cards.walk.mjs::stationTimeout",
+    "tests/ux/smoke.e2e.mjs::stationTimeout",
+    "tests/ux/stage4-switch.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-film-aspect-passthrough.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-first-frame-false-alarms.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-model-same-name.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-narrow-row.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-strategy-resolve.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-table-exec.walk.mjs::stationTimeout",
+    "tests/ux/storyboard-table-phasec.walk.mjs::stationTimeout",
+    "tests/ux/telemetry-failure-reason.walk.mjs::stationTimeout",
+    "tests/ux/text-document-generation-ownership.test.mjs::stationTimeout",
+    "tests/ux/upgrade-0225-to-0230-open.e2e.mjs::stationTimeout",
+    "tests/ux/vendor-profiles-20260918-paid.e2e.mjs::stationTimeout",
+    "tests/ux/vibing-director.e2e.mjs::stationTimeout",
+    "tests/ux/windows-freeze-sweep.walk.mjs::stationTimeout"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留用户功能、项目与素材，不提交真实生成，不修改账号、密钥或 Cookie。",
+    "共享超时只是安全上限，DOM/资产/任务结果仍是完成判据，不以等待时间作完成证据。",
+    "只迁接 8 个定制站点，不扩大 750 条历史债；已消失的 3 条精确指纹收缩到 747。",
+    "媒体失败先真实出现并取得 proveProbe 证明，恢复后由 expectAbsent 验证持续消失。",
+    "运镜生成结果观察实际画布节点，不通过整页文本中的提示文案假命中。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "tests/ux/_station-budget.mjs",
+    "tests": [
+      "scripts/check-test-waits.node-test.mjs"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "write",
+      "path": "tests/ux/_assert.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/_directorLab.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/_goldenOriginalStoryboard.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/_spendRemainingWalk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-askback-real-model.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-default-model-real.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-dock-dismiss.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-domain-owners.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-draft-not-queued.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-inflight-shots-reload.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-lane-models-block.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-long-chat-real.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-panel-form.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-panel-mechanics.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-question-card.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-queued-shot-not-regenerable.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-queued-shots.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-real-user-conversation.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-runtime-editing.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-runtime-production.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-shot-kind-real.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-confirm-executes.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-generate-remaining.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-long-output-name.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-nonapimart-vendor.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-per-shot-real.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-per-shot.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-priced-card.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-r30.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-real-image.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-stop-midway.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-unknown-price.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-spend-video-landing.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-storyboard-real-model.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-v4-retry-storm.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/agent-video-landing.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/anchor-real-planner.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/asset-audio-upload.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/asset-library-interactions.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/asset-tab-overlap-and-nomi-entry.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/build-artifact-url-migration.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-drop-at-cursor.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-follow-hand/session.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-handles-alt-drag.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-image-aspect.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-open-fit.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-shortcut-parity.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/canvas-spend-policy.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/capability-recipes.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/clip-node-editing.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/cliproxy-config-ui.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/cliproxy-size-warning.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/composer-overlap-and-fast-typing.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-a-blank-storyboard.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-a-creation-plans.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-a-old-project.packaged.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-a-storyboard-undo.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-a-storyboard.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-smoke/fixture.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/creation-plan-delete-undo.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/design-lab-ask-card-in-panel.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/design-lab-question-card-generality.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-assets.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-electron.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-j2-walk-to-b.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-j4-kneel-stand-look.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-j5-splat-valley.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-j6-outputs.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-mobile.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/director-windowbar.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/find-reference.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/actions.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/brain.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb01-two-page-card.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb02-reference-image.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb03-default-models.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb04-script-attachment-long-chat.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb05-pause-resume.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb06-failure-small-window.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb07-failure-kinds.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb07-storyboard-prompt-truth.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb08-cover-card-kind.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb10-node-display-rules.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb90-seedream5.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/full-walk/playbooks/pb91-storyboard-dragon.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/g1/c0-real-budget.node-test.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/g1/c0-real-scheduler.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/g1/c0-short-film.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/g1/sweep-c0.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/g1/sweep-surfaces.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/g1/sweep-timeline.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/goal-feature-smoke.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/golden-path.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/import-reveal.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/jimeng-web-parameters.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/library-category-collapse.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/library-sync-badge.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/mcp-connection-truthfulness.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/mcp-workbuddy-client-profile.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/media-outcome.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/model-box-tidy.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/node-label-outside.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/node-label-project-journey.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/node-params-and-version-pill.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/node-prompt-presets.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/pr619-reference-task.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/pr720-apimart-key.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/production-flow-fixes.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/production-shot-claim.paid.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/project-asset-healthcheck.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/project-switch-background-run.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/prompt-library-remote-media.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/prompt-translate.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/renderer-failure-diagnostics.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/resident-composer-receipt-fix.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/shot-nodes-lifecycle.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/shot-table-storyboard-projection.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/skill-cover-wall.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/skill-library-cards.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/stage4-switch.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-film-aspect-passthrough.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-first-frame-false-alarms.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-model-same-name.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-narrow-row.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-strategy-resolve.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-table-exec.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/storyboard-table-phasec.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/telemetry-failure-reason.walk.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/text-document-generation-ownership.test.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/upgrade-0225-to-0230-open.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/vendor-profiles-20260918-paid.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/vibing-director.e2e.mjs",
+      "symbol": "stationTimeout"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/windows-freeze-sweep.walk.mjs",
+      "symbol": "stationTimeout"
+    }
+  ],
+  "door_reduction": {
+    "before": 127,
+    "after": 134,
+    "why_not": "127→134 是 7 个新纳管模块，另一已用 owner 的模块清掉私有截止时间；保留所有站点和断言。实际 mapDoors 同时读取 HEAD 与工作树。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "tests/ux/_station-budget.mjs",
+      "symbol": "stationTimeout",
+      "responsibility": "定制走查脱离共享等待预算且未证明观测"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "tests/ux/_assert.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/_directorLab.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/_goldenOriginalStoryboard.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/_spendRemainingWalk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-askback-real-model.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-default-model-real.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-dock-dismiss.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-domain-owners.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-draft-not-queued.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-inflight-shots-reload.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-lane-models-block.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-long-chat-real.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-panel-form.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-panel-mechanics.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-question-card.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-queued-shot-not-regenerable.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-queued-shots.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-real-user-conversation.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-runtime-editing.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-runtime-production.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-shot-kind-real.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-confirm-executes.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-generate-remaining.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-long-output-name.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-nonapimart-vendor.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-per-shot-real.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-per-shot.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-priced-card.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-r30.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-real-image.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-stop-midway.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-unknown-price.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-spend-video-landing.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-storyboard-real-model.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-v4-retry-storm.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/agent-video-landing.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/anchor-real-planner.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/asset-audio-upload.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/asset-library-interactions.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/asset-tab-overlap-and-nomi-entry.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/build-artifact-url-migration.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-drop-at-cursor.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-follow-hand/session.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-handles-alt-drag.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-image-aspect.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-open-fit.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-shortcut-parity.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/canvas-spend-policy.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/capability-recipes.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/clip-node-editing.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/cliproxy-config-ui.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/cliproxy-size-warning.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/composer-overlap-and-fast-typing.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/core-a-blank-storyboard.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/core-a-creation-plans.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/core-a-old-project.packaged.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/core-a-storyboard-undo.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/core-a-storyboard.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/core-smoke/fixture.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/creation-plan-delete-undo.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/design-lab-ask-card-in-panel.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/design-lab-question-card-generality.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-assets.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-electron.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-j2-walk-to-b.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-j4-kneel-stand-look.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-j5-splat-valley.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-j6-outputs.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-mobile.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/director-windowbar.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/find-reference.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/actions.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/brain.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb01-two-page-card.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb02-reference-image.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb03-default-models.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb04-script-attachment-long-chat.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb05-pause-resume.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb06-failure-small-window.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb07-failure-kinds.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb07-storyboard-prompt-truth.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb08-cover-card-kind.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb10-node-display-rules.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb90-seedream5.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/full-walk/playbooks/pb91-storyboard-dragon.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/g1/c0-real-budget.node-test.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/g1/c0-real-scheduler.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/g1/c0-short-film.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/g1/sweep-c0.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/g1/sweep-surfaces.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/g1/sweep-timeline.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/goal-feature-smoke.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/golden-path.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/import-reveal.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/jimeng-web-parameters.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/library-category-collapse.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/library-sync-badge.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/mcp-connection-truthfulness.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/mcp-workbuddy-client-profile.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/media-outcome.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/model-box-tidy.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/node-label-outside.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/node-label-project-journey.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/node-params-and-version-pill.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/node-prompt-presets.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/pr619-reference-task.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/pr720-apimart-key.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/production-flow-fixes.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/production-shot-claim.paid.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/project-asset-healthcheck.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/project-switch-background-run.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/prompt-library-remote-media.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/prompt-translate.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/renderer-failure-diagnostics.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/resident-composer-receipt-fix.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/shot-nodes-lifecycle.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/shot-table-storyboard-projection.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/skill-cover-wall.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/skill-library-cards.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/smoke.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/stage4-switch.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-film-aspect-passthrough.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-first-frame-false-alarms.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-model-same-name.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-narrow-row.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-strategy-resolve.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-table-exec.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/storyboard-table-phasec.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/telemetry-failure-reason.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/text-document-generation-ownership.test.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/upgrade-0225-to-0230-open.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/vendor-profiles-20260918-paid.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/vibing-director.e2e.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "tests/ux/windows-freeze-sweep.walk.mjs",
+      "entry_point": "stationTimeout",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "tests/ux/_station-budget.mjs",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "复用仓库现有 owner，并用真实源文件和正反向回归约束，不给具体入口增加豁免。",
+    "artifacts": [
+      "scripts/check-test-waits.node-test.mjs",
+      "scripts/station-waits-baseline.json",
+      "tests/ux/capability-recipes.e2e.mjs",
+      "tests/ux/cliproxy-config-ui.walk.mjs",
+      "tests/ux/cliproxy-size-warning.walk.mjs",
+      "tests/ux/goal-feature-smoke.e2e.mjs",
+      "tests/ux/jimeng-web-parameters.e2e.mjs",
+      "tests/ux/media-outcome.walk.mjs",
+      "tests/ux/smoke.e2e.mjs",
+      "tests/ux/vibing-director.e2e.mjs",
+      "tests/ux/canvas-performance-benchmark.e2e.mjs",
+      "tests/ux/b1-camera-move.walk.mjs"
+    ]
+  },
+  "regression_tests": [
+    "scripts/check-test-waits.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/check-test-waits.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用锁定依赖，没有升级或新增三方依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

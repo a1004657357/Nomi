@@ -23,15 +23,20 @@ export const NODE_KIND_DEFAULT_SIZE: Record<string, { width: number; height: num
   clip: { width: 760, height: 132 },
   shot: { width: 340, height: 230 },
   output: { width: 280, height: 170 },
+  compare: { width: 520, height: 360 },
+  skill: { width: 380, height: 360 },
   panorama: { width: 480, height: 270 },
+  scene3d: { width: 480, height: 320 },
+  vibingDirector: { width: 500, height: 340 },
   director: { width: 480, height: 320 },
   whiteboard: { width: 320, height: 240 },
   model3d: { width: 320, height: 300 },
+  resource: { width: 300, height: 220 },
   asset: { width: 340, height: 280 },
   'agent-artifact': { width: 360, height: 260 },
 }
 
-/** per-kind 英文默认标题（镜像 registry.defaultTitle；locale 版在渲染层 i18n，headless 用英文回退）。 */
+/** per-kind 默认标题（镜像 registry.defaultTitle；headless 工厂存空标题，由渲染层本地化）。 */
 export const NODE_KIND_DEFAULT_TITLE: Record<string, string> = {
   shot_table: 'Shot Table',
   text: 'Text',
@@ -50,6 +55,11 @@ export const NODE_KIND_DEFAULT_TITLE: Record<string, string> = {
   model3d: '3D Model',
   asset: 'Asset',
   'agent-artifact': 'Agent Artifact',
+  compare: '图像对比',
+  skill: '技能',
+  resource: '创作资源',
+  scene3d: '3D导演台',
+  vibingDirector: 'VIBING Director',
 }
 
 /** Persisted canvas kind registry. Every reader and writer uses this list. */
@@ -66,9 +76,6 @@ const FALLBACK_SIZE = { width: 340, height: 280 }
 // 足迹自带余量即是间距，单插避让与批量布局共用同一足迹。
 export const NODE_RENDER_SAFETY = 64
 
-// 占镜号的 kind 集合（镜像 src shotNumbering SHOT_NUMBERED_KINDS）。
-const SHOT_NUMBERED_KINDS = new Set(['image', 'video', 'shot', 'keyframe'])
-
 /** per-kind 默认尺寸（缺省兜底）。 */
 export function nodeKindDefaultSize(kind: string): { width: number; height: number } {
   return NODE_KIND_DEFAULT_SIZE[kind] ?? FALLBACK_SIZE
@@ -80,7 +87,7 @@ export function nodeKindFootprint(kind: string, size?: { width: number; height: 
   return { width: base.width + NODE_RENDER_SAFETY, height: base.height + NODE_RENDER_SAFETY }
 }
 
-/** per-kind 默认标题（英文回退）。 */
+/** per-kind 默认标题（registry 回退）。 */
 export function nodeKindDefaultTitle(kind: string): string {
   return NODE_KIND_DEFAULT_TITLE[kind] ?? kind
 }
@@ -95,8 +102,11 @@ export function nodeKindDefaultCategory(kind: string): string {
       return 'cast'
     case 'scene':
     case 'panorama':
+    case 'scene3d':
+    case 'vibingDirector':
     case 'director':
     case 'model3d':
+    case 'resource':
       return 'scene'
     case 'audio':
       return 'audio'
@@ -105,22 +115,5 @@ export function nodeKindDefaultCategory(kind: string): string {
   }
 }
 
-/**
- * 是否占镜号（镜像 src isShotNumberedNode）：仅「shots 分类里的 image/video/shot/keyframe」占号，
- * 且排除参考卡（meta.referenceSheet）与首帧图（meta.storyboardKeyframe）——它们不领独立镜号。
- */
-export function nodeKindIsShotNumbered(node: { kind: string; categoryId?: string; meta?: Record<string, unknown> }): boolean {
-  const meta = node.meta as Record<string, unknown> | undefined
-  if (meta && meta.referenceSheet === true) return false
-  if (meta && meta.storyboardKeyframe === true) return false
-  return (node.categoryId ?? 'shots') === 'shots' && SHOT_NUMBERED_KINDS.has(node.kind)
-}
-
-/** 下一个可用镜号（max+1，1-based；镜像 src nextShotIndex）。 */
-export function nodeKindNextShotIndex(existing: readonly { shotIndex?: number }[]): number {
-  let max = 0
-  for (const node of existing) {
-    if (typeof node.shotIndex === 'number' && node.shotIndex > max) max = node.shotIndex
-  }
-  return max + 1
-}
+// Reuse the domain owner; headless creation must not mirror renderer numbering.
+export { isShotNumberedNode as nodeKindIsShotNumbered, nextShotIndex as nodeKindNextShotIndex } from '../shared/canvas/shotNumbering'

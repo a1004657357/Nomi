@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { APICallError } from "ai";
 import { describeAgentError, describeEmptyAgentReply } from "./agentError";
+import { matchNomiErrorCode } from "../shared/nomiErrorCodes";
 import { parseVendorErrorFromMessage, stripVendorErrorMarker } from "../../src/workbench/generationCanvas/runner/vendorErrorIpc";
 
 function apiError(opts: { statusCode?: number; responseBody?: string; message?: string }): APICallError {
@@ -71,6 +72,7 @@ describe("describeEmptyAgentReply", () => {
       agentNote: "Moonshot v1 series truncates tool-call argument JSON mid-stream.",
     });
     // Names the cause (length cap / truncation) ...
+    expect(matchNomiErrorCode(out)).toBe("output-truncated");
     expect(out).toMatch(/长度|截断/);
     // ... carries the model name ...
     expect(out).toContain("moonshot-v1-128k-vision-preview");

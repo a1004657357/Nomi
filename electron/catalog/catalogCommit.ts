@@ -406,6 +406,15 @@ export function deriveVendorKeyFromBaseUrl(baseUrl: string): string {
   }
   const host = parsed.hostname;
   const port = parsed.port;
+  // Subscription products can share a host with a different pay-as-you-go API
+  // but use a separate credential and protocol. They must never overwrite each
+  // other's vendor record merely because the hostname is the same.
+  if (host === "ark.cn-beijing.volces.com" && parsed.pathname.replace(/\/+$/, "").toLowerCase().startsWith("/api/plan")) {
+    return "volcengine-agent-plan";
+  }
+  if (host === "api.kimi.com" && parsed.pathname.replace(/\/+$/, "").toLowerCase().startsWith("/coding")) {
+    return "kimi-code";
+  }
   // 内置认得的 host → 直接复用内置 vendorKey，别再按 hostname 另造一个。
   // 不这么做的话，走向导接入火山方舟会造出 `ark-cn-beijing-volces-com`，与内置种子的 `volcengine`
   // 各占一个柜子：向导那半个一条内置 mapping 都拿不到，Seedream/Seedance 全退回通用最小模板
@@ -528,7 +537,7 @@ export function draftShapeForKind(
       mappingCreate: t.create,
       // 图生视频通道：不注册它，连了参考图/首帧的视频节点会被 imageEditGuardError 拒发（「没有配置
       // 图生视频通道」）——中转接入的视频模型此前一律缺这条。
-      ...(t.imageToVideo ? { mappingImageToVideo: t.imageToVideo } : {}),
+      ...(t.imageToVideo ? { mappingImageToVideo: t.imageToVideo.create } : {}),
       ...(t.query ? { mappingQuery: t.query } : {}),
     };
   }
@@ -655,7 +664,15 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
       request: preview,
     };
   }
-  const executed = await executeProfileOperation({ vendor, model, apiKey, request, operation, providerMeta, stage });
+  const executed = await executeProfileOperation({
+    vendor,
+    model,
+    apiKey,
+    request,
+    operation,
+    providerMeta,
+    stage,
+  });
   const normalized = await buildProfileTaskResult({
     response: executed.response,
     mapping,

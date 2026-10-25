@@ -4,10 +4,12 @@
 // 走真模型、花真额度，把同一句话在「通用」和自定义提示词下各跑一次做**对照**。
 // 没有对照组的话，模型碰巧写得像口播稿，也会被当成「提示词生效了」（假绿）。
 //
-// 凭据：从用户真实 userData 复制 model-catalog.json 到隔离目录 —— 用真 key，
+// 凭据：从用户真实 userData 复制 model-catalog.json（Windows 还有 Local State 钥匙）到隔离目录 —— 用真 key，
 // 但绝不往用户正式配置里写我的测试提示词。
 import { launchNomiApp } from './_launchApp.mjs'
+import { realNomiProfile, seedRealCredentials } from './_realProfile.mjs'
 import { expectVisible, expectCount, scopedText, screenshotSettled } from './_assert.mjs'
+import { openSystemPromptEditor } from './_systemPromptEditor.mjs'
 import {
   COMPOSER_INPUT, COMPOSER_SEND, COMPOSER_SKILL, CREATION_PANEL, SKILL_POPOVER, SKILL_SEARCH,
   V4_FLOW, waitForV4TurnIdle,
@@ -20,17 +22,18 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-r16-'))
 const settingsDir = path.join(tempRoot, 'settings')
+const userDataDir = path.join(tempRoot, 'user-data')
 const projectsDir = path.join(tempRoot, 'projects')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/custom-prompt-realtask')
 fs.mkdirSync(settingsDir, { recursive: true })
 fs.mkdirSync(shotsDir, { recursive: true })
 
-const REAL_CATALOG = path.join(os.homedir(), 'Library/Application Support/Nomi/model-catalog.json')
+const REAL_CATALOG = realNomiProfile().catalogPath
 if (!fs.existsSync(REAL_CATALOG)) {
   console.error(`拿不到真实模型目录：${REAL_CATALOG}\n没有真凭据就跑不了真任务——这条不能用假绿糊过去。`)
   process.exit(1)
 }
-fs.copyFileSync(REAL_CATALOG, path.join(settingsDir, 'model-catalog.json'))
+seedRealCredentials({ settingsDir, userDataDir })
 
 const projDir = path.join(projectsDir, 'r16-0001')
 fs.mkdirSync(path.join(projDir, '.nomi'), { recursive: true })
@@ -63,7 +66,7 @@ const CUSTOM_PROMPT = [
 
 const ASK = '给这个保温杯写一段口播'
 
-const { app, win } = await launchNomiApp({ name: 'r16-custom-prompt', tempRoot, settingsDir, projectsDir, settleMs: 1500 })
+const { app, win } = await launchNomiApp({ name: 'r16-custom-prompt', tempRoot, userDataDir, settingsDir, projectsDir, settleMs: 1500 })
 
 const findings = []
 const record = (name, ok, detail) => {
@@ -140,16 +143,13 @@ try {
   record('对照组拿到真实产出', baseline.length > 40, `通用模式下模型回了 ${baseline.length} 字（真模型、真额度）`)
 
   // ── 新建自定义提示词 ──
-  await win.evaluate(() => window.dispatchEvent(new CustomEvent('nomi-open-settings', { detail: { tab: 'ai' } })))
-  const heading = win.getByText('系统提示词', { exact: true }).first()
-  // 设置面板异步挂载：等标题出现，别拿 sleep 赌（赌短了后面 click「新建」直接抛，整轮真额度白花）。
-  await expectVisible(heading, '设置 → AI 里找不到「系统提示词」区')
-  await heading.scrollIntoViewIfNeeded().catch(() => {})
-  // Scope the action to the settings prompt section. A generic "新建" query
+  // 编辑器住在 Agent 面板的权限弹层里（2026-09-14 搬家）：像真人一样点过去。
+  await openSystemPromptEditor(win)
+  // Scope the action to the prompt editor. A generic "新建" query
   // can resolve to the always-mounted creation toolbar behind the modal and
   // make Playwright report a false interaction failure.
   const newChip = win.locator('[data-settings-prompt-create]').first()
-  await expectVisible(newChip, '设置页里找不到「新建」自定义提示词的入口')
+  await expectVisible(newChip, '提示词编辑器里找不到「新建」自定义提示词的入口')
   await newChip.click()
   const nameInput = win.locator('[data-settings-field="system-prompt-name"]').first()
   // 名字输入框出现 = 真的进了「新建一条」的状态，可以往里填了。

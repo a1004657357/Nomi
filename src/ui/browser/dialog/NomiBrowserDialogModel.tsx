@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import React from 'react'
+import React, { type JSX } from 'react'
 import i18n from '../../../i18n'
 import { IconBrowser, IconBrush, IconPalette, IconWorld } from '../../../vendor/tablerIcons'
 import type { DesktopBrowserAssetOverlayCaptureRequest, DesktopBrowserPromptCaptureEvent, DesktopBrowserResourceCaptureEvent, DesktopBrowserViewBounds } from '../../../desktop/bridge'
@@ -12,6 +12,8 @@ export type NomiBrowserDialogProps = {
   opened: boolean
   onClose: () => void
 }
+
+export type BrowserWorkspaceMode = 'side' | 'full'
 
 export type BrowserTab = {
   id: string
@@ -76,6 +78,11 @@ export type BrowserCaptureFlyout = {
 
 export const TAB_LIMIT = 30
 export const BOOKMARKS_STORAGE_KEY = 'nomi.browser.bookmarks.v1'
+export const BROWSER_WORKSPACE_MODE_STORAGE_KEY = 'nomi.browser.workspace-mode.v1'
+export const BROWSER_SIDE_WIDTH_STORAGE_KEY = 'nomi.browser.side-width.v1'
+export const BROWSER_SIDE_DEFAULT_WIDTH = 860
+export const BROWSER_SIDE_MIN_WIDTH = 560
+export const BROWSER_SIDE_MAX_WIDTH_RATIO = 0.78
 export const CAPTURE_FLYOUT_MAX_WIDTH = 220
 export const CAPTURE_FLYOUT_MAX_HEIGHT = 160
 export const CAPTURE_FLYOUT_TARGET_WIDTH = 96
@@ -99,6 +106,8 @@ export const DEFAULT_BOOKMARKS: BrowserBookmark[] = [
 ]
 
 export const MATERIAL_SITE_SHORTCUTS = [
+  { name: 'ChatGPT 图像', url: 'https://chatgpt.com/images/' },
+  { name: '即梦 Web', url: 'https://jimeng.jianying.com/ai-tool/image/generate' },
   { name: 'pinterest', url: 'https://www.pinterest.com/' },
   { name: 'film-grab', url: 'https://film-grab.com/' },
   { name: 'genery', url: 'https://genery.io/' },
@@ -108,17 +117,20 @@ export const MATERIAL_SITE_SHORTCUTS = [
 // 创作参考类快捷站点——空态页网格。8 张卡是最舒服的 4×2 密度：太少显得空，太多变站点堆。
 // label/labelKey：拉丁站名直接显示；小红书等需本地化的走 labelKey。hintKey 恒为 i18n 键，渲染处 t()。
 export type BrowserStartShortcut = {
-  label: string
-  labelKey?: string
   url: string
   hintKey: string
-}
+} & (
+  | { label: string; labelKey?: never }
+  | { labelKey: string; label?: never }
+)
 export const BROWSER_START_SHORTCUTS: readonly BrowserStartShortcut[] = [
+  { label: 'ChatGPT Images', url: 'https://chatgpt.com/images/', hintKey: 'browserAssets.sites.chatgptHint' },
+  { labelKey: "canvasComponents.jimengWeb", url: 'https://jimeng.jianying.com/ai-tool/image/generate', hintKey: 'browserAssets.sites.jimengHint' },
   { label: 'Pinterest', url: 'https://www.pinterest.com/', hintKey: 'browserAssets.sites.pinterestHint' },
   { label: 'Behance', url: 'https://www.behance.net/', hintKey: 'browserAssets.sites.behanceHint' },
   { label: 'Dribbble', url: 'https://dribbble.com/', hintKey: 'browserAssets.sites.dribbbleHint' },
   { label: 'ArtStation', url: 'https://www.artstation.com/', hintKey: 'browserAssets.sites.artstationHint' },
-  { label: 'Xiaohongshu', labelKey: 'browserAssets.sites.xiaohongshu', url: 'https://www.xiaohongshu.com/', hintKey: 'browserAssets.sites.xiaohongshuHint' },
+  { labelKey: 'browserAssets.sites.xiaohongshu', url: 'https://www.xiaohongshu.com/', hintKey: 'browserAssets.sites.xiaohongshuHint' },
   { label: 'YouTube', url: 'https://www.youtube.com/', hintKey: 'browserAssets.sites.youtubeHint' },
   { label: 'Film Grab', url: 'https://film-grab.com/', hintKey: 'browserAssets.sites.filmGrabHint' },
   { label: 'X', url: 'https://x.com/', hintKey: 'browserAssets.sites.xHint' },
@@ -154,6 +166,29 @@ export function createBlankTab(): BrowserTab {
     canGoForward: false,
     loading: false,
   }
+}
+
+export function readBrowserWorkspaceMode(): BrowserWorkspaceMode {
+  if (typeof window === 'undefined') return 'side'
+  return window.localStorage.getItem(BROWSER_WORKSPACE_MODE_STORAGE_KEY) === 'full' ? 'full' : 'side'
+}
+
+export function writeBrowserWorkspaceMode(mode: BrowserWorkspaceMode): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(BROWSER_WORKSPACE_MODE_STORAGE_KEY, mode)
+}
+
+export function readBrowserSideWidth(): number {
+  if (typeof window === 'undefined') return BROWSER_SIDE_DEFAULT_WIDTH
+  const value = Number(window.localStorage.getItem(BROWSER_SIDE_WIDTH_STORAGE_KEY))
+  return Number.isFinite(value) && value >= BROWSER_SIDE_MIN_WIDTH
+    ? Math.round(value)
+    : BROWSER_SIDE_DEFAULT_WIDTH
+}
+
+export function writeBrowserSideWidth(width: number): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(BROWSER_SIDE_WIDTH_STORAGE_KEY, String(Math.round(width)))
 }
 
 export function readBookmarks(): BrowserBookmark[] {

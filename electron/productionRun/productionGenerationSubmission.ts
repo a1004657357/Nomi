@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import { requestedImageSizeFromBody } from "../review/imageSizeSpecification";
+import { findGenerationExecutionJob, readGenerationExecution } from "./productionGenerationHistory";
+import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 import path from "node:path";
 
 import {
@@ -13,11 +16,15 @@ import {
   productionGenerationJobId,
   productionGenerationProviderIdempotencyKey,
 } from "./productionGenerationAuthorization";
+import { nextGenerationAttempt } from "./prepareProductionGenerationAuthorization";
+import { authorizationGateForJob } from "../shared/productionSpendAuthority";
+import { DispatchConsentLapsedError, dispatchConsentOpen } from "../shared/productionDispatchConsent";
 import { createProductionRunRuntimeEnvelope } from "./productionRunRuntimeEnvelope";
 import { createProductionRunIntentLog } from "./productionRunIntentLog";
 import { productionRunPaths } from "./productionRunPaths";
 import { createProductionRunLock } from "./productionRunLock";
 import type { ProductionRunRepository } from "./productionRunRepository";
+import { isTransportLevelFailure, outboundRequestWasNeverWritten } from "../outboundDispatchEvidence";
 import {
   SubmissionNotDispatchedError,
   SubmissionReceiptUnknownError,
@@ -100,14 +107,17 @@ export type ProductionGenerationSubmissionDependencies = {
   projectRoot: string;
   immutableProjectUuid: string;
   projectGeneration: number;
-  projectRevision: number;
   intentMacKey: string | NodeJS.TypedArray;
   provider?: GenerationProvider;
   providers?: readonly GenerationProvider[];
   now?: () => string;
   runtimeTaskId?: (input: { runId: string; contractHash: string; attempt?: number }) => string;
   afterProviderAcceptance?: (input: { providerTaskId: string; run: ProductionRun }) => void | Promise<void>;
-  beforeDispatch?: (input: { run: ProductionRun; job: ProductionJob }) => void | Promise<void>;
+  /**
+   * 派发准入闸（生产里是镜头认领闸）。由提交 outbox 在这次尝试的第一笔耐久写（预留 / 提交意向）之前调用，
+   * 看到的是还没落盘的 job；抛错 = 这一镜这次不提交，什么都没写（见 `SubmissionOutboxDependencies.beforeDispatch`）。
+   */
+  beforeDispatch: (input: { run: ProductionRun; job: ProductionJob }) => void | Promise<void>;
   /** Asset store owns bytes, identity and leases; the submission seam only commits its returned receipt. */
   materializeOutput?: (input: {
     projectId: string;
@@ -117,7 +127,8 @@ export type ProductionGenerationSubmissionDependencies = {
     contract: ExecutionContractV1;
     providerTaskId: string;
     output: GenerationProviderOutput;
-  }) => Promise<Pick<ProductionArtifact, "artifactId" | "kind" | "contentHash" | "projectRelativePath" | "thumbnailRelativePath">>;
+    expectedImageSize?: string;
+  }) => Promise<Pick<ProductionArtifact, "artifactId" | "kind" | "contentHash" | "projectRelativePath" | "thumbnailRelativePath" | "width" | "height">>;
 };
 
 function stableJson(value: unknown): string {
@@ -149,9 +160,9 @@ function requiredRun(repository: ProductionRunRepository, projectId: string, run
 
 /**
  * P4 S1: resolve the sub-contract this call addresses.
- * - No shotId → the default (single) shot: top-level plan contract + plan-level receipt (today's chain).
- * - shotId → that shot's sealed sub-contract + the shot's own receipt approval.
- * Either way the plan must be sealed/submitted and the addressed unit must be approved before submit.
+ * - No shotId → the default (single) shot: the top-level plan contract.
+ * - shotId → that shot's sealed sub-contract.
+ * 批没批准不在这里判：派发前 `prepareAuthorizedSubmission` 核「批这个 job 的那道门」（唯一判据），这里只要合同在。
  */
 function requiredContract(run: ProductionRun, shotId?: string): ExecutionContractV1 {
   const plan = run.generationPlan;
@@ -160,23 +171,28 @@ function requiredContract(run: ProductionRun, shotId?: string): ExecutionContrac
   }
   if (shotId) {
     const shot = (plan.shots ?? []).find((candidate) => candidate.shotId === shotId);
-    if (!shot?.contract || !shot.approvedReceiptId) throw new Error("Seal and confirm the generation plan before starting");
+    if (!shot?.contract) throw new Error("Seal and confirm the generation plan before starting");
     return shot.contract;
   }
-  if (!plan.contract || !plan.approvedReceiptId) throw new Error("Seal and confirm the generation plan before starting");
+  if (!plan.contract) throw new Error("Seal and confirm the generation plan before starting");
   return plan.contract;
 }
 
 /**
+ * 「这次提交要发的是第几次尝试」**只有一个 owner**：`nextGenerationAttempt`（按 `metadata.shotId`
+ * 数这一镜已有的 attempt）。授权在 job 落盘**之前**问它，拿到 `max + 1`；提交在 job 落盘**之后**问，
+ * 要的就是那一条，于是 `- 1`。
+ *
+ * 这里原本另有一份 `latestGenerationAttempt`，按 jobId 前缀（含 contractHash）去数。它今天给的答案
+ * 和这条一样，但口径不同：换了参数就换 contractHash，于是它对「同一镜的第几次」这个问题的回答
+ * 会从头开始。一个语义两个推导式、两边都不报错 —— 那正是要收掉的形状（P1/R14.1）。
+ *
  * P4 S1 identity: shotId is part of the jobId so two shots with identical parameters (equal contract
  * hash) never collide. The default shot keeps the legacy prefix (`generation-<run>-<hash16>`) so
  * durable Runs and single-shot callers are byte-compatible; a named shot inserts `-<shotId>` after it.
  */
-function latestGenerationAttempt(run: ProductionRun, contractHash: string, shotId?: string): number {
-  const prefix = productionGenerationJobId(run.runId, contractHash, 1, shotId).replace(/-attempt-\d+$/, "");
-  return run.jobs
-    .filter((job) => job.jobId === prefix || job.jobId.startsWith(`${prefix}-attempt-`))
-    .reduce((latest, job) => Math.max(latest, job.attempt), 0);
+export function addressedGenerationAttempt(run: ProductionRun, shotId?: string): number {
+  return Math.max(1, nextGenerationAttempt(run, shotId) - 1);
 }
 
 function envelopeRefFor(runId: string, jobId: string): string {
@@ -190,28 +206,14 @@ type ProviderPollStatusClass = "pending" | "succeeded" | "failed" | "unknown";
  * must only advance a job for a status that is explicitly known to be pending,
  * successful, or failed.  Treating an unrecognised verb as success is unsafe
  * (it can materialize an incomplete output); treating it as pending is worse
- * (the observer can spin forever).  Keep this allow-list broad enough for the
- * shipped provider mappings, but fail closed for anything new.
+ * (the observer can spin forever).  The vocabulary itself lives in exactly one
+ * place (shared/taskStatus, #1213) — engine A asks the same table.
  */
-const PROVIDER_STATUS_CLASSES: Readonly<Record<ProviderPollStatusClass, ReadonlySet<string>>> = {
-  pending: new Set([
-    "submitted", "waiting", "queuing", "queued", "pending", "create", "created",
-    "processing", "generating", "running", "in_progress", "in-progress", "in_queue",
-    "queueing", "not_start", "notstart", "starting", "started", "downloading", "validating",
-  ]),
-  succeeded: new Set(["completed", "complete", "succeeded", "succeed", "success", "done"]),
-  failed: new Set([
-    "failed", "fail", "failure", "error", "cancelled", "canceled", "cancel", "rejected",
-    "refused", "expired", "aborted", "timeout", "timed_out", "revoked",
-  ]),
-  unknown: new Set(),
-};
-
 function classifyProviderStatus(status: string): ProviderPollStatusClass {
-  const normalized = status.trim().toLowerCase();
-  if (PROVIDER_STATUS_CLASSES.pending.has(normalized)) return "pending";
-  if (PROVIDER_STATUS_CLASSES.succeeded.has(normalized)) return "succeeded";
-  if (PROVIDER_STATUS_CLASSES.failed.has(normalized)) return "failed";
+  const cls = classifyUpstreamTaskStatus(status);
+  if (cls === "queued" || cls === "running") return "pending";
+  if (cls === "succeeded") return "succeeded";
+  if (cls === "failed" || cls === "cancelled") return "failed";
   return "unknown";
 }
 
@@ -313,39 +315,45 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     envelope: ReturnType<typeof createProductionRunRuntimeEnvelope>;
     approvalId: string;
     authorizationDigest: string;
-    costCeiling: number;
+    /** `null` = 目录算不出价（2026-09-21 开闸）。绝不是 0 元。 */
+    costCeiling: number | null;
     currency: string;
     expectedProviderRequestHash: string;
     preparedProviderRequest: unknown;
   } {
     let current = run;
     const plan = current.generationPlan;
-    const authorizationEnvelope = plan?.authorizationEnvelope;
-    const authorizationDigest = plan?.authorizationDigest;
-    const gateId = plan?.authorizationGateId;
-    if (!plan || !authorizationEnvelope || !authorizationDigest || !gateId) {
+    const existingJob = current.jobs.find((job) => job.jobId === jobId);
+    // 批这个 job 的**那一道门**（每点一次一份授权，信封住在门上）。不是计划上某一份：那一份已删——它让排在前面、
+    // 已经批过的镜在下一次批准时失去授权，也让「只批这一镜」只能靠把别的镜移出这一批来实现（2026-09-30）。
+    const gate = existingJob ? authorizationGateForJob(current, existingJob) : undefined;
+    const authorizationEnvelope = gate?.authorizationEnvelope;
+    const authorizationDigest = gate?.authorizationDigest;
+    const gateId = gate?.gateId;
+    if (!plan || !existingJob || !gate || !authorizationEnvelope || !authorizationDigest || !gateId) {
       throw new Error("This generation Run has no sealed paid authorization; it is read-only until re-planned");
     }
     if (
+      // 派发时核的是「还是不是那个项目、那一个 Run、批它的那一道门」。**不核活的项目文档版本、也不核活的计划版本**：
+      // 批准那一刻它们是前提（收据只对当时的版本有效，见 productionRunApprovalReceipt.assertCurrentProjectRevision），
+      // 批准之后项目照常会变——Nomi 自己把占位和参考卡结果落到画布上、用户在卡上改下一镜，都会让它们前进。以前这里要求
+      // 派发时它们仍等于封信封时的值，于是定妆照检查点放行、急停后继续、重开项目这些「批准之后过一会儿才派」的路一律报
+      // 「Generation authorization no longer matches」，视频镜永远排队（2026-09-29 用户实见）。发出去的请求本身已由
+      // 合同哈希、线上报文哈希、幂等键逐字钉死（下面那组比对），文档和计划怎么变都改不了它。
       authorizationEnvelope.immutableProjectUuid !== deps.immutableProjectUuid
       || authorizationEnvelope.projectGeneration !== deps.projectGeneration
-      || authorizationEnvelope.projectRevision !== deps.projectRevision
       || authorizationEnvelope.projectId !== current.projectId
       || authorizationEnvelope.runId !== current.runId
-      || authorizationEnvelope.planVersion !== current.planVersion
       || authorizationEnvelope.gateId !== gateId
     ) {
       throw new Error("Generation authorization no longer matches the current project or Run");
     }
     const authorized = authorizationEnvelope.jobs.find((job) => job.jobId === jobId);
-    const existingJob = current.jobs.find((job) => job.jobId === jobId);
-    const gate = current.gates.find((candidate) => candidate.gateId === gateId);
     const approvalId = `approval:${gateId}`;
     const approval = deps.repository.readApprovals(current.projectId, current.runId)
       .find((candidate) => candidate.approvalId === approvalId);
     if (
       !authorized
-      || !existingJob
       || authorized.attempt !== attempt
       || authorized.contractHash !== contract.contractHash
       || authorized.providerId !== contract.providerId
@@ -353,11 +361,9 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       || authorized.providerIdempotencyKey !== productionGenerationProviderIdempotencyKey(current.runId, contract.contractHash, attempt, shotId)
       || existingJob.authorizationDigest !== authorizationDigest
       || existingJob.providerIdempotencyKey !== authorized.providerIdempotencyKey
-      || !gate
       || gate.status !== "approved"
-      || gate.authorizationDigest !== authorizationDigest
       || gate.planHash !== authorizationDigest
-      || gate.receiptId !== plan.approvedReceiptId
+      || !gate.receiptId
       || !approval
       || approval.authorizationDigest !== authorizationDigest
       || approval.planHash !== authorizationDigest
@@ -366,15 +372,18 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     ) {
       throw new Error("Generation submission is not covered by the approved Run authorization");
     }
-    if (Date.parse(now()) >= Date.parse(authorizationEnvelope.expiresAt)) {
-      throw new Error("Generation authorization has expired");
-    }
+    // 「现在派出去还算不算用户同意过」只有一个判据（付费卡① 第 13 条，`productionDispatchConsent`）：离他最近一次点头
+    // ——批准这一镜，或之后放行形象、停下后点「继续」——不超过同意窗口。以前这里拿信封封好那一刻起的 10 分钟判，
+    // 于是放行形象、急停后继续、第二天重开这些「批准之后过一会儿才派」的路永远派不出去，镜头一直「排队中」。
+    // 过了窗口 = 没有人替他续：这一镜不派，调度器接住这个错，批次如实停下等他再点一次（不是失败）。
+    if (!dispatchConsentOpen(gate, now())) throw new DispatchConsentLapsedError(gateId, jobId);
 
     // This is the last zero-side-effect check. If provider serialization drifted since the gate,
     // nothing below (Run events, ledger, intents, runtime envelope or provider) is touched.
     const providerPreparation = adapter.prepareAuthorization({
       contract,
       providerIdempotencyKey: authorized.providerIdempotencyKey,
+      referenceUrls: authorized.referenceUrls,
     });
     if (providerPreparation.providerRequestHash !== authorized.providerWirePayloadHash) {
       throw new Error("Provider wire payload no longer matches the approved authorization");
@@ -403,6 +412,7 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       providerIdempotencyKey: binding.providerIdempotencyKey,
       requestFingerprint: binding.requestFingerprint,
       request: resolved,
+      expectedImageSize: requestedImageSizeFromBody(providerPreparation.providerRequest),
     });
     return {
       run: current,
@@ -420,12 +430,16 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     const shotId = input.shotId;
     let run = requiredRun(deps.repository, input.projectId, input.operationId);
     const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
+    const attempt = input.attempt ?? addressedGenerationAttempt(run, shotId);
     if (!Number.isInteger(attempt) || attempt < 1) throw new Error("Generation attempt is invalid");
     let jobId = productionGenerationJobId(run.runId, contract.contractHash, attempt, shotId);
     const existingJob = run.jobs.find((job) => job.jobId === jobId);
+    // 没有任何一份授权（门）盖着的旧 job 只能看、不能再发：它的那一轮授权已经不在了。
+    if (existingJob && !authorizationGateForJob(run, existingJob)) {
+      throw new Error("Historical generation execution is observation-only");
+    }
     if (existingJob?.status === "provider_accepted" && existingJob.providerTaskId) {
-      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, "plan-submit");
+      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, `plan-submit:v${run.planVersion}`);
       return { operationId: run.runId, runId: run.runId, jobId, providerTaskId: existingJob.providerTaskId, attempt, nextAction: "observe" };
     }
     if (existingJob && ["submission_unknown", "reconciling", "needs_attention", "cancel_requested"].includes(existingJob.status)) {
@@ -436,7 +450,7 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       run = requiredRun(deps.repository, input.projectId, input.operationId);
       const lockedContract = requiredContract(run, shotId);
       if (lockedContract.contractHash !== contract.contractHash) throw new Error("Generation contract changed while waiting for the Run lock");
-      const lockedAttempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, lockedContract.contractHash, shotId));
+      const lockedAttempt = input.attempt ?? addressedGenerationAttempt(run, shotId);
       jobId = productionGenerationJobId(run.runId, lockedContract.contractHash, lockedAttempt, shotId);
       const prepared = prepareAuthorizedSubmission(run, lockedContract, jobId, lockedAttempt, lease.fencingEpoch, shotId);
       run = prepared.run;
@@ -451,6 +465,11 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
         beforeDispatch: async (dispatchInput) => {
           await deps.beforeDispatch?.({ run: dispatchInput.run, job: dispatchInput.job });
         },
+        // 供应商档案真声明了幂等（并把键带到请求上）才允许在「结果未知」后用同一个键重发一次；
+        // 目前没有任何生产供应商声明（APIMart 明确 false），所以生产里这条恒为 false。
+        canResendAfterUnknown: (error, dispatchInput) =>
+          providers.some((provider) => provider.providerId === dispatchInput.job.provider && provider.capabilities.submitIdempotency === true)
+          && isTransportLevelFailure(error),
         dispatch: async (dispatchInput) => {
           const currentBinding = dispatchInput.job.executionBinding;
           if (!currentBinding) throw new Error("Generation job is missing its sealed execution binding");
@@ -464,7 +483,15 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
             rawReceipt = result.raw;
             return { providerTaskId: result.providerTaskId };
           } catch (error) {
-            if (!(error instanceof SubmissionNotDispatchedError)) prepared.envelope.markSubmittedUnknown();
+            // 「一个字节都没写出去」是**可证明**的一档（只认连上之前的失败：DNS / 建连 / TLS 握手前），
+            // 它和「写出去了不知道结果」性质完全不同：前者供应商那边什么都没发生，后者可能已经在扣费。
+            // 连上之后的任何失败（连接被重置、对面关闭、响应超时）都是后者。判据只有一个 owner：
+            // `outboundDispatchEvidence.ts`。
+            if (error instanceof SubmissionNotDispatchedError) throw error;
+            if (outboundRequestWasNeverWritten(error)) {
+              throw new SubmissionNotDispatchedError(error instanceof Error ? error.message : String(error));
+            }
+            prepared.envelope.markSubmittedUnknown();
             throw error;
           }
         },
@@ -489,21 +516,25 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
         allowRetryAfterAbort: input.definitelyNotSubmitted === true,
       });
       run = result.run;
-      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, "plan-submit");
+      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, `plan-submit:v${run.planVersion}`);
       return { operationId: run.runId, runId: run.runId, jobId, providerTaskId: result.providerTaskId, attempt: lockedAttempt, nextAction: "observe" };
     });
   }
 
   async function poll(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionPollResult> {
-    const shotId = input.shotId;
     const run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const jobId = productionGenerationJobId(run.runId, contract.contractHash, attempt, shotId);
-    const job = run.jobs.find((candidate) => candidate.jobId === jobId);
+    const { job, contract } = readGenerationExecution(deps.repository, run, input);
     if (!job?.providerTaskId) throw new SubmissionReconciliationRequiredError("A provider task id is required before polling");
 
-    const result = await adapter.query({ providerId: job.provider, providerTaskId: job.providerTaskId });
+    // A completed immutable execution is read from its receipt; do not poll or rewrite it again.
+    const stored = envelope(run.runId, job.jobId).read();
+    if (stored?.state === "materialized") return {
+      operationId: run.runId, runId: run.runId, jobId: job.jobId, providerTaskId: job.providerTaskId,
+      providerStatus: stored.lastPoll?.status ?? "succeeded", nextAction: "materialize",
+    };
+    // 这笔任务的模型 / 模式从冻结合同里读、随查询递下去：供应商实例是每次新建的，
+    // 它自己内存里记的「这笔任务用的哪个模型」活不过观察窗重踢 / 重开项目 / 重启（见 GenerationProviderTaskContext）。
+    const result = await adapter.query({ providerId: job.provider, providerTaskId: job.providerTaskId, context: { modelId: contract.modelId, mode: contract.mode } });
     const providerStatus = result.providerStatus.trim();
     if (!providerStatus) throw new Error("Provider returned an empty poll status");
     const statusClass = classifyProviderStatus(providerStatus);
@@ -541,12 +572,11 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
   }
 
   async function materialize(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionMaterializeResult> {
-    const shotId = input.shotId;
     let run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const jobId = productionGenerationJobId(run.runId, contract.contractHash, attempt, shotId);
-    let job = run.jobs.find((candidate) => candidate.jobId === jobId);
+    const execution = readGenerationExecution(deps.repository, run, input);
+    const { contract } = execution;
+    let job = execution.job;
+    const jobId = job.jobId;
     if (!job?.providerTaskId) throw new GenerationMaterializationError("A provider task id is required before materialization");
     const providerTaskId = job.providerTaskId;
     const existing = run.artifacts.find((artifact) => artifact.jobId === jobId && ["image", "video", "audio"].includes(artifact.kind) && artifact.status === "ready");
@@ -564,14 +594,14 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     if (!isSuccessfulProviderStatus(polled.status)) throw new GenerationMaterializationError("The provider returned an unknown status; reconcile before materialization");
     let extracted: { outputs: readonly GenerationProviderOutput[] };
     try {
-      extracted = await adapter.materialize({ providerId: job.provider, providerTaskId: job.providerTaskId, raw: polled.raw });
+      extracted = await adapter.materialize({ providerId: job.provider, providerTaskId: job.providerTaskId, raw: polled.raw, context: { modelId: contract.modelId, mode: contract.mode, parameters: contract.parameters } });
     } catch (error) {
       if (error instanceof GenerationProviderObservationError) throw new GenerationMaterializationUnsupportedError();
       throw error;
     }
     if (extracted.outputs.length !== 1) throw new GenerationMaterializationError(extracted.outputs.length === 0 ? "Provider did not expose a materializable output" : "Single-shot generation returned more than one output");
     if (!deps.materializeOutput) throw new GenerationMaterializationUnsupportedError();
-    const receipt = await deps.materializeOutput({ projectId: input.projectId, operationId: run.runId, run, job, contract, providerTaskId: job.providerTaskId, output: extracted.outputs[0] });
+    const receipt = await deps.materializeOutput({ projectId: input.projectId, operationId: run.runId, run, job, contract, providerTaskId: job.providerTaskId, output: extracted.outputs[0], expectedImageSize: currentEnvelope.expectedImageSize });
     const artifactId = typeof receipt.artifactId === "string" ? receipt.artifactId.trim() : "";
     const contentHash = typeof receipt.contentHash === "string" ? receipt.contentHash.trim() : "";
     const projectRelativePath = typeof receipt.projectRelativePath === "string" ? receipt.projectRelativePath.trim() : "";
@@ -588,6 +618,7 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       contentHash,
       projectRelativePath,
       ...(receipt.thumbnailRelativePath ? { thumbnailRelativePath: receipt.thumbnailRelativePath } : {}),
+      ...(receipt.width && receipt.height ? { width: receipt.width, height: receipt.height } : {}),
       createdAt: now(),
     };
     run = command(run, "artifact.add", { artifact }, `materialize-artifact:${artifact.artifactId}`);
@@ -599,24 +630,28 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
   async function resume(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionResumeResult> {
     const shotId = input.shotId;
     let run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const jobId = productionGenerationJobId(run.runId, contract.contractHash, attempt, shotId);
-    const job = run.jobs.find((candidate) => candidate.jobId === jobId);
-    if (!job) return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
+    // 恢复路径的既有契约：**找不到这次执行的那条 job 是一个可分诊的状态，不是异常。**
+    // 主干上它返回 `attention/invalid_recovery_state`，让上层把这次恢复交回给用户处置；
+    // 一路抛出去会把它变成一次没人接得住的失败。（冻结合同缺失仍然抛，主干也抛。）
+    if (!findGenerationExecutionJob(run, input)) {
+      return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
+    }
+    const { job, currentAuthority } = readGenerationExecution(deps.repository, run, input);
+    const jobId = job.jobId;
     const currentEnvelope = envelope(run.runId, jobId).read();
     if (!currentEnvelope) return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
-    if (input.definitelyNotSubmitted === true && ["submission_unknown", "needs_attention"].includes(job.status)) {
+    if (currentAuthority && input.definitelyNotSubmitted === true && ["submission_unknown", "needs_attention"].includes(job.status)) {
       const committed = intentLog(run.runId).list().some((intent) => intent.key === `${run.runId}:${jobId}:${job.attempt}` && intent.status === "committed");
       if (committed) return { operationId: run.runId, action: "reconcile", reason: "submission_receipt_unknown", nextAction: "reconcile" };
       if (currentEnvelope.state === "submitted_unknown") envelope(run.runId, jobId).markDefinitelyNotSubmitted();
       // Suffix carries jobId so a per-shot explicit retry never dedupes against a sibling shot.
       run = command(run, "job.status", { jobId, status: "submit_intent_persisted", patch: {} }, `explicit-retry:${jobId}`);
-      return { ...(await start({ projectId: run.projectId, operationId: run.runId, definitelyNotSubmitted: true, ...(shotId ? { shotId } : {}) })), action: "dispatch", nextAction: "dispatch" };
+      return { ...(await start({ projectId: run.projectId, operationId: run.runId, definitelyNotSubmitted: true, attempt: job.attempt, ...(shotId ? { shotId } : {}) })), action: "dispatch", nextAction: "dispatch" };
     }
     const decision = classifyGenerationResume({ jobStatus: job.status, providerTaskId: job.providerTaskId, envelopeState: currentEnvelope.state, definitelyNotSubmitted: input.definitelyNotSubmitted });
     if (decision.action === "poll") return { operationId: run.runId, ...decision, nextAction: "poll", providerTaskId: job.providerTaskId };
     if (decision.action === "reconcile") return { operationId: run.runId, ...decision, nextAction: "reconcile" };
+    if (decision.action === "dispatch" && !currentAuthority) return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
     if (decision.action === "dispatch") return { ...(await start(input)), action: "dispatch", nextAction: "dispatch" };
     return { operationId: run.runId, ...decision, nextAction: "attention" };
   }

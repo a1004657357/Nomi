@@ -3,28 +3,37 @@
 // 下游 classifyGenerationError 只能正则反猜。现在错误在抛出那一刻保留结构:
 // 下游(人话错误卡/事件日志/分类)读 structured,字符串 message 仅供展示兜底。
 import {
-  type AuthType,
   appendQueryParams,
   authQueryParams as buildAuthQueryParams,
   collectRequestSecretValues,
   looksLikeLogicalError,
   redactRequestSecrets,
 } from "../ai/requestPipeline";
-import { describeIllegalHeader, findIllegalHeader, isJsonRecord, pickUpstreamMessage } from "../jsonUtils";
+import { describeIllegalHeader, findIllegalHeader, isJsonRecord, pickUpstreamCode, pickUpstreamMessage } from "../jsonUtils";
 import { fetchVendorWithBaseFallback } from "./vendorBaseFallback";
 import type { Vendor } from "../catalog/types";
-import { networkFailureDetails, redactNetworkMessage, safeNetworkUrl } from "../networkErrorDetails";
+import { vendorAuthSpec } from "../catalog/vendorAuthSpec";
+import { isRedirectRefusal, networkFailureDetails, redactNetworkMessage, safeNetworkUrl } from "../networkErrorDetails";
+import { tagNomiError } from "../shared/nomiErrorCodes";
 import { BoundedResponseError, readBoundedResponseBytes } from "./boundedResponse";
 import { providerDispatcher } from "../providerNetwork";
+import { createFreshConnectionDispatcher } from "../systemProxy";
+import type { Dispatcher } from "undici";
 import { authorizeSubmitDestination } from "./vendorOutboundGuard";
+import { outboundRequestWasNeverWritten, type OutboundDispatchState } from "../outboundDispatchEvidence";
 
-export type VendorErrorCategory = "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "unknown";
+export type VendorErrorCategory = "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "submission-unknown" | "unknown";
 
-// 单次 vendor HTTP 请求的硬超时（堵无界阻塞 P2 根因：此前裸 fetch 无 timeout，vendor 一 hang
-// 整条生成链 await 死，外部 MCP 端跟着永久转圈）。一次往返足够慢的同步图生成也走得完；异步 vendor
-// 首调返 queued 后由 core.ts 轮询循环（240s/300s）接管，故这里只兜「单次请求别永久挂死」。
-// 可经 NOMI_VENDOR_HTTP_TIMEOUT_MS 调（大模型同步出图慢可调大）。
+// A create may return completed media synchronously; queries/configuration must not inherit its long wait.
 const DEFAULT_VENDOR_HTTP_TIMEOUT_MS = 120_000;
+const MEDIA_SUBMIT_TIMEOUT_MS = 600_000;
+export type VendorRequestRole = "media-submit" | "submit" | "query" | "configuration";
+export type VendorRequestOptions = { maxResponseBytes?: number; role?: VendorRequestRole };
+
+export function vendorRequestRole(kind: string, stage: "create" | "query" | "result" = "create"): VendorRequestRole {
+  if (stage !== "create") return "query";
+  return ["image", "video", "audio", "model3d"].includes(kind) ? "media-submit" : "submit";
+}
 export const DEFAULT_VENDOR_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 export const MEDIA_VENDOR_RESPONSE_MAX_BYTES = Math.ceil((25 * 1024 * 1024 * 4) / 3) + 1024 * 1024;
 
@@ -39,9 +48,22 @@ export function vendorResponseLimitForKind(kind: string): number {
     : DEFAULT_VENDOR_RESPONSE_MAX_BYTES;
 }
 
-function vendorHttpTimeoutMs(): number {
+/** 付费提交 / 供应商请求的响应超时（含读响应体）。付费提交的另一条传输（目录供应商）读同一个值。 */
+export function vendorHttpTimeoutMs(role: VendorRequestRole = "configuration"): number {
   const raw = Number(process.env.NOMI_VENDOR_HTTP_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VENDOR_HTTP_TIMEOUT_MS;
+  return Number.isFinite(raw) && raw > 0 ? raw : role === "media-submit" ? MEDIA_SUBMIT_TIMEOUT_MS : DEFAULT_VENDOR_HTTP_TIMEOUT_MS;
+}
+
+/** Undici's shorter default header deadline must not preempt our total response budget. */
+export function vendorResponseDispatcher(dispatcher: Dispatcher, timeoutMs: number): Dispatcher {
+  return dispatcher.compose((dispatch) => (options, handler) =>
+    dispatch({ ...options, headersTimeout: timeoutMs, bodyTimeout: timeoutMs }, handler));
+}
+
+export function isGenerationOutcomeUnknown(httpStatus: number, payload: unknown): boolean {
+  if (httpStatus !== 502 || !isJsonRecord(payload)) return false;
+  const error = isJsonRecord(payload.error) ? payload.error : payload;
+  return error.code === "generation_outcome_unknown" || error.type === "generation_outcome_unknown";
 }
 
 function callerCancellation(signal?: AbortSignal): Error | null {
@@ -58,10 +80,17 @@ export type VendorErrorStructured = {
   logicalCode?: number | string;
   /** 上游原话,截 256(防日志爆炸,§4.3)。 */
   upstreamMsg: string;
+  /**
+   * 上游**自己给的错误码**（`model_not_found` 这一类字符串标识；没有就不写）。状态码只说「请求有问题」，
+   * 这个码才是它说的原因——渲染层分类优先读它（classifyError 的 UPSTREAM_CODE_KINDS），不靠 400 猜「参数不对」。
+   */
+  upstreamCode?: string;
   /** 查表分类,不是猜:401/403→auth,402→balance,429→quota,400/422→input,5xx→server。 */
   category: VendorErrorCategory;
   retryable: boolean;
   reasonCode?: "response_timeout";
+  operationRole?: VendorRequestRole;
+  dispatchState?: OutboundDispatchState;
 };
 
 export class VendorRequestError extends Error {
@@ -81,8 +110,13 @@ export class VendorRequestError extends Error {
 export const VENDOR_ERROR_IPC_MARKER = "NOMI_VENDOR_ERR_B64::";
 
 export function encodeVendorErrorMessage(error: VendorRequestError): string {
-  const b64 = Buffer.from(JSON.stringify(error.structured), "utf8").toString("base64");
-  return `${VENDOR_ERROR_IPC_MARKER}${b64}:: ${error.message}`;
+  return encodeStructuredErrorMessage(error.structured, error.message);
+}
+
+/** Reuse the established IPC marker for non-provider structured task errors. */
+export function encodeStructuredErrorMessage(structured: Record<string, unknown>, message: string): string {
+  const b64 = Buffer.from(JSON.stringify(structured), "utf8").toString("base64");
+  return `${VENDOR_ERROR_IPC_MARKER}${b64}:: ${message}`;
 }
 
 /** 状态码→类别查表(数字逻辑码与 HTTP 状态同表)。 */
@@ -103,9 +137,13 @@ export function categorizeVendorFailure(
   return { category: "unknown", retryable: false };
 }
 
-/** Vendor→primitive 鉴权 query 适配(从 runtime 迁来,全仓唯一)。 */
-export function authQueryParams(vendor: Vendor, apiKey: string): Record<string, string> {
-  return buildAuthQueryParams(vendor.authType as AuthType, apiKey, vendor.authQueryParam ?? undefined);
+/**
+ * Vendor→primitive 鉴权 query 适配(从 runtime 迁来,全仓唯一)。鉴权说法整份来自 vendorAuthSpec。
+ * 2026-09-21 从 `authQueryParams` 改名：与 requestPipeline 的同名函数并存时，读代码的人分不清
+ * 手上这一个到底收不收 authScheme 那一族字段——而那正是方案词漏在读路上的土壤。
+ */
+export function vendorAuthQueryParams(vendor: Vendor, apiKey: string): Record<string, string> {
+  return buildAuthQueryParams(vendorAuthSpec(vendor), apiKey);
 }
 
 /**
@@ -124,8 +162,9 @@ async function requestVendor(
   signal?: AbortSignal,
   maxResponseBytes = DEFAULT_VENDOR_RESPONSE_MAX_BYTES,
   responseKind: "json" | "binary" = "json",
+  role?: VendorRequestRole,
 ): Promise<unknown | BinaryVendorResponse> {
-  const requestAuthQuery = authQueryParams(vendor, apiKey);
+  const requestAuthQuery = vendorAuthQueryParams(vendor, apiKey);
   const finalUrl = appendQueryParams(url, { ...requestAuthQuery, ...query });
   const diagnosticUrl = safeNetworkUrl(url);
   const upperMethod = method.toUpperCase();
@@ -157,7 +196,9 @@ async function requestVendor(
       retryable: false,
     });
   }
-  const timeoutMs = vendorHttpTimeoutMs();
+  const operationRole = role ?? (upperMethod === "GET" || upperMethod === "HEAD" ? "query" : "submit");
+  const timeoutMs = vendorHttpTimeoutMs(operationRole);
+  const maySubmit = upperMethod !== "GET" && upperMethod !== "HEAD" && operationRole !== "query" && operationRole !== "configuration";
   const networkMessage = (error: unknown) => redactRequestMessage(
     networkFailureDetails(error)?.message ?? (error instanceof Error ? error.message : String(error)),
     256,
@@ -177,7 +218,14 @@ async function requestVendor(
     signal?.removeEventListener("abort", relayAbort);
     if (dispatcher) void dispatcher.close().catch(() => undefined);
   };
-  const submitRefusal = await authorizeSubmitDestination({ vendor, url: finalUrl, routedThroughProviderProxy: Boolean(dispatcher) });
+  const submitRefusal = await authorizeSubmitDestination({
+    vendor,
+    url: finalUrl,
+    routedThroughProviderProxy: Boolean(dispatcher),
+    // 「这次带 key 了吗」不在守卫里重猜：`collectRequestSecretValues` 已经按这一次具体请求
+    // 算过一遍（头、鉴权 query、query），复用同一个答案。
+    carriesCredential: requestSecrets.length > 0,
+  });
   // 授权是本轮新插进来的一段 await（要做 DNS），于是**取消有了一个新的落点**：调用方在这段
   // 窗口里 abort，signal 已经是 aborted 而 fetch 还没被调用过。不在这里接住的话，取消要么被
   // 无声吞掉（照旧把付费请求发出去），要么落进一个已经 abort 的 signal 上、事件永不再触发。
@@ -199,36 +247,64 @@ async function requestVendor(
       retryable: false,
     });
   }
+  // 付费提交（非 GET/HEAD）每次用**全新连接**，不与任何别的请求共用连接池：共享池里的空闲 keep-alive 连接
+  // 可能已被对面关掉，那时抛出的 UND_ERR_SOCKET 和「请求写出去后连接被重置」一模一样，分不清哪个才是「没发出去」。
+  // 显式供应商代理（`dispatcher`）本来就是每请求新建的，不重复造。判据与由来见 outboundDispatchEvidence.ts。
+  let freshDispatcher: Dispatcher | undefined;
+  const closeFreshDispatcher = () => {
+    if (freshDispatcher) void freshDispatcher.close().catch(() => undefined);
+  };
   let response: Response;
   try {
+    if (!dispatcher && upperMethod !== "GET" && upperMethod !== "HEAD") {
+      freshDispatcher = await createFreshConnectionDispatcher(controller.signal, finalUrl);
+    }
     // 经 vendorBaseFallback：主域被墙（连接从未建立）→ 零额度探测官方备用域 → 换线重发一次。
     // 仅连接层安全码触发重发，「重试绝不包住付费提交」铁律不破（见 vendorBaseFallback 文件头）。
     response = await fetchVendorWithBaseFallback(finalUrl, {
       method: upperMethod,
       headers,
       signal: controller.signal,
-      ...(dispatcher ? { dispatcher } : {}),
+      ...(dispatcher ?? freshDispatcher ? { dispatcher: vendorResponseDispatcher((dispatcher ?? freshDispatcher)!, timeoutMs) } : {}),
       ...(hasBody ? { body: bodyInit } : {}),
     });
   } catch (error: unknown) {
     clearTimeout(timer);
     signal?.removeEventListener("abort", relayAbort);
     if (dispatcher) void dispatcher.close().catch(() => undefined);
+    closeFreshDispatcher();
     const cancellation = callerCancellation(signal);
     if (cancellation) throw cancellation;
-    // abort = 我们的超时，给一条说人话的 timeout 错误（仍归 network 类、可重试），而不是裸 "aborted"。
+    // A timeout is not proof that the provider never received this submission.
     const aborted = (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
       || (error instanceof BoundedResponseError && error.code === "response_timeout");
+    // 带密钥的请求被跳转：appFetch 按「凭据请求不跟随跳转」拒了。不是网络问题，重试只会再撞同一个跳转。
+    if (isRedirectRefusal(error)) {
+      const upstreamMsg = tagNomiError("credential-redirect", "provider endpoint redirected; request stopped to protect the key");
+      throw new VendorRequestError(`Provider request refused redirect at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${upstreamMsg}`, {
+        vendorKey: vendor.key,
+        method: upperMethod,
+        url: diagnosticUrl,
+        upstreamMsg,
+        category: "network",
+        retryable: false,
+      });
+    }
     const upstreamMsg = aborted
       ? `请求超时（${Math.round(timeoutMs / 1000)}s 无响应）`
       : networkMessage(error);
-    throw new VendorRequestError(`Provider request failed (network) at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${upstreamMsg}`, {
+    const notWritten = outboundRequestWasNeverWritten(error);
+    const unknown = maySubmit && !notWritten;
+    throw new VendorRequestError(`${unknown ? tagNomiError("submission-unknown", "Provider submission outcome unknown") : "Provider request failed"} at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${upstreamMsg}`, {
       vendorKey: vendor.key,
       method: upperMethod,
       url: diagnosticUrl,
       upstreamMsg,
-      category: "network",
-      retryable: true,
+      category: unknown ? "submission-unknown" : aborted ? "timeout" : "network",
+      retryable: !unknown,
+      operationRole,
+      dispatchState: notWritten ? "not-written" : "unknown",
+      ...(aborted ? { reasonCode: "response_timeout" as const } : {}),
     });
   }
   // 超时同样覆盖响应体读取（vendor 可能接了连接却 hang 在 body 上）；读完才清 timer。
@@ -238,6 +314,18 @@ async function requestVendor(
   } catch (error: unknown) {
     const cancellation = callerCancellation(signal);
     if (cancellation) throw cancellation;
+    if (maySubmit && (response.ok || response.status >= 500)) {
+      throw new VendorRequestError(tagNomiError("submission-unknown", `Provider response could not be read at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${networkMessage(error)}`), {
+        vendorKey: vendor.key, method: upperMethod, url: diagnosticUrl,
+        httpStatus: response.status, upstreamMsg: networkMessage(error), category: "submission-unknown", retryable: false, operationRole, dispatchState: "unknown",
+      });
+    }
+    if (!response.ok && response.status >= 400 && response.status < 500) {
+      throw new VendorRequestError(`Provider request failed (HTTP ${response.status}) at ${vendor.key} ${diagnosticUrl}`, {
+        vendorKey: vendor.key, method: upperMethod, url: diagnosticUrl, httpStatus: response.status,
+        upstreamMsg: networkMessage(error), ...categorizeVendorFailure(response.status),
+      });
+    }
     if (error instanceof BoundedResponseError && error.code === "response_timeout") {
       const upstreamMsg = `读取响应超时（${Math.round(timeoutMs / 1000)}s）`;
       throw new VendorRequestError(`Provider request failed (timeout) at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${upstreamMsg}`, {
@@ -248,6 +336,7 @@ async function requestVendor(
         category: "timeout",
         retryable: true,
         reasonCode: "response_timeout",
+        operationRole,
       });
     }
     if (error instanceof BoundedResponseError && error.code === "response_too_large") {
@@ -278,6 +367,7 @@ async function requestVendor(
     signal?.removeEventListener("abort", relayAbort);
     // per-connection dispatcher 的连接池只属于本次请求；body 已缓冲读完，可安全退休。
     if (dispatcher) void dispatcher.close().catch(() => undefined);
+    closeFreshDispatcher();
   }
   const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
   const looksJson = contentType === "application/json"
@@ -306,14 +396,20 @@ async function requestVendor(
     // "No message available" is Spring's default placeholder — surface the URL
     // and status so the failure is diagnosable instead of opaque.
     const detail = rawUpstream && rawUpstream !== "No message available" ? rawUpstream : `(no detail from provider)`;
-    const { category, retryable } = categorizeVendorFailure(response.ok ? undefined : response.status, logicalCode ?? undefined);
-    throw new VendorRequestError(`Provider request failed (${statusLabel}) at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${detail}`, {
+    const unknown = isGenerationOutcomeUnknown(response.status, record);
+    const { category, retryable } = unknown
+      ? { category: "submission-unknown" as const, retryable: false }
+      : categorizeVendorFailure(response.ok ? undefined : response.status, logicalCode ?? undefined);
+    const upstreamCode = pickUpstreamCode(record);
+    const failureMessage = `Provider request failed (${statusLabel}) at ${vendor.key} ${upperMethod} ${diagnosticUrl}: ${detail}`;
+    throw new VendorRequestError(unknown ? tagNomiError("submission-unknown", failureMessage) : failureMessage, {
       vendorKey: vendor.key,
       method: upperMethod,
       url: diagnosticUrl,
       ...(response.ok ? {} : { httpStatus: response.status }),
       ...(logicalCode != null ? { logicalCode } : {}),
       upstreamMsg: detail.slice(0, 256),
+      ...(upstreamCode ? { upstreamCode } : {}),
       category,
       retryable,
     });
@@ -331,12 +427,12 @@ export async function requestJson(
   query: Record<string, unknown>,
   body: unknown,
   signal?: AbortSignal,
-  options: { maxResponseBytes?: number } = {},
+  options: VendorRequestOptions = {},
 ): Promise<unknown> {
   const upperMethod = method.toUpperCase();
   const hasBody = upperMethod !== "GET" && upperMethod !== "HEAD" && body != null;
   const bodyInit = hasBody ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined;
-  return requestVendor(vendor, apiKey, upperMethod, url, headers, query, bodyInit, signal, options.maxResponseBytes, "json");
+  return requestVendor(vendor, apiKey, upperMethod, url, headers, query, bodyInit, signal, options.maxResponseBytes, "json", options.role);
 }
 
 /** Byte-in-body submission for synchronous media endpoints, with the same error, redaction and timeout contract as JSON. */
@@ -349,7 +445,7 @@ export async function requestBinary(
   query: Record<string, unknown>,
   body: unknown,
   signal?: AbortSignal,
-  options: { maxResponseBytes?: number } = {},
+  options: VendorRequestOptions = {},
 ): Promise<BinaryVendorResponse> {
   const upperMethod = method.toUpperCase();
   const hasBody = upperMethod !== "GET" && upperMethod !== "HEAD" && body != null;
@@ -365,6 +461,7 @@ export async function requestBinary(
     signal,
     options.maxResponseBytes,
     "binary",
+    options.role,
   ) as Promise<BinaryVendorResponse>;
 }
 
@@ -381,10 +478,10 @@ export async function requestMultipart(
   query: Record<string, unknown>,
   form: FormData,
   signal?: AbortSignal,
-  options: { maxResponseBytes?: number } = {},
+  options: VendorRequestOptions = {},
 ): Promise<unknown> {
   const cleanHeaders = Object.fromEntries(
     Object.entries(headers).filter(([key]) => key.toLowerCase() !== "content-type"),
   );
-  return requestVendor(vendor, apiKey, "POST", url, cleanHeaders, query, form, signal, options.maxResponseBytes, "json");
+  return requestVendor(vendor, apiKey, "POST", url, cleanHeaders, query, form, signal, options.maxResponseBytes, "json", options.role);
 }

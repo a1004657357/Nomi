@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { CANVAS_READ_MCP_ADAPTER, createMcpCapabilityResolver } from './mcpCapabilityProjection'
 import { createMcpProtocol, type McpTransport } from './mcpProtocol'
-import { mcpProfileTools } from '../shared/agentCapabilities/modelFacingToolRegistry'
+import { mcpProfileTools, specsForCapability } from '../shared/agentCapabilities/modelFacingToolRegistry'
+import { mcpToolDescription } from '../shared/agentCapabilities/modelFacingTools'
 import { EXPORT_READ_CAPABILITY } from '../shared/agentCapabilities/exportCapabilities'
-import { CANVAS_NODE_PROMPT_GUIDELINES } from '../shared/agentCapabilities/canvasWrite'
+import { CANVAS_WRITE_CAPABILITY } from '../shared/agentCapabilities/canvasWrite'
 import { CANVAS_READ_CAPABILITY } from '../shared/agentCapabilities/canvasRead'
 import { registerProductionPlaybook } from '../productionRun/productionPlaybooks'
 
@@ -18,7 +19,10 @@ describe('MCP L1 tools/list_changed notification', () => {
       const listed = frames.find(frame => frame.id === 1)?.result as { tools: Array<{ name: string; description: string }> }
       expect(listed.tools.length).toBeGreaterThan(0)
       const sources = mcpProfileTools()
-      expect(sources.some(source => source.contractId === 'canvas.write')).toBe(true)
+      // canvas.write 对外是手写传输（`nomi_canvas_edit`），不在派生 sources 里；描述仍从三个画布写动词派生。
+      expect(sources.some(source => source.contractId === 'canvas.write')).toBe(false)
+      expect(listed.tools.find(tool => tool.name === CANVAS_WRITE_CAPABILITY.aliases.mcp)?.description)
+        .toBe(mcpToolDescription(CANVAS_WRITE_CAPABILITY, specsForCapability(CANVAS_WRITE_CAPABILITY.id)))
       expect(sources.some(source => source.contractId === 'document.write')).toBe(true)
       expect(sources.some(source => source.contractId === 'asset.read')).toBe(true)
       for (const source of sources) {
@@ -29,14 +33,10 @@ describe('MCP L1 tools/list_changed notification', () => {
           expect(actual?.description, `${name} retains its shared guideline`).toContain(guideline)
         }
       }
-      const canvas = listed.tools.find(tool => tool.name === 'nomi_canvas_edit')!
-      for (const guideline of CANVAS_NODE_PROMPT_GUIDELINES) {
-        expect(canvas.description.split(guideline)).toHaveLength(2)
-      }
       const read = listed.tools.find(tool => tool.name === 'nomi_read')!
       expect(read.description).toContain('For target=canvas only')
       expect(listed.tools.find(tool => tool.name === EXPORT_READ_CAPABILITY.aliases.mcp)?.description)
-        .toBe(EXPORT_READ_CAPABILITY.projections.mcp?.description)
+        .toBe(mcpToolDescription(EXPORT_READ_CAPABILITY, specsForCapability(EXPORT_READ_CAPABILITY.id)))
     } finally { protocol.dispose() }
   })
 
@@ -83,5 +83,47 @@ describe('MCP L1 tools/list_changed notification', () => {
     } finally {
       protocol.dispose()
     }
+  })
+})
+
+describe('MCP passive discovery', () => {
+  const flush = async () => { await Promise.resolve(); await Promise.resolve() }
+  function makeTransport(overrides: Partial<McpTransport> = {}) {
+    const frames: unknown[] = []
+    const invoke = vi.fn(async () => ({ skills: [{ name: 'live-skill', description: 'live' }] }))
+    const value: McpTransport = { send: (frame) => frames.push(frame), isAppOpen: () => false, invoke, ...overrides }
+    return { frames, invoke, value }
+  }
+
+  it('does not cold-start through invoke when resources/list runs with no live instance', async () => {
+    const { frames, invoke, value } = makeTransport()
+    const protocol = createMcpProtocol(value)
+    protocol.handleIncoming({ jsonrpc: '2.0', id: 91, method: 'resources/list', params: {} })
+    await flush()
+    expect(invoke).not.toHaveBeenCalled()
+    expect((frames[0] as { result?: { resources?: unknown[] } }).result?.resources).toEqual(expect.arrayContaining([expect.objectContaining({ uri: 'ui://nomi/live-draft.html' })]))
+    protocol.dispose()
+  })
+
+  it('probes a live instance for dynamic skills without using cold-start invoke', async () => {
+    const probe = vi.fn(async () => ({ skills: [{ name: 'live-skill', directoryName: 'live-skill', packageVersion: '1.0.0', contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', description: 'live', filePaths: ['SKILL.md'] }] }))
+    const { frames, invoke, value } = makeTransport({ invokeIfOpen: probe })
+    const protocol = createMcpProtocol(value)
+    protocol.handleIncoming({ jsonrpc: '2.0', id: 92, method: 'resources/list', params: {} })
+    await flush()
+    expect(probe).toHaveBeenCalledWith('skills.list', {})
+    expect(invoke).not.toHaveBeenCalled()
+    expect((frames[0] as { result?: { resources?: Array<{ name?: string }> } }).result?.resources).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'live-skill' })]))
+    protocol.dispose()
+  })
+
+  it.each(['initialize', 'tools/list', 'resources/list', 'resources/templates/list', 'prompts/list', 'ping'])('keeps %s passive', async (method) => {
+    const { frames, invoke, value } = makeTransport()
+    const protocol = createMcpProtocol(value)
+    protocol.handleIncoming({ jsonrpc: '2.0', id: 93, method, params: method === 'initialize' ? { protocolVersion: '2025-11-25' } : {} })
+    await flush()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(frames).toHaveLength(1)
+    protocol.dispose()
   })
 })

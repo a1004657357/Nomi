@@ -1,4 +1,6 @@
+import { LocalTaskCancelledError } from './localTaskControl'
 import i18n from '../../../i18n'
+import { tagNomiError } from '../../../../electron/shared/nomiErrorCodes'
 import {
   type TaskKind,
   type TaskResultDto,
@@ -10,6 +12,8 @@ import type {
   GenerationResultType,
 } from '../model/generationCanvasTypes'
 import { asFiniteNumber, asTrimmedString, selectedModelKey } from './catalogTaskResolve'
+import { formatTaskFailureMessage } from './taskFailureMessage'
+import { readMediaDimensions, type MediaDimensions } from '../nodes/nodeSizing'
 
 // transcribe(Whisper) 也是「无 asset、文本在 raw」——同走文本支（raw.text 由 extractTextFromChatRaw 末尾捕获）。
 const TEXT_TASK_KINDS = new Set<TaskKind>(['chat', 'prompt_refine', 'image_to_prompt', 'transcribe'])
@@ -73,21 +77,25 @@ function generationTypeForTask(taskKind: TaskKind): GenerationResultType {
   return 'image'
 }
 
-/**
- * 终态失败 → 抛给 runner 的 message。真实原因取 `result.error`（主进程按 profile 声明的
- * error_message 映射取出的上游原话，见 electron/tasks/responseParsing）。
- *
- * 这里**不再自己解析 raw**：那份形状猜测读不到 kie `data.failMsg`、runninghub `errorMessage`
- * 一类家族专属路径，也不下钻对象型的 `error`，于是每家的失败都退化成一句「模型任务执行失败」
- * （2026-07-30 用户真机报的就是它）。猜测逻辑已合并进主进程那个唯一读点。
- */
+function readFailureMessageFromRaw(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ''
+  const record = raw as Record<string, unknown>
+  const direct = [record.message, record.error, record.errorMessage, record.failureReason, record.reason]
+  for (const value of direct) {
+    const text = asTrimmedString(value)
+    if (text) return text
+  }
+  const nested = [record.raw, record.response, record.data, record.result, record.jimengWeb, record.pavoWeb]
+  for (const value of nested) {
+    const text = readFailureMessageFromRaw(value)
+    if (text) return text
+  }
+  return ''
+}
+
 function describeTaskFailure(result: TaskResultDto): string {
-  const suffix = [
-    result.id ? `taskId=${result.id}` : '',
-    result.kind ? `kind=${result.kind}` : '',
-  ].filter(Boolean).join(', ')
-  const prefix = asTrimmedString(result.error) || i18n.t('generationCommon.error.taskFailed')
-  return suffix ? `${prefix} (${suffix})` : prefix
+  // 格式的产出与解析成对住在 taskFailureMessage：分类器靠解析分清「供应商说的」与「我们自己的兜底句」。
+  return formatTaskFailureMessage(asTrimmedString(result.error) || readFailureMessageFromRaw(result.raw), { taskId: result.id, kind: result.kind })
 }
 
 function readDurationSeconds(asset: { durationSeconds?: unknown } | null | undefined): number | undefined {
@@ -97,7 +105,9 @@ function readDurationSeconds(asset: { durationSeconds?: unknown } | null | undef
 export function normalizeCatalogTaskResult(
   result: TaskResultDto,
   node: GenerationCanvasNode,
+  onMediaDimensions?: (dimensions: MediaDimensions) => void,
 ): GenerationNodeResult {
+  if (result.status === 'cancelled') throw new LocalTaskCancelledError()
   if (result.status === 'failed') {
     throw new Error(describeTaskFailure(result))
   }
@@ -123,27 +133,59 @@ export function normalizeCatalogTaskResult(
   const firstVideoAsset = result.assets.find((item) => item.type === 'video' && asTrimmedString(item.url))
   const firstImageAsset = result.assets.find((item) => item.type === 'image' && asTrimmedString(item.url))
   const firstAudioAsset = result.assets.find((item) => item.type === 'audio' && asTrimmedString(item.url))
-  const asset = firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
-  if (!asset) throw new Error(i18n.t(inferredType === 'video' ? 'generationCommon.error.noVideoUrl' : inferredType === 'audio' ? 'generationCommon.error.noAudio' : 'generationCommon.error.noImageUrl'))
+  const firstModel3dAsset = result.assets.find(item => item.type === 'model3d' && asTrimmedString(item.url))
+  const asset = inferredType === 'model3d' ? firstModel3dAsset : firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
+  // 上游说成了却没有产物：不是生成失败，是「读结果」这一步没成（#1213 原则 1）——带阶段码，落「可找回」。
+  if (!asset) {
+    const messageKey = inferredType === 'model3d' ? 'generationCommon.error.noModel3dUrl'
+      : inferredType === 'video' ? 'generationCommon.error.noVideoUrl'
+        : inferredType === 'audio' ? 'generationCommon.error.noAudio' : 'generationCommon.error.noImageUrl'
+    throw new Error(tagNomiError('retrieval-parse', i18n.t(messageKey)))
+  }
   const type = (asset.type === 'video' || asset.type === 'image' || asset.type === 'audio') ? asset.type : inferredType
+  if (type === 'image' || type === 'video') {
+    const dimensions = readMediaDimensions(asset.width, asset.height)
+    if (dimensions) onMediaDimensions?.(dimensions)
+  }
   // E11: propagate provenance from electron TaskResult into the node result.
   const provenance = extractProvenanceFromTaskResult(result)
-  return {
-    id: `${node.id}-${result.id || Date.now()}`,
-    type,
-    url: asset.url,
-    thumbnailUrl: asset.thumbnailUrl || undefined,
-    ...(asset.providerUrl ? { providerUrl: asset.providerUrl } : {}),
-    model: selectedModelKey(node) || undefined,
-    durationSeconds: type === 'video' ? readDurationSeconds(asset) : undefined,
-    taskId: result.id,
-    taskKind: type,
-    assetId: asset.assetId || undefined,
-    assetRefId: asset.assetRefId || undefined,
-    raw: result.raw,
-    createdAt: Date.now(),
-    ...(provenance ? { provenance } : {}),
+  const createdAt = Date.now()
+  const baseId = `${node.id}-${result.id || createdAt}`
+  const buildAssetResult = (
+    candidate: (typeof result.assets)[number],
+    id: string,
+    includeRaw: boolean,
+  ): GenerationNodeResult => {
+    const candidateType =
+      candidate.type === 'video' || candidate.type === 'image' || candidate.type === 'audio' || candidate.type === 'model3d'
+        ? candidate.type
+        : inferredType
+    return {
+      id,
+      type: candidateType,
+      url: candidate.url,
+      thumbnailUrl: candidate.thumbnailUrl || undefined,
+      ...(candidate.providerUrl ? { providerUrl: candidate.providerUrl } : {}),
+      model: selectedModelKey(node) || undefined,
+      durationSeconds: candidateType === 'video' ? readDurationSeconds(candidate) : undefined,
+      taskId: result.id,
+      taskKind: candidateType,
+      assetId: candidate.assetId || undefined,
+      assetRefId: candidate.assetRefId || undefined,
+      ...(candidateType === 'model3d' && candidate.model3dValidation
+        ? { model3dValidation: candidate.model3dValidation }
+        : {}),
+      ...(includeRaw ? { raw: result.raw } : {}),
+      createdAt,
+      ...(provenance ? { provenance } : {}),
+    }
   }
+  const primary = buildAssetResult(asset, baseId, true)
+  const alternatives = result.assets
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => candidate !== asset && Boolean(asTrimmedString(candidate.url)))
+    .map(({ candidate, index }) => buildAssetResult(candidate, `${baseId}-asset-${index + 1}`, false))
+  return alternatives.length ? { ...primary, alternatives } : primary
 }
 
 /**

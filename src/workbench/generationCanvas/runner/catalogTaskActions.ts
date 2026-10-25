@@ -8,10 +8,7 @@ import {
   runWorkbenchTaskByVendor,
   runWorkbenchTextTaskStream,
 } from '../../api/taskApi'
-import type {
-  GenerationCanvasNode,
-  GenerationNodeResult,
-} from '../model/generationCanvasTypes'
+import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import type { ResolvedGenerationReferences } from './generationReferenceResolver'
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { readParameterReferenceSlots } from '../model/parameterReferenceSlots'
@@ -22,6 +19,7 @@ import { buildArchetypeInputParams, currentArchetypeMode, orderedSentImageRefere
 import { projectPromptForSend } from '../../assets/promptMentions'
 import {
   type CatalogTaskActionOptions,
+  type CatalogTaskRunOptions,
   asFiniteNumber,
   asTrimmedString,
   readStringArray,
@@ -34,6 +32,7 @@ import {
 } from './catalogTaskResolve'
 import { promptRequiredForNode } from './promptRequirement'
 import { normalizeCatalogTaskResult } from './catalogTaskResultParse'
+import { resolveCatalogTaskPollingPolicy } from './catalogTaskPollingPolicy'
 import { localizeRemoteResultUrl } from './resultAssetLocalization'
 import {
   LocalTaskCancelledError,
@@ -42,19 +41,33 @@ import {
   watchComfyuiProgress,
 } from './localTaskControl'
 import { isComfyuiVendorKey } from '../model/comfyuiVendor'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
-import { RecoverableTimeoutError } from './recoverableTimeout'
+import { productionMetaOf } from '../model/productionMeta'
+import { RecoverableTimeoutError, isRecoverableTimeoutError, type RecoverableTimeoutDetail } from './recoverableTimeout'
+import {
+  awaitUnlessCancelled,
+  awaitWithinPhase,
+  createPhaseClock,
+  describePhaseSilence,
+  isGenerationPhaseStalledError,
+  type PhaseClock,
+  type PhaseWaitGuard,
+} from './generationPhaseDeadline'
 import { parseVendorErrorFromMessage } from './vendorErrorIpc'
+import {
+  compileVideoPromptForReferences,
+  type VideoPromptReferenceStrategy,
+} from './videoPromptCompiler'
 import { collectLocalAssetUrls } from '../../../../electron/catalog/assetLocalization'
 import { readParameterReferenceContract } from '../../../../electron/catalog/parameterReferenceContract'
+import { isTerminalTaskStatus } from '../../../../electron/shared/taskStatus'
+import { attachGenerationPhaseTimings, subscribeCatalogCancellation, throwIfAborted, withSubmissionHeartbeat } from './catalogTaskLifecycle'
 
 // 重导出：实现已拆到 catalogTaskResolve（节点→vendor/model/kind 选择）与
 // catalogTaskResultParse（raw/asset/failure/provenance 解析），但 catalogTaskActions
 // 对外公共导出面保持不变，外部 import 路径无需改动。
-export type { CatalogTaskActionOptions } from './catalogTaskResolve'
+export type { CatalogTaskActionOptions, CatalogTaskRunOptions } from './catalogTaskResolve'
 export { normalizeCatalogTaskResult } from './catalogTaskResultParse'
 
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed'])
 
 // 任务已提交(付费已发生)后，查结果连续失败多久就放弃轮询、落「可找回」态（不重发，给「重新拉取」入口）。
 // 短于此 = 网络抖动，免费重试查询；长于此 = 上游/网络持续不可达，没必要干等到硬超时(视频 20min)空耗。
@@ -123,9 +136,11 @@ export function isSlowLaneBackend(kind: TaskKind, vendor: string): boolean {
 
 /** 轮询预算(ms):慢道(视频/本地进程后端)5min 软 / 20min 硬;快道云 API 2min 软=硬。 */
 export function resolvePollBudget(kind: TaskKind, vendor: string): { softMs: number; hardMs: number } {
-  return isSlowLaneBackend(kind, vendor)
-    ? { softMs: 300000, hardMs: 1200000 }
-    : { softMs: 120000, hardMs: 120000 }
+  if (SLOW_LOCAL_BACKENDS.has(vendor) || isComfyuiVendorKey(vendor)) {
+    return { softMs: 300000, hardMs: 1200000 }
+  }
+  const policy = resolveCatalogTaskPollingPolicy(kind, vendor)
+  return { softMs: policy.softTimeoutMs, hardMs: policy.hardTimeoutMs }
 }
 
 /**
@@ -159,11 +174,7 @@ const POLL_BACKOFF_CAP_MS = 30000
  * 以前 429 被空 catch 吞掉、下一轮照原节奏再敲——上游说「太频繁」我们还加倍撞，只会撞得更狠。
  * `random` 注入以便直测（默认 Math.random）。
  */
-export function nextPollDelayMs(
-  baseMs: number,
-  rateLimitStreak: number,
-  random: () => number = Math.random,
-): number {
+export function nextPollDelayMs(baseMs: number, rateLimitStreak: number, random: () => number = Math.random): number {
   const backoffMs = rateLimitStreak > 0 ? baseMs * 2 ** rateLimitStreak : baseMs
   const jitter = 1 + (random() * 2 - 1) * POLL_JITTER_RATIO
   return Math.max(1, Math.min(Math.round(backoffMs * jitter), POLL_BACKOFF_CAP_MS))
@@ -180,9 +191,20 @@ export function isRateLimitedPollError(error: unknown): boolean {
   return /(^|\D)429(\D|$)/.test(message) || /rate limit|too many requests/i.test(message)
 }
 
+const SINGLE_VIDEO_REFERENCE_PRIORITY: Record<string, number> = {
+  first_frame: 0,
+  composition: 1,
+  generic: 2,
+  character: 3,
+  scene: 4,
+  prop: 5,
+  last_frame: 6,
+}
+
 function buildReferenceExtras(
   meta: Record<string, unknown>,
   references: Partial<ResolvedGenerationReferences>,
+  kind: TaskKind,
 ): Record<string, unknown> {
   const parameterInputs = parameterReferenceInputs(meta, references)
   const exactComfyParameters = usesComfyParameterContract(meta)
@@ -190,6 +212,22 @@ function buildReferenceExtras(
     ...readStringArray(meta.referenceImages),
     ...(references.referenceImages || []),
   ])
+  const referenceImageRoles = (references.referenceImageRoles || [])
+    .map((value) => asTrimmedString(value))
+    .filter(Boolean)
+  const referenceImagePurposes = (references.referenceImagePurposes || [])
+    .map((value) => asTrimmedString(value))
+    .filter(Boolean)
+  const roleByUrl = new Map<string, string>()
+  const purposeByUrl = new Map<string, string>()
+  ;(references.referenceImages || []).forEach((url, index) => {
+    const normalizedUrl = asTrimmedString(url)
+    if (!normalizedUrl) return
+    const role = referenceImageRoles[index]
+    const purpose = referenceImagePurposes[index]
+    if (role) roleByUrl.set(normalizedUrl, role)
+    if (purpose) purposeByUrl.set(normalizedUrl, purpose)
+  })
   const styleReferenceImages = uniqueStrings([
     ...readStringArray(meta.styleReferenceImages),
     ...(references.styleReferenceImages || []),
@@ -207,12 +245,25 @@ function buildReferenceExtras(
   // 认不出 → 现有无条件带首/尾帧（非档案模型走老路）。
   const archetype = resolveTaskArchetype(meta)
   if (archetype) {
+    const mode = currentArchetypeMode(archetype, meta)
+    const imageSlot = (mode.slots || []).find((slot) => slot.kind === 'image_ref')
+    const singleVideoReference = kind === 'image_to_video' && imageSlot?.max === 1
+    const inputReferenceImages = singleVideoReference
+      ? referenceImages
+          .map((url, index) => ({
+            url,
+            index,
+            priority: SINGLE_VIDEO_REFERENCE_PRIORITY[purposeByUrl.get(url) || 'generic'] ?? 2,
+          }))
+          .sort((left, right) => left.priority - right.priority || left.index - right.index)
+          .map((item) => item.url)
+      : referenceImages
     const archetypeInput = buildArchetypeInputParams(meta, archetype, {
       firstFrameUrl: asTrimmedString(references.firstFrameUrl) || null,
       lastFrameUrl: asTrimmedString(references.lastFrameUrl) || null,
       // 切片1：把画布边产出的实时参考图喂进档案 image 槽（此前只读 meta，边的角色图被丢）。
       // referenceImages 已是 meta.referenceImages + 边超集的去重并集。
-      referenceImages,
+      referenceImages: inputReferenceImages,
       // B4：连线进来的视频/音频参考喂进 video_ref/audio_ref 槽（此前只收 meta 上传）。
       referenceVideos: references.referenceVideos || [],
       referenceAudios: references.referenceAudios || [],
@@ -223,7 +274,6 @@ function buildReferenceExtras(
     // 中转上撞档案名的模型改图不带图/i2v 首帧到不了 wire（2026-07-24 群反馈根因）。
     // M2 互斥同样约束标准面：首/尾帧只在**当前模式声明了对应槽**时才带（活边优先、meta 兜底），
     // 否则「首帧模式残留尾帧」的 §2 坑2 会从标准键复活（kie 同名 token 渲进 body）。
-    const mode = currentArchetypeMode(archetype, meta)
     const modeHasFirst = (mode.slots || []).some((slot) => slot.kind === 'first_frame')
     const modeHasLast = (mode.slots || []).some((slot) => slot.kind === 'last_frame')
     const firstFrameUrl = modeHasFirst
@@ -235,15 +285,22 @@ function buildReferenceExtras(
     // 档案图槽的上传住 meta.referenceImageUrls（ARRAY_SLOT_ROUTE.image_ref.metaKey）——它同样必须进
     // 标准面，否则中转 multipart 的 params.reference_images 恒空、0 张图被诚实抛（走查 B 段抓出的
     // 第二个吞点）。同样按当前模式门控（声明了 image_ref 槽才带，防 t2i 残留复活进 chat 回退 body）。
-    const modeHasImageArray = (mode.slots || []).some((slot) => slot.kind === 'image_ref')
-    const standardReferenceImages = uniqueStrings([
-      ...referenceImages,
-      ...(modeHasImageArray ? readStringArray(meta.referenceImageUrls) : []),
-    ])
+    const modeHasImageArray = Boolean(imageSlot)
+    const standardReferenceImages = modeHasImageArray
+      ? orderedSentImageReferenceUrls(meta, archetype, inputReferenceImages)
+      : referenceImages
+    const sentReferenceImageRoles = standardReferenceImages
+      .map((url) => roleByUrl.get(url) || '')
+      .filter(Boolean)
+    const sentReferenceImagePurposes = standardReferenceImages
+      .map((url) => purposeByUrl.get(url) || '')
+      .filter(Boolean)
     const derived = {
       ...(standardReferenceImages.length ? { referenceImages: standardReferenceImages } : {}),
       ...(firstFrameUrl ? { firstFrameUrl } : {}),
       ...(lastFrameUrl ? { lastFrameUrl } : {}),
+      ...(sentReferenceImageRoles.length ? { referenceImageRoles: sentReferenceImageRoles } : {}),
+      ...(sentReferenceImagePurposes.length ? { referenceImagePurposes: sentReferenceImagePurposes } : {}),
       archetypeInput,
       ...(styleReferenceImages.length ? { styleReferenceImages } : {}),
       ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
@@ -254,6 +311,12 @@ function buildReferenceExtras(
 
   const firstFrameUrl = asTrimmedString(references.firstFrameUrl) || asTrimmedString(meta.firstFrameUrl)
   const lastFrameUrl = asTrimmedString(references.lastFrameUrl) || asTrimmedString(meta.lastFrameUrl)
+  const sentReferenceImageRoles = referenceImages
+    .map((url) => roleByUrl.get(url) || '')
+    .filter(Boolean)
+  const sentReferenceImagePurposes = referenceImages
+    .map((url) => purposeByUrl.get(url) || '')
+    .filter(Boolean)
   // 连线进来的视频参考：档案分支喂进 video_ref 槽，**无档案分支此前整个丢掉** ——
   // ComfyUI 导入的工作流正是无档案，于是「补帧 / 视频超分 / 视频去背景」这类图
   // 连了视频也永远收不到（electron 侧 referenceInputParams 据此派生 source_video_url）。
@@ -263,11 +326,30 @@ function buildReferenceExtras(
     ...(referenceVideoUrls.length ? { referenceVideoUrls } : {}),
     ...(firstFrameUrl ? { firstFrameUrl } : {}),
     ...(lastFrameUrl ? { lastFrameUrl } : {}),
+    ...(sentReferenceImageRoles.length ? { referenceImageRoles: sentReferenceImageRoles } : {}),
+    ...(sentReferenceImagePurposes.length ? { referenceImagePurposes: sentReferenceImagePurposes } : {}),
     ...(styleReferenceImages.length ? { styleReferenceImages } : {}),
     ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
     ...(compositionReferenceImages.length ? { compositionReferenceImages } : {}),
   }
   return exactComfyParameters ? { ...derived, ...parameterInputs } : { ...parameterInputs, ...derived }
+}
+
+function videoReferenceStrategy(
+  kind: TaskKind,
+  node: GenerationCanvasNode,
+  referenceExtras: Record<string, unknown>,
+): VideoPromptReferenceStrategy {
+  if (kind !== 'text_to_video' && kind !== 'image_to_video') return 'text_only'
+  const archetype = resolveTaskArchetype(node.meta || {})
+  if (archetype) {
+    const mode = currentArchetypeMode(archetype, node.meta || {})
+    const imageSlot = mode.slots.find((slot) => slot.kind === 'image_ref')
+    if (mode.slots.some((slot) => slot.kind === 'first_frame') || imageSlot?.max === 1) return 'first_frame'
+    if (imageSlot && (imageSlot.max === undefined || imageSlot.max > 1)) return 'full_reference'
+  }
+  if (asTrimmedString(referenceExtras.firstFrameUrl)) return 'first_frame'
+  return readStringArray(referenceExtras.referenceImages).length ? 'reference' : 'text_only'
 }
 
 export function buildCatalogTaskRequest(
@@ -286,13 +368,15 @@ export function buildCatalogTaskRequest(
   const references = options.references || {}
   const kind = resolveTaskKind(node, references)
   const meta = parameterContractRequestMeta(node.meta || {})
+  const referenceExtras = buildReferenceExtras(meta, references, kind)
   // @ 内联引用投影(R6 单源 · option 2):把 prompt 里的 @[asset:url] 标记转成 @imageN，
   // N = url 在「连线在前+上传」有序数组里的位置——**与实际发送的 reference_image 数组逐位一致**。此前只读
   // meta.referenceImageUrls，把连线进来的参考图当成「不在数组里」直接把 @ 标记删成空串（连线图 @ 不到/被
   // 删空的根因）。纯文字 prompt 无标记 → 原样(no-op)。无档案模型回退旧口径（仅上传）。
   const promptRefArchetype = resolveTaskArchetype(meta)
+  const sentReferenceImages = readStringArray(referenceExtras.referenceImages)
   const orderedReferenceUrls = promptRefArchetype
-    ? orderedSentImageReferenceUrls(meta, promptRefArchetype, references.referenceImages || [])
+    ? orderedSentImageReferenceUrls(meta, promptRefArchetype, sentReferenceImages)
     : readStringArray(meta.referenceImageUrls)
   const orderedPromptReferences = promptRefArchetype
     ? orderedSentMediaReferenceUrls(meta, promptRefArchetype, {
@@ -304,10 +388,18 @@ export function buildCatalogTaskRequest(
   const prompt = projectPromptForSend(rawPrompt, orderedPromptReferences)
   // 站位构图参考：出关键帧时把 staging 灰模图当「构图蓝图」而非编辑底图——照站位/姿势/机位，
   // 但写实重渲染，别照搬灰模 3D 外观（评测发现 image_edit 直喂会出 CGI 感）。只对图像生成加。
-  const renderedPrompt =
+  const stagedPrompt =
     references.stagingComposition && (kind === 'text_to_image' || kind === 'image_edit')
       ? `${prompt}\n\n（构图参考仅用于确定人物站位、各自姿势和镜头机位；请据此完全写实地重新渲染人物与场景——真实皮肤/衣物/光影，不要保留参考图里灰色人偶或 3D 渲染的外观。）`
       : prompt
+  const renderedPrompt = kind === 'text_to_video' || kind === 'image_to_video'
+    ? compileVideoPromptForReferences({
+        prompt: stagedPrompt,
+        strategy: videoReferenceStrategy(kind, node, referenceExtras),
+        referenceImageRoles: readStringArray(referenceExtras.referenceImageRoles),
+        referenceImageCount: sentReferenceImages.length || (asTrimmedString(referenceExtras.firstFrameUrl) ? 1 : 0),
+      })
+    : stagedPrompt
   // Production QA targeted retries carry a short, machine-authored correction directive.
   // Keep it out of the node's durable prompt (the original remains inspectable) and append it
   // only to this submission so a retry fixes the flagged axis without rewriting the storyboard.
@@ -318,9 +410,11 @@ export function buildCatalogTaskRequest(
   const steps = asFiniteNumber(meta.steps)
   const cfgScale = asFiniteNumber(meta.cfgScale)
   const seed = asFiniteNumber(meta.seed)
-  const referenceExtras = buildReferenceExtras(meta, references)
+  const productionMeta = productionMetaOf(node)
   const extras = {
     ...meta,
+    ...(productionMeta?.runId ? { productionRunId: productionMeta.runId } : {}),
+    ...(productionMeta?.shotId ? { productionShotId: productionMeta.shotId } : {}),
     modelKey,
     modelAlias: asTrimmedString(meta.modelAlias) || modelKey,
     nodeId: node.id,
@@ -369,9 +463,11 @@ async function waitForCatalogTaskResult(
   vendor: string,
   request: TaskRequestDto,
   initialResult: TaskResultDto,
-  options: CatalogTaskActionOptions,
+  options: CatalogTaskRunOptions,
+  guard: PhaseWaitGuard,
+  receipt: RecoverableTimeoutDetail,
 ): Promise<TaskResultDto> {
-  if (TERMINAL_STATUSES.has(initialResult.status)) return initialResult
+  if (isTerminalTaskStatus(initialResult.status)) return initialResult
   // 基准间隔按后端分档（慢道 3s / 快道 1.5s，见 resolvePollIntervalMs）；每轮实际等待还要叠
   // 429 退避与 ±30% 抖动（nextPollDelayMs）。options.pollIntervalMs 覆盖时仍走抖动/退避，
   // 但测试给 1ms 时抖动后仍是 1ms 量级，不影响既有用例。
@@ -390,54 +486,61 @@ async function waitForCatalogTaskResult(
   // 且查结果失败【绝不】能冒泡出去——否则会落进外层 runGenerationNode 的重试循环重新 runTask 二次扣费
   // (单确认最多 ×3/节点、批量再乘节点数 = 用户报「平台冒出很多视频、被扣费」的根因)。查结果是免费的：
   // 抖动就免费重试查询；持续失败超 grace(或到硬超时) → 落可找回态(不重发)。recoverable 在外层不触发重试。
-  const recoverableTimeout = () => new RecoverableTimeoutError({
-    taskId: initialResult.id,
-    vendor,
-    taskKind: request.kind,
-    modelKey: asTrimmedString(request.extras?.modelKey),
-  })
+  // 落可找回时，最后一次查结果若是失败的，把那次失败原样交出去（它说得出下一步），不一律说「超时」。
+  const recoverableTimeout = (lastError?: unknown) => new RecoverableTimeoutError(receipt, { lastError })
   let current = initialResult
   let pollFailureStreakStartedAt: number | null = null
+  let lastPollError: unknown
   // 连续被限流的次数 → 指数退避的指数。查成功或换成别的失败原因即复位。
   let rateLimitStreak = 0
   const cancelNodeId = asTrimmedString(request.extras?.nodeId)
-  while (!TERMINAL_STATUSES.has(current.status)) {
+  while (!isTerminalTaskStatus(current.status)) {
     // P 轨遮罩取消：/interrupt 已发（免费幂等），这里把免费轮询也即刻停掉，不等 20min 硬超时。
     if (cancelNodeId && isTaskCancelRequested(cancelNodeId)) throw new LocalTaskCancelledError()
     const elapsedMs = Date.now() - startedAt
     if (elapsedMs > hardTimeoutMs) {
       // 超时≠失败：上游可能仍在跑/已出片 → 抛可找回错误，节点落 recoverable，给「重新拉取」入口。
-      throw recoverableTimeout()
+      // 最后一次查结果成功（只是还没跑完）时 lastPollError 已清空，这才是真的「超时」。
+      throw recoverableTimeout(lastPollError)
     }
     // S2:每个轮询 tick 回报进度(人话 + 已等秒数),不再静默吞掉 status。软超时后切「仍在生成·已超常规时长」。
+    // 这一报同时给阶段时钟重新起算：下面这一次查结果的时限从这里开始（generationPhaseDeadline）。
     const overSoft = elapsedMs > softTimeoutMs
     options.onProgress?.({
       phase: overSoft ? 'still-generating' : 'generating',
       message: narrateProgress(overSoft ? 'still-generating' : 'generating', { elapsedMs }),
       taskId: initialResult.id,
     })
-    await delay(nextPollDelayMs(pollIntervalMs, rateLimitStreak, options.pollRandom))
+    await awaitUnlessCancelled(delay(nextPollDelayMs(pollIntervalMs, rateLimitStreak, options.pollRandom)), guard.cancelled)
     try {
-      const response = await fetchResult({
+      // 这次查结果有时限（这一格的时限；主进程开始落地时换成落地的时限），用户点停止也立刻不再等。
+      const response = await awaitWithinPhase(fetchResult({
         taskId: initialResult.id,
         vendor,
         taskKind: request.kind,
         prompt: request.prompt,
         modelKey: asTrimmedString(request.extras?.modelKey) || null,
-      })
+        projectId: options.projectTarget.projectId,
+      }), guard)
       if (cancelNodeId && isTaskCancelRequested(cancelNodeId)) throw new LocalTaskCancelledError()
       current = response.result
       pollFailureStreakStartedAt = null // 查成功 → 重置失败连击计数
+      lastPollError = undefined
       rateLimitStreak = 0
     } catch (error) {
+      throwIfAborted(options.signal)
       if (error instanceof LocalTaskCancelledError) throw error
+      // 时限到了（这次查结果一直没回音）：已经是结论，不当成一次可以再查的抖动——
+      // 再发一次只会在同一个卡住的地方再压一个请求。
+      if (isRecoverableTimeoutError(error) || isGenerationPhaseStalledError(error)) throw error
       // 查结果失败：免费重试(下一轮再查)，绝不冒泡触发重发。持续失败超 grace 或已到硬超时 → 落可找回。
       // 被限流才累计退避；别的失败（网络抖动等）复位，否则一次抖动就把间隔滚上去、白拖出片。
       rateLimitStreak = isRateLimitedPollError(error) ? rateLimitStreak + 1 : 0
+      lastPollError = error
       const now = Date.now()
       if (pollFailureStreakStartedAt == null) pollFailureStreakStartedAt = now
       if (now - pollFailureStreakStartedAt > POLL_FAILURE_GRACE_MS || now - startedAt > hardTimeoutMs) {
-        throw recoverableTimeout()
+        throw recoverableTimeout(error)
       }
       // 仍在 grace 内：回报「仍在生成」(对用户=后台还在等)，继续下一轮免费查询。
       options.onProgress?.({
@@ -452,25 +555,47 @@ async function waitForCatalogTaskResult(
 
 export function runCatalogGenerationTask(
   node: GenerationCanvasNode,
-  options: CatalogTaskActionOptions = {},
+  options: CatalogTaskRunOptions,
 ): Promise<GenerationNodeResult> {
+  // 这次运行的阶段时钟：每一次报进度都经过它（含主进程「开始落地」的广播），
+  // 每一个等主进程的 await 都照它设时限（generationPhaseDeadline）。
+  const clock = createPhaseClock()
+  const onProgress: NonNullable<CatalogTaskRunOptions['onProgress']> = (progress) => {
+    clock.report(progress.phase)
+    options.onProgress?.(progress)
+  }
   return withAssetLocalizationFeedback({
-    projectId: getActiveWorkbenchProjectId(), nodeId: node.id,
+    projectId: options.projectTarget.projectId, nodeId: node.id,
     subscribe: getDesktopBridge()?.assets?.onLocalizationStarted,
-    report: () => options.onProgress?.({ phase: 'finalizing', message: narrateProgress('finalizing') }),
-  }, () => runCatalogGenerationTaskWithFeedback(node, options))
+    report: () => onProgress({ phase: 'finalizing', message: narrateProgress('finalizing') }),
+  }, () => runCatalogGenerationTaskWithFeedback(node, { ...options, onProgress }, clock, options.onProgress))
 }
 
 async function runCatalogGenerationTaskWithFeedback(
   node: GenerationCanvasNode,
-  options: CatalogTaskActionOptions = {},
+  options: CatalogTaskRunOptions,
+  clock: PhaseClock,
+  displayProgress: CatalogTaskActionOptions['onProgress'],
 ): Promise<GenerationNodeResult> {
+  throwIfAborted(options.signal)
+  const projectId = options.projectTarget.projectId
+  // 服务商受理的回执（taskId）。拿到之前阶段到期只能诚实失败；拿到之后到期落「可找回」（免费重新拉取）。
+  let receipt: RecoverableTimeoutDetail | null = null
+  const guard: PhaseWaitGuard = {
+    clock,
+    cancelled: subscribeCatalogCancellation(node.id, options.signal),
+    recoverable: (phase, stalledMs) => receipt
+      ? new RecoverableTimeoutError(receipt, { message: describePhaseSilence(phase, stalledMs) })
+      : null,
+  }
   // S2 进度报告:每个阶段说人话(narrate 注册表),治"卡 30 秒像死了"(bug② 根因之一:
   // 此前轮询拿到 status 后随手丢弃,且无任何阶段回报)。
   const report = (phase: GenerationProgressPhase, taskId?: string, ctx?: ProgressNarrationContext) =>
     options.onProgress?.({ phase, message: narrateProgress(phase, ctx), ...(taskId ? { taskId } : {}) })
+  const totalStartedAt = Date.now()
+  const resolveStartedAt = Date.now()
   report('resolving')
-  const executableNode = await resolveExecutableNodeFromCatalog(node, options)
+  const executableNode = await awaitWithinPhase(resolveExecutableNodeFromCatalog(node, options), guard)
   const currentOptions = options.referenceContext
     ? { ...options, references: resolveGenerationReferences(executableNode, options.referenceContext) }
     : options
@@ -478,7 +603,7 @@ async function runCatalogGenerationTaskWithFeedback(
   const references = currentOptions.references
   if (getGenerationNodeExecutionKind(executableNode.kind) === 'video' && references?.relayFromVideoUrl) {
     const videoUrl = references.relayFromVideoUrl
-    await applyRelayFirstFrame(references)
+    await awaitWithinPhase(applyRelayFirstFrame(references, projectId), guard)
     for (const slot of readParameterReferenceSlots(executableNode.meta)) {
       // Generic image parameters can inherit explicit first_frame edges; video parameters keep the original clip.
       if (slot.mediaKind !== 'video' && references.parameterReferenceUrls?.[slot.key] === videoUrl) {
@@ -487,47 +612,72 @@ async function runCatalogGenerationTaskWithFeedback(
     }
   }
   const { vendor, request } = buildCatalogTaskRequest(executableNode, currentOptions)
+  const resolveMs = Date.now() - resolveStartedAt
 
   // 文本任务 + 调用方要逐字 → 走流式通道:逐 token 回调 onTextDelta,终态直接返回
   // (文本无轮询,流 resolve 即 succeeded),不走下面的 runTask + 轮询。runTask 覆盖项
   // (测试注入)优先,保持单测可控。
   if (options.onTextDelta && TEXT_STREAM_KINDS.has(request.kind) && !options.runTask) {
     const runTextStream = options.runTextStream || runWorkbenchTextTaskStream
+    const onTextDelta = options.onTextDelta
     report('requesting')
-    const streamed = await runTextStream(vendor, request, { onDelta: options.onTextDelta })
+    const submitStartedAt = Date.now()
+    // 流式文本每来一段就是一次进展：计时重新起算——长文本流得久是正常的，一段都不来才是卡住。
+    const streamed = await awaitWithinPhase(runTextStream(vendor, request, projectId, {
+      onDelta: (delta) => {
+        clock.heartbeat()
+        onTextDelta(delta)
+      },
+    }), guard)
+    const submitMs = Date.now() - submitStartedAt
     report('finalizing', streamed.id)
-    return normalizeCatalogTaskResult(streamed, executableNode)
+    const finalizeStartedAt = Date.now()
+    return attachGenerationPhaseTimings(normalizeCatalogTaskResult(streamed, executableNode, options.onMediaDimensions), {
+      resolveMs, submitMs, pollMs: 0, finalizeMs: Date.now() - finalizeStartedAt, totalMs: Date.now() - totalStartedAt,
+    })
   }
 
   const runTask = options.runTask || runWorkbenchTaskByVendor
   report('requesting')
-  // ComfyUI 新协议允许客户端预生成 prompt UUID。先登记 WS、再 POST /prompt，极快任务的首事件也有归属；
-  // 旧服若忽略该 UUID 并返回另一个 id，下方会切换 watcher，history 轮询始终照常兜底。
+  // ComfyUI 新协议允许客户端预生成 prompt UUID，先登记 WS 再提交，避免极快任务丢首个进度事件。
   const requestedComfyPromptId = isComfyuiVendorKey(vendor) ? crypto.randomUUID() : ''
   if (requestedComfyPromptId) {
     request.extras = { ...(request.extras ?? {}), comfyPromptId: requestedComfyPromptId }
   }
   let watchedPromptId = ''
   if (requestedComfyPromptId) {
-    const registered = await watchComfyuiProgress({
+    const registered = await awaitWithinPhase(watchComfyuiProgress({
       promptId: requestedComfyPromptId,
       nodeId: asTrimmedString(request.extras?.nodeId),
-      projectId: asTrimmedString(request.extras?.projectId),
+      projectId,
       taskKind: request.kind,
       modelKey: asTrimmedString(request.extras?.modelKey) || null,
       vendorKey: vendor,
-    })
+    }), guard)
     if (registered) watchedPromptId = requestedComfyPromptId
   }
+  throwIfAborted(options.signal)
+  const submitStartedAt = Date.now()
   let initialResult: TaskResultDto
   try {
-    initialResult = await runTask(vendor, request)
+    initialResult = await withSubmissionHeartbeat(
+      () => awaitWithinPhase(runTask(vendor, request, projectId), guard),
+      { ...options, onProgress: displayProgress }, clock,
+    )
   } catch (error) {
     if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
     throw error
   }
+  const submitMs = Date.now() - submitStartedAt
+  receipt = {
+    taskId: initialResult.id,
+    vendor,
+    taskKind: request.kind,
+    modelKey: asTrimmedString(request.extras?.modelKey),
+  }
   if (isTaskCancelRequested(asTrimmedString(request.extras?.nodeId))) {
     if (initialResult.id.startsWith('local-')) await getDesktopBridge()?.tasks.cancel?.(initialResult.id)
+    if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
     throw new LocalTaskCancelledError()
   }
   report('waiting', initialResult.id)
@@ -535,25 +685,31 @@ async function runCatalogGenerationTaskWithFeedback(
   const comfyWatching = isComfyuiVendorKey(vendor) && Boolean(initialResult.id)
   if (comfyWatching && initialResult.id !== watchedPromptId) {
     if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
-    const registered = await watchComfyuiProgress({
+    const registered = await awaitWithinPhase(watchComfyuiProgress({
       promptId: initialResult.id,
       nodeId: asTrimmedString(request.extras?.nodeId),
-      projectId: asTrimmedString(request.extras?.projectId),
+      projectId,
       taskKind: request.kind,
       modelKey: asTrimmedString(request.extras?.modelKey) || null,
       vendorKey: vendor,
-    })
+    }), guard)
     watchedPromptId = registered ? initialResult.id : ''
   }
+  const pollStartedAt = Date.now()
   let finalResult: TaskResultDto
   try {
-    finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options)
+    finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options, guard, receipt)
   } finally {
     if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
   }
+  const pollMs = Date.now() - pollStartedAt
   report('finalizing', initialResult.id)
-  const normalized = normalizeCatalogTaskResult(finalResult, executableNode)
-  // 结构闸：主进程漏本地化（projectId 时序为空）时，用「当前打开的项目」这一更可靠的 id 兜底，
-  // 绝不让厂商临时 URL 落进节点 → 隔天过期播不了。主进程已落地时这里判为非 http，零开销 no-op。
-  return localizeRemoteResultUrl(normalized, getActiveWorkbenchProjectId() ?? '', executableNode.id)
+  const finalizeStartedAt = Date.now()
+  const normalized = normalizeCatalogTaskResult(finalResult, executableNode, options.onMediaDimensions)
+  // 结构闸：主进程漏本地化时，按运行提交时固定的项目补一次本地化，绝不让厂商临时 URL 落进节点
+  // → 隔天过期播不了。切项目后结果仍落原项目。主进程已落地时这里判为非 http，零开销 no-op。
+  const localized = await awaitWithinPhase(localizeRemoteResultUrl(normalized, projectId, executableNode.id, options.onMediaDimensions), guard)
+  return attachGenerationPhaseTimings(localized, {
+    resolveMs, submitMs, pollMs, finalizeMs: Date.now() - finalizeStartedAt, totalMs: Date.now() - totalStartedAt,
+  })
 }

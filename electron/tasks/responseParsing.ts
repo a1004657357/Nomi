@@ -5,8 +5,10 @@
 import { extractTaskId as extractTaskIdShared } from "../ai/requestPipeline";
 import { firstString, isJsonRecord, readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
 
-/** 与 runtime 的 TaskResult["status"] 结构等价，解耦类型依赖。 */
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed";
+export type { TaskStatus } from "../shared/taskStatus";
+export { isTerminalStatus, isFailureStatus } from "../shared/taskStatus";
+import type { TaskStatus } from "../shared/taskStatus";
+import { classifyUpstreamTaskStatus, KNOWN_TASK_STATUSES } from "../shared/taskStatus";
 
 export function maybeParseJsonString(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -109,16 +111,15 @@ export function resolveTaskStatus(response: unknown, responseMapping: JsonRecord
   const fallbackStatus = rawStatus.toLowerCase();
   const recognized = (status: TaskStatus): TaskStatusResolution => ({ status, unrecognizedStatus: "" });
   const sm = statusMapping || {};
-  for (const status of ["queued", "running", "succeeded", "failed"] as const) {
+  for (const status of KNOWN_TASK_STATUSES) {
     const values = Array.isArray(sm[status]) ? sm[status] : [];
     if (values.map((item) => String(item).toLowerCase()).includes(fallbackStatus)) return recognized(status);
   }
-  // 通用状态词表（供应商无关）。kie 用 waiting/generating/fail，故并入默认 —— 让所有走这套
-  // 动词的供应商无需各自声明 statusMapping（避免每家一份并行映射）。
-  if (["queued", "queuing", "pending", "waiting", "in_queue", "starting"].includes(fallbackStatus)) return recognized("queued");
-  if (["running", "processing", "in_progress", "generating"].includes(fallbackStatus)) return recognized("running");
-  if (["succeeded", "success", "completed", "complete", "done", "stop", "length"].includes(fallbackStatus)) return recognized("succeeded");
-  if (["failed", "fail", "error", "timeout", "expired", "canceled", "cancelled"].includes(fallbackStatus)) return recognized("failed");
+  // 通用状态词表（供应商无关）：全仓唯一一份 shared/taskStatus，引擎 B 与这里问的是同一张表
+  // （#1213：四张表各漏不同的词，同一个上游动词在画布与制作 Run 里被判成两样）。
+  const vocabulary = classifyUpstreamTaskStatus(fallbackStatus);
+  if (vocabulary === "queued" || vocabulary === "running" || vocabulary === "succeeded") return recognized(vocabulary);
+  if (vocabulary === "failed" || vocabulary === "cancelled") return recognized(vocabulary);
   // 词表都没认出来 → 先看有没有**硬证据**能定案（有产物=成了、有 error 字段=挂了）。
   // 硬证据比动词可信，且能定案就不算「不知道」，故不标 unrecognizedStatus。
   if (assetUrls.length > 0) return recognized("succeeded");

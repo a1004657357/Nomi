@@ -1,0 +1,328 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-custom-vendor-lineage-routing",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "定制供应商调用脱离连接身份 owner",
+  "symptom": "定制供应商调用脱离连接身份 owner",
+  "direct_cause": "定制入口合入主线时没有沿用既有 owner 和真实消费者证据。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "electron/capabilityCore/pollingPolicy.ts",
+    "electron/capabilityCore/pollingPolicy.test.ts",
+    "electron/catalog/agnesPublicAssetProbe.ts",
+    "electron/catalog/agnesPublicAssetProbe.test.ts",
+    "electron/catalog/assetLocalization.ts",
+    "electron/catalog/assetLocalizationAgnes.test.ts",
+    "electron/catalog/seedBuiltins.ts",
+    "electron/tasks/profileTaskExecution.ts",
+    "src/ui/onboarding/onboardingDrawerConnections.ts"
+  ],
+  "entry_points": [
+    "electron/catalog/assetTransportDescribe.ts::resolveAssetIngestionWithFallback",
+    "electron/catalog/assetTransportRuntime.ts::resolveAssetIngestionWithFallback",
+    "electron/catalog/customCallDispatch.ts::resolveAssetIngestionWithFallback",
+    "electron/capabilityCore/pollingPolicy.ts::builtinVendorKeyOfKey",
+    "electron/catalog/agnesPublicAssetProbe.ts::isVendorOfBuiltin",
+    "electron/catalog/assetLocalization.ts::isVendorOfBuiltin",
+    "electron/catalog/connectionVendorKey.ts::builtinVendorKeyOfKey",
+    "electron/catalog/kieGptImage2.ts::builtinVendorKeyOfKey",
+    "electron/catalog/relayImageEditMigration.ts::builtinVendorKeyOfKey",
+    "electron/catalog/vendorAuthSpec.ts::builtinVendorKeyOfKey",
+    "electron/shared/builtinVendorIdentity.ts::builtinVendorKeyOfKey",
+    "electron/shared/contracts/vendorPreference.ts::builtinVendorKeyOfKey",
+    "src/config/modelIdentity.ts::builtinVendorKeyOfKey",
+    "src/ui/onboarding/duplicateHostConnections.ts::builtinVendorKeyOfKey",
+    "src/ui/onboarding/ModelSettingsHome.tsx::builtinVendorKeyOfKey",
+    "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx::builtinVendorKeyOfKey",
+    "src/workbench/generationCanvas/runner/assetUploadConsent.ts::isVendorOfBuiltin",
+    "src/workbench/settings/AiModelsSection.tsx::builtinVendorKeyOfKey"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留用户功能、项目与素材，不提交真实生成，不修改账号、密钥或 Cookie。",
+    "Agnes 兄弟连接使用原有视频轮询节流、图生视频探测和已批准上传链；其他供应商不被误认。",
+    "有 vendor 数据时按 lineage 解析，没有时才使用共享 key 规则。",
+    "种子映射迁移仍只修改原有两条精确主连接种子 ID，不迁移用户自定义映射。",
+    "首页排重派生自实际已投影的网页账号卡，不再维护第二个身份 Set。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/shared/builtinVendorIdentity.ts",
+    "tests": [
+      "electron/capabilityCore/pollingPolicy.test.ts",
+      "electron/catalog/agnesPublicAssetProbe.test.ts",
+      "electron/catalog/assetLocalizationAgnes.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/catalog/assetTransportDescribe.ts",
+      "symbol": "resolveAssetIngestionWithFallback"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/assetTransportRuntime.ts",
+      "symbol": "resolveAssetIngestionWithFallback"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/customCallDispatch.ts",
+      "symbol": "resolveAssetIngestionWithFallback"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/pollingPolicy.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/agnesPublicAssetProbe.ts",
+      "symbol": "isVendorOfBuiltin"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/assetLocalization.ts",
+      "symbol": "isVendorOfBuiltin"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/connectionVendorKey.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/kieGptImage2.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/relayImageEditMigration.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/vendorAuthSpec.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/builtinVendorIdentity.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/contracts/vendorPreference.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "src/config/modelIdentity.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/onboarding/duplicateHostConnections.ts",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/onboarding/ModelSettingsHome.tsx",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx",
+      "symbol": "builtinVendorKeyOfKey"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/assetUploadConsent.ts",
+      "symbol": "isVendorOfBuiltin"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/settings/AiModelsSection.tsx",
+      "symbol": "builtinVendorKeyOfKey"
+    }
+  ],
+  "door_reduction": {
+    "before": 16,
+    "after": 18,
+    "why_not": "16→18 是遗漏消费者接回既有身份 owner；不删除供应商、模型、探测、上传同意或映射。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "electron/shared/builtinVendorIdentity.ts",
+      "symbol": "isVendorOfBuiltin",
+      "responsibility": "定制供应商调用脱离连接身份 owner"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/catalog/assetTransportDescribe.ts",
+      "entry_point": "resolveAssetIngestionWithFallback",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/assetTransportRuntime.ts",
+      "entry_point": "resolveAssetIngestionWithFallback",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/customCallDispatch.ts",
+      "entry_point": "resolveAssetIngestionWithFallback",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/capabilityCore/pollingPolicy.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/agnesPublicAssetProbe.ts",
+      "entry_point": "isVendorOfBuiltin",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/assetLocalization.ts",
+      "entry_point": "isVendorOfBuiltin",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/connectionVendorKey.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/kieGptImage2.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/relayImageEditMigration.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/catalog/vendorAuthSpec.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/shared/builtinVendorIdentity.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "electron/shared/contracts/vendorPreference.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "src/config/modelIdentity.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "src/ui/onboarding/duplicateHostConnections.ts",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "src/ui/onboarding/ModelSettingsHome.tsx",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/assetUploadConsent.ts",
+      "entry_point": "isVendorOfBuiltin",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    },
+    {
+      "path": "src/workbench/settings/AiModelsSection.tsx",
+      "entry_point": "builtinVendorKeyOfKey",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/builtinVendorIdentity.ts",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "复用仓库现有 owner，并用真实源文件和正反向回归约束，不给具体入口增加豁免。",
+    "artifacts": [
+      "electron/capabilityCore/pollingPolicy.ts",
+      "electron/capabilityCore/pollingPolicy.test.ts",
+      "electron/catalog/agnesPublicAssetProbe.ts",
+      "electron/catalog/agnesPublicAssetProbe.test.ts",
+      "electron/catalog/assetLocalization.ts",
+      "electron/catalog/assetLocalizationAgnes.test.ts",
+      "electron/catalog/seedBuiltins.ts",
+      "electron/tasks/profileTaskExecution.ts",
+      "src/ui/onboarding/onboardingDrawerConnections.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/capabilityCore/pollingPolicy.test.ts",
+    "electron/catalog/agnesPublicAssetProbe.test.ts",
+    "electron/catalog/assetLocalizationAgnes.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/capabilityCore/pollingPolicy.test.ts",
+    "electron/catalog/agnesPublicAssetProbe.test.ts",
+    "electron/catalog/assetLocalizationAgnes.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用锁定依赖，没有升级或新增三方依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

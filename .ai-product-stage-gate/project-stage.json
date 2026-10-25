@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "current_gate": 8,
+  "current_gate_name": "AI capability integration",
+  "requires_user_approval_to_advance": true,
+  "approved_gates": [
+    0,
+    6
+  ],
+  "history": [
+    {
+      "from": 0,
+      "from_name": "Product intent",
+      "to": 6,
+      "to_name": "Local persistence",
+      "advanced_at": "2026-07-04T08:21:37.989512+00:00"
+    },
+    {
+      "from": 6,
+      "from_name": "Local persistence",
+      "to": 8,
+      "to_name": "AI capability integration",
+      "advanced_at": "2026-07-04T09:11:13.113555+00:00"
+    }
+  ],
+  "gates": [
+    {
+      "id": 0,
+      "name": "Product intent",
+      "required_artifacts": [
+        "Product Intent Brief"
+      ],
+      "allowed_work": [
+        "clarify product idea",
+        "name primary user",
+        "define core workflow",
+        "list non-goals"
+      ],
+      "forbidden_work": [
+        "prd",
+        "architecture",
+        "prototype",
+        "implementation code"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "Reference research",
+      "required_artifacts": [
+        "Reference Notes"
+      ],
+      "allowed_work": [
+        "reference research",
+        "workflow pattern extraction",
+        "competitive analysis"
+      ],
+      "forbidden_work": [
+        "implementation code",
+        "database",
+        "auth",
+        "api wiring"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "PRD and stage plan",
+      "required_artifacts": [
+        "Stage-Gated PRD"
+      ],
+      "allowed_work": [
+        "prd",
+        "scope",
+        "module boundaries",
+        "acceptance criteria"
+      ],
+      "forbidden_work": [
+        "production code",
+        "backend",
+        "database",
+        "auth",
+        "ai api"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Interface direction",
+      "required_artifacts": [
+        "Interface Direction"
+      ],
+      "allowed_work": [
+        "screen map",
+        "layout options",
+        "interface cards"
+      ],
+      "forbidden_work": [
+        "real app plumbing",
+        "backend",
+        "database"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Static demo",
+      "required_artifacts": [
+        "Static Demo"
+      ],
+      "allowed_work": [
+        "static ui",
+        "mock data",
+        "visual hierarchy"
+      ],
+      "forbidden_work": [
+        "real persistence",
+        "backend",
+        "auth",
+        "real upload",
+        "ai api"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Interactive prototype",
+      "required_artifacts": [
+        "Interactive Prototype"
+      ],
+      "allowed_work": [
+        "local ui state",
+        "mock interactions",
+        "fake flows"
+      ],
+      "forbidden_work": [
+        "production persistence",
+        "backend",
+        "real auth",
+        "real ai calls"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Local persistence",
+      "required_artifacts": [
+        "Persistence Prototype"
+      ],
+      "allowed_work": [
+        "local storage",
+        "indexeddb",
+        "local dev files"
+      ],
+      "forbidden_work": [
+        "remote database",
+        "deployed backend",
+        "production uploads"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Backend and database",
+      "required_artifacts": [
+        "Backend Slice"
+      ],
+      "allowed_work": [
+        "api",
+        "database schema",
+        "auth",
+        "real file handling"
+      ],
+      "forbidden_work": [
+        "ai api unless accepted"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "AI capability integration",
+      "required_artifacts": [
+        "AI Capability Slice"
+      ],
+      "allowed_work": [
+        "model calls",
+        "prompts",
+        "eval cases",
+        "cost checks",
+        "safety checks"
+      ],
+      "forbidden_work": [
+        "unreviewed production launch"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "Release acceptance",
+      "required_artifacts": [
+        "Release Report"
+      ],
+      "allowed_work": [
+        "tests",
+        "security checks",
+        "docs",
+        "release readiness"
+      ],
+      "forbidden_work": [
+        "new feature expansion"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-21-pavo-semantic-control-readiness",
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-20",
+  "problem_type": "DOM参数配置未等待语义控件并以位置及全局选中态替代控件身份",
+  "symptom": "真实Pavo任务配置模型时打开视频类型菜单；模型、比例、清晰度、时长回读失败，任务在官网提交认领前终止。",
+  "direct_cause": "chooseOption在语义控件不存在时立即选择controls[0]且缓存旧DOM引用；任意全局选中态和子串也能误报成功。",
+  "class_root": "外部页面的编辑器、参数控件加载及React重挂载没有共同的语义就绪和控件归属检查边界。",
+  "affected_population": [
+    "Pavo网页加载未完成或参数控件被重挂载的图片/视频配置",
+    "存在同名较长模型或无关弹层选中项的页面",
+    "多个frame含编辑器时的composer广播",
+    "同一已登录profile由不同宿主配置打开时的中英文输出设置"
+  ],
+  "scope_paths": [
+    "integrations/pavo-web-adapter/content.js"
+  ],
+  "entry_points": [
+    "任务面板和嵌入式抽屉发来的applyPreset",
+    "chooseOption模型与参考模式",
+    "chooseOutputSetting输出参数",
+    "composer消息接收"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "本轮已在已登录的官网顶层DOM及生产扩展上获得零提交失败记录。修复的是内部选择器归属和就绪不变量，不推断官网私有API。",
+  "invariants": [
+    "参数选择不能按下拉位置猜测身份",
+    "必须等待对应语义控件完成加载并在重挂载后重新定位",
+    "成功必须是当前目标控件精确回读；无关全局选中项与已卸载弹窗不能充当证据",
+    "当前顶层composer协议只由顶层frame应答",
+    "官网中英文设置标签共用同一语义边界，不依赖宿主语言恰好一致",
+    "参数失败仍阻断提交认领与生成点击"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "messageListener"
+    },
+    {
+      "kind": "write",
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "chooseOption"
+    },
+    {
+      "kind": "write",
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "chooseOutputSetting"
+    },
+    {
+      "kind": "write",
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "applyPreset"
+    }
+  ],
+  "door_reduction": {
+    "before": 4,
+    "after": 4,
+    "why_not": "实际执行 node scripts/door-map.mjs chooseOption chooseOutputSetting applyPreset messageListener --roots=integrations/pavo-web-adapter 得到四门。消息接收、配置编排、下拉选择与输出设置职责保留；删除位置猜测和全局选中旁路而不是新增并行协议。"
+  },
+  "generality_proof": "模型和参考模式共用语义控件定位及精确回读，只有参考模式接受明确的中英文同义标签，模型名称不模糊匹配；输出设置只操作当前设置按钮通过aria关联的唯一可见弹窗，等待具体目标控件加载，成功仅由当前输出摘要确认；位置、全局文本弹窗和缓存选中态旁路删除。顶层frame边界使面板/抽屉广播作用于与getPageInfo同一composer。",
+  "rewrite_decision": {
+    "decision": "rewrite",
+    "characterization_test": "electron/pavoWeb/contentPreset.test.ts"
+  },
+  "shared_boundaries": [
+    {
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "chooseOutputSetting",
+      "responsibility": "绑定设置按钮关联的唯一可见弹窗，等待目标控件加载，只从当前摘要确认比例、清晰度和数字时长"
+    },
+    {
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "chooseOption",
+      "responsibility": "有界等待、语义定位、准确选项与重挂载后控件回读"
+    },
+    {
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "applyPreset",
+      "responsibility": "所有配置入口共用相同参数选择与严格回读"
+    },
+    {
+      "path": "integrations/pavo-web-adapter/content.js",
+      "symbol": "messageListener",
+      "responsibility": "composer消息只由当前顶层页面处理"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "integrations/pavo-web-adapter/panel.js",
+      "entry_point": "applyPresetWithReadback/runTask",
+      "disposition": "enforced",
+      "evidence": "面板提交前必须检查applyPreset的每个结果，失败在claim前终止。"
+    },
+    {
+      "path": "integrations/pavo-web-adapter/content.js",
+      "entry_point": "applyPreset model/referenceMode",
+      "disposition": "enforced",
+      "evidence": "两种下拉共用chooseOption，无索引兜底。"
+    },
+    {
+      "path": "integrations/pavo-web-adapter/content.js",
+      "entry_point": "harvestAllConversations/fetchConversationVideos",
+      "disposition": "not-affected",
+      "evidence": "既有收片操作不属于参数修改，保留原顶层处理约束，不改变收片及费用机制。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "任意网络延迟、官方DOM重挂载或同名选项均能重复；真实任务和零提交现场均已失败。",
+    "same_class_scan": [
+      "rg chooseOption/applyPreset/chooseOutputSetting/composerActions 于content.js与panel.js",
+      "检查all_frames清单及getPageInfo顶层规则",
+      "已保存8例测试7红1绿和真实顶层控件loading证据",
+      "真实任务SD-20261021-u2ro-002的English控件快照；设置及按钮入口对照查询发现弹窗仅匹配中文"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "integrations/pavo-web-adapter/content.js",
+    "invariant": "参数成功须有当前就绪语义控件的精确回读",
+    "failure_mode": "有界等待失败返回false，由面板在提交认领前拒绝，不自动重提",
+    "exception_policy": "none",
+    "strategy": "删除位置索引、全局选中、无归属弹窗及旧弹窗成功旁路；按当前按钮的aria归属解析参数弹窗并等待目标控件；明确模式同义词不扩散到模型名称匹配。",
+    "artifacts": [
+      "integrations/pavo-web-adapter/content.js"
+    ]
+  },
+  "regression_tests": [
+    "electron/pavoWeb/contentPreset.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/pavoWeb/contentPreset.test.ts"
+  ],
+  "invariant_owner_layer": {
+    "layer": "integrations/pavo-web-adapter/content.js",
+    "tests": ["electron/pavoWeb/contentPreset.test.ts"]
+  },
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "integrations/pavo-web-adapter/content.js"
+    ],
+    "rationale": "删除controls[fallbackIndex]及全局aria-selected成功判断，不留第二套兼容选择器。"
+  },
+  "dependency_lifecycle": {
+    "decision": "retain-with-exit",
+    "current": "Pavo官网DOM上的现有Chrome MV3适配",
+    "target": "语义控件身份和严格回读受回归及零提交真实验收约束的既有扩展",
+    "rationale": "无法升级第三方官网；不以取消校验或跳过安全策略适配页面。",
+    "exit_criteria": [
+      "若官方提供可用且获授权的稳定生成API，优先评估替换DOM配置路径；未证实当前存在该接口",
+      "官网控件无法明确识别时停止而不猜测或付费"
+    ]
+  },
+  "migration": "不迁移项目或登录数据；重新加载扩展后使用新选择规则。既有失败任务不改回pending、不自动重提。",
+  "residual_risks": [
+    "官网DOM仍会变动，零提交参数验收不能替代真实生成与回收",
+    "当前顶层composer之外的未来iframe编辑器需显式发现协议后再支持",
+    "参数失败不代表余额不足；实际费用仍由Provider返回证据决定"
+  ]
+}

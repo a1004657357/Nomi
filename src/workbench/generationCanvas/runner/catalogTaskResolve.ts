@@ -1,3 +1,4 @@
+import type { ProjectBinding } from '../../../../electron/shared/projectBinding'
 import i18n from '../../../i18n'
 import { tagNomiError } from '../../../../electron/shared/nomiErrorCodes'
 import {
@@ -8,11 +9,13 @@ import {
   listWorkbenchModelCatalogVendors,
 } from '../../api/modelCatalogApi'
 import {
+  type FetchWorkbenchTaskResultRequestDto,
   type TaskKind,
+  type TaskProjectIdentity,
   type TaskRequestDto,
   type TaskResultDto,
 } from '../../api/taskApi'
-import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
+import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeRunAttempt } from '../model/generationCanvasTypes'
 import { projectParameterReferenceSlots } from '../model/parameterReferenceSlots'
 import type { GenerationProgressPhase } from '../../observability/narrate'
 import {
@@ -25,14 +28,18 @@ import {
   modeTransportFor,
   replaceCustomCapabilityContractMeta,
   resolveArchetypeForModel,
-} from '../../../config/modelArchetypes'
+} from '../../../../electron/shared/modelArchetypes'
 import { currentArchetypeMode } from '../nodes/controls/archetypeMeta'
 import { isComfyuiVendorKey } from '../model/comfyuiVendor'
 import { resolveComfyWorkflowTaskKind } from '../../../../electron/catalog/comfyuiWorkflowTaskContract'
 import { readParameterReferenceContract } from '../../../../electron/catalog/parameterReferenceContract'
-import { remapArchetypeMode, resolveUsableModelForNode, usableVendorKeys } from './usableVendorModel'
+import { remapArchetypeMode, resolveUsableModelForNode } from './usableVendorModel'
+import type { MediaDimensions } from '../nodes/nodeSizing'
+import { recoverCatalogModelKind } from './catalogModelKindRecovery'
 
 export type CatalogTaskActionOptions = {
+  /** Intrinsic source dimensions discovered while localizing a media result. */
+  onMediaDimensions?: (dimensions: MediaDimensions) => void
   references?: Partial<ResolvedGenerationReferences>
   /** Re-resolve declared inputs against the freshly selected catalog model, without persisting URLs. */
   referenceContext?: { nodes?: GenerationCanvasNode[]; edges?: GenerationCanvasEdge[] }
@@ -44,18 +51,16 @@ export type CatalogTaskActionOptions = {
   idempotencyKey?: string
   /** Renderer disclosure gate for a public temporary-host fallback. */
   anonymousAssetHostingConsent?: 'allow'
-  runTask?: (vendor: string, request: TaskRequestDto) => Promise<TaskResultDto>
-  listCatalogModels?: (params: { kind: BillingModelKind; enabled: true }) => Promise<ModelCatalogModelDto[]>
+  runTask?: (vendor: string, request: TaskRequestDto, projectId: TaskProjectIdentity) => Promise<TaskResultDto>
+  listCatalogModels?: (params: { kind?: BillingModelKind; enabled?: boolean; vendorKey?: string }) => Promise<ModelCatalogModelDto[]>
   listCatalogVendors?: () => Promise<ModelCatalogVendorDto[]>
-  fetchTaskResult?: (payload: {
-    taskId: string
-    vendor?: string
-    taskKind?: TaskKind
-    prompt?: string | null
-    modelKey?: string | null
-  }) => Promise<{ vendor: string; result: TaskResultDto }>
+  fetchTaskResult?: (payload: FetchWorkbenchTaskResultRequestDto) => Promise<{ vendor: string; result: TaskResultDto }>
   pollIntervalMs?: number
   pollTimeoutMs?: number
+  /** 首次提交本身较慢（如 Codex 内置图像生成）时，按此间隔回报等待心跳。 */
+  requestHeartbeatMs?: number
+  /** 本地取消信号。远程供应商若无取消 API，只停止本地等待，不承诺撤销远端计费任务。 */
+  signal?: AbortSignal
   /** 轮询抖动的随机源（默认 Math.random）。只为让抖动可直测，产品代码不传。 */
   pollRandom?: () => number
   /** S2 进度报告:catalog 任务各阶段回报(phase 经 narrate 翻成人话,治 bug② 卡 30 秒像死了)。 */
@@ -66,9 +71,15 @@ export type CatalogTaskActionOptions = {
   runTextStream?: (
     vendor: string,
     request: TaskRequestDto,
+    projectId: TaskProjectIdentity,
     opts: { onDelta?: (delta: string) => void },
   ) => Promise<TaskResultDto>
+  /** 运行时把断开供应商或错误模型类型修复后，通知画布把解析结果写回节点。 */
+  onResolvedNode?: (node: GenerationCanvasNode) => void | Promise<void>
 }
+
+/** 真正提交一次任务的选项：运行所属项目（提交那一刻签发）必填。任务身份、结果本地化、接力抽帧只认它，不读「当前项目」。 */
+export type CatalogTaskRunOptions = CatalogTaskActionOptions & { projectTarget: ProjectBinding }
 
 export function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -124,8 +135,37 @@ export function selectedModelKey(node: GenerationCanvasNode): string {
   )
 }
 
+/**
+ * 这个节点**此刻会发给谁**：与 `buildCatalogTaskRequest` 读同一对选择器（`selectedVendor` / `selectedModelKey`），
+ * 所以它就是请求真正发往的那一家、那个模型。运行开始时读一次、存进运行记录（GenerationNodeRunRecord.attempt）。
+ * 选不出完整的一对（还没选模型）→ undefined：没有「发给谁」，也就没有「谁失败了」。
+ */
+export function dispatchedAttempt(node: GenerationCanvasNode): GenerationNodeRunAttempt | undefined {
+  const vendorKey = selectedVendor(node)
+  const modelKey = selectedModelKey(node)
+  return vendorKey && modelKey ? { vendorKey, modelKey } : undefined
+}
+
 function catalogKindForNode(node: GenerationCanvasNode): BillingModelKind {
   return getGenerationNodeCatalogKind(node.kind)
+}
+
+/**
+ * 这一行是不是**整条不在目录里了**（这家启用着，却查不到任何 kind、任何启停状态的同名行）。
+ *
+ * 判据与执行侧逐条同序：findExecutableModel 先看「这家启用没有」，再看「记录在不在」——不在就是
+ * `Model is retired`（seedBuiltins 的退役清单摘掉了它）。这里不下「退役」结论，只决定**别抢答**：
+ * 行不在 → 原样交给执行侧那唯一的判定；行还在（停用 / 钥匙不通 / 类型不符）→ 仍由下面给「供应商断开」的恢复路。
+ */
+async function catalogRowIsGone(
+  listCatalogModels: NonNullable<CatalogTaskActionOptions['listCatalogModels']>,
+  vendors: readonly ModelCatalogVendorDto[],
+  vendorKey: string,
+  modelKey: string,
+): Promise<boolean> {
+  if (!modelKey || !vendors.some((row) => row.key === vendorKey && row.enabled)) return false
+  const rows = await listCatalogModels({ vendorKey })
+  return !rows.some((row) => row.vendorKey === vendorKey && [row.modelKey, row.modelAlias].includes(modelKey))
 }
 
 export async function resolveExecutableNodeFromCatalog(
@@ -134,18 +174,21 @@ export async function resolveExecutableNodeFromCatalog(
 ): Promise<GenerationCanvasNode> {
   const vendor = selectedVendor(node)
   const modelKey = selectedModelKey(node)
+  const expectedKind = catalogKindForNode(node)
+  const meta = node.meta || {}
+  const sourceArchetype = resolveTaskArchetype(meta)
+  const modelKindMismatch = Boolean(sourceArchetype && sourceArchetype.kind !== expectedKind)
+  if (modelKindMismatch) return recoverCatalogModelKind(node, expectedKind, sourceArchetype!.kind, options)
 
   // 没钉供应商也没 modelKey → 交给下游报「请先选择模型」（保持原行为）。
   if (!vendor && !modelKey) return node
 
-  // 「可用供应商」需要 catalog runtime；非 Electron 上下文（单测/Web）拿不到 → 退回旧行为：信任钉死的
+  // 目录需要 catalog runtime；非 Electron 上下文（单测/Web）拿不到 → 退回旧行为：信任钉死的
   // 供应商（无法重解析，但也不该误抛）。能拿到时才进入「断开→自动迁移」新逻辑。
   const listVendors = options.listCatalogVendors || listWorkbenchModelCatalogVendors
   let vendors: ModelCatalogVendorDto[]
-  let usable: Set<string>
   try {
     vendors = await listVendors()
-    usable = usableVendorKeys(vendors)
   } catch {
     return node
   }
@@ -156,13 +199,20 @@ export async function resolveExecutableNodeFromCatalog(
   // Vendor availability is not proof that this exact model is executable: a sibling can keep the source
   // vendor alive after this model has migrated to a candidate revision. A missing exact row therefore
   // continues into the same whole-catalog lineage resolver used for disconnected vendors.
-  if (vendor && usable.has(vendor)) {
+  // 目录里还有没有这一行供应商，是**身份**问题不是可用性问题（可用性由每行模型自带的 availability 答）。
+  // 留着这道前置判断是为了「这家整个没了」时别白跑一次目录读取——那一趟在没有 catalog bridge 的
+  // 调用方那里会被下面的 catch 吞成「原样返回」，用户就再也收不到「去模型设置」那句指路了。
+  if (vendor && vendors.some((row) => row.key === vendor)) {
     try {
       models = await listCatalogModels({ kind: catalogKindForNode(node), enabled: true })
       const match = models.find((model) =>
-        model.published && model.vendorKey === vendor && [model.modelKey, model.modelAlias].includes(modelKey),
+        model.availability.usable && model.vendorKey === vendor && [model.modelKey, model.modelAlias].includes(modelKey),
       )
       if (match) return { ...node, meta: projectParameterReferenceSlots(node.meta || {}, match.meta) }
+      // 这家启用着、目录里却**整条都没有**这一行 = 已退役下线（如 Sora 2）。那不是「供应商断开」：
+      // 原样交给执行侧的唯一判定（findExecutableModel → `Model is retired`），节点落「这个模型已经下线了」
+      // +「换个模型」，身份一个字不改（2026-09-09「可用性不许改选中身份」的裁决不变）。
+      if (await catalogRowIsGone(listCatalogModels, vendors, vendor, modelKey)) return node
     } catch {
       // Non-desktop/test callers may have no model catalog bridge; retain their already validated declaration.
       return node
@@ -186,9 +236,8 @@ export async function resolveExecutableNodeFromCatalog(
     }
   }
 
-  const meta = node.meta || {}
   const modelAlias = asTrimmedString(meta.modelAlias)
-  const match = resolveUsableModelForNode({ modelKey, modelAlias, vendor, meta, models, vendors, usable })
+  const match = resolveUsableModelForNode({ modelKey, modelAlias, vendor, meta, models, vendors })
   if (!match) {
     const sourceArchetype = resolveArchetypeForModel({ modelKey, modelAlias, vendorKey: vendor, meta })
     const brand = sourceArchetype?.label || asTrimmedString(meta.modelLabel) || modelKey
@@ -199,14 +248,18 @@ export async function resolveExecutableNodeFromCatalog(
   if (!resolvedVendor) throw new Error(`模型目录缺少 vendorKey：${modelKey}`)
   // 跨档案迁移（family 兜底，如 Seedance kie↔apimart）时把 node.meta.archetype 重映射到目标档案；
   // 同档案（同 id）保持原样（参数槽会按新 vendorKey 自动特化，无需动用户填的值）。
-  const sourceArchetype = resolveArchetypeForModel({ modelKey, modelAlias, vendorKey: vendor, meta })
-  const targetArchetype = resolveArchetypeForModel({ modelKey: match.modelKey, modelAlias: match.modelAlias, vendorKey: resolvedVendor, meta: match.meta })
+  const targetArchetype = resolveArchetypeForModel({
+    modelKey: match.modelKey,
+    modelAlias: match.modelAlias,
+    vendorKey: resolvedVendor,
+    meta: match.meta,
+  })
   const remappedArchetype = targetArchetype
     ? remapArchetypeMode(sourceArchetype, asTrimmedString((meta.archetype as { modeId?: unknown } | undefined)?.modeId) || undefined, targetArchetype, vendor, resolvedVendor)
     : null
   const migratedMeta = replaceCustomCapabilityContractMeta(meta, match.meta)
 
-  return {
+  const resolvedNode: GenerationCanvasNode = {
     ...node,
     meta: projectParameterReferenceSlots({
       ...migratedMeta,
@@ -221,9 +274,14 @@ export async function resolveExecutableNodeFromCatalog(
         : { imageModel: asTrimmedString(match.modelKey) || modelKey, imageModelVendor: resolvedVendor }),
     }, match.meta),
   }
+  await options.onResolvedNode?.(resolvedNode)
+  return resolvedNode
 }
 
-export function resolveTaskKind(node: GenerationCanvasNode, references: Partial<ResolvedGenerationReferences>): TaskKind {
+export function resolveTaskKind(
+  node: GenerationCanvasNode,
+  references: Partial<ResolvedGenerationReferences>,
+): TaskKind {
   const executionKind = getGenerationNodeExecutionKind(node.kind)
   const meta = node.meta || {}
   // 认得档案的模型（视频**或图像**）：mapping 桶**显式**由档案声明（供应商特化 > 当前模式 > 档案级，
@@ -236,6 +294,10 @@ export function resolveTaskKind(node: GenerationCanvasNode, references: Partial<
   if (executionKind === 'video' || executionKind === 'image' || executionKind === 'audio' || executionKind === 'model3d') {
     const archetype = resolveTaskArchetype(meta)
     if (archetype) {
+      const expected = catalogKindForNode(node)
+      if (archetype.kind !== expected) {
+        throw new Error(`Model kind mismatch: ${selectedModelKey(node)} (registered=${archetype.kind}, requested=${expected})`)
+      }
       const transport = modeTransportFor(currentArchetypeMode(archetype, meta), archetype, selectedVendor(node))
       if (transport) return transport
     }

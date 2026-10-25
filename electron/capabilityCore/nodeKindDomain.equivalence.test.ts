@@ -21,7 +21,7 @@ import {
   NODE_RENDER_SAFETY as SRC_NODE_RENDER_SAFETY,
   getGenerationNodeFootprintSize as srcFootprint,
 } from '../../src/workbench/generationCanvas/model/generationNodeKinds'
-import { getDefaultCategoryForNodeKind as srcCategory } from '../../src/workbench/generationCanvas/model/generationCanvasTypes'
+import { getDefaultCategoryForNodeKind as srcCategory, type GenerationCanvasNode } from '../../src/workbench/generationCanvas/model/generationCanvasTypes'
 import { isShotNumberedNode as srcIsShotNumbered, nextShotIndex as srcNextShotIndex } from '../../src/workbench/generationCanvas/model/shotNumbering'
 
 describe('nodeKindDomain 等价性（electron 镜像 === src registry 单一真相源）', () => {
@@ -33,7 +33,7 @@ describe('nodeKindDomain 等价性（electron 镜像 === src registry 单一真�
     expect(Object.keys(NODE_KIND_DEFAULT_SIZE).sort()).toEqual([...GENERATION_NODE_KINDS].sort())
   })
 
-  it('每个 registry kind 的英文默认标题 === registry.defaultTitle', () => {
+  it('每个 registry kind 的默认标题 === registry.defaultTitle', () => {
     for (const kind of GENERATION_NODE_KINDS) {
       const plugin = GENERATION_NODE_PLUGIN_BY_KIND[kind]
       expect(NODE_KIND_DEFAULT_TITLE[kind]).toBe(plugin.defaultTitle)
@@ -54,13 +54,14 @@ describe('nodeKindDomain 等价性（electron 镜像 === src registry 单一真�
     }
   })
 
-  it('占镜号判定与 src isShotNumberedNode 一致（含 referenceSheet/storyboardKeyframe 排除）', () => {
+  it('占镜号判定与 src isShotNumberedNode 一致（含参考卡、首帧与派生关键帧排除）', () => {
     const cases: Array<{ kind: string; categoryId?: string; meta?: Record<string, unknown> }> = []
     for (const kind of GENERATION_NODE_KINDS) {
       cases.push({ kind, categoryId: 'shots' })
       cases.push({ kind, categoryId: 'cast' })
       cases.push({ kind, categoryId: 'shots', meta: { referenceSheet: true } })
       cases.push({ kind, categoryId: 'shots', meta: { storyboardKeyframe: true } })
+      cases.push({ kind, categoryId: 'shots', meta: { excludeFromShotNumbering: true } })
       cases.push({ kind }) // categoryId 缺省
     }
     for (const c of cases) {
@@ -71,8 +72,22 @@ describe('nodeKindDomain 等价性（electron 镜像 === src registry 单一真�
   })
 
   it('nextShotIndex 与 src 一致', () => {
-    const nodes = [{ shotIndex: 3 }, { shotIndex: 7 }, {}]
-    expect(nodeKindNextShotIndex(nodes)).toBe(srcNextShotIndex(nodes as Parameters<typeof srcNextShotIndex>[0]))
+    const cases: Partial<GenerationCanvasNode>[] = [
+      { kind: 'image', shotIndex: 3 },
+      { kind: 'video', shotIndex: 7 },
+      { kind: 'character', shotIndex: 100 },
+      { kind: 'image', shotIndex: 101, meta: { referenceSheet: true } },
+      { kind: 'image', shotIndex: 102, meta: { storyboardKeyframe: true } },
+      { kind: 'keyframe', shotIndex: 103, meta: { excludeFromShotNumbering: true } },
+      { kind: 'image', shotIndex: 104, categoryId: 'cast' },
+      {},
+    ]
+    const nodes = cases.map((node, index): GenerationCanvasNode => ({
+      id: `node-${index}`, kind: 'image', title: '', position: { x: 0, y: 0 }, ...node,
+    }))
+    expect(nodeKindNextShotIndex(nodes)).toBe(8)
+    expect(nodeKindNextShotIndex(nodes)).toBe(srcNextShotIndex(nodes))
     expect(nodeKindNextShotIndex([])).toBe(srcNextShotIndex([]))
+    expect(nodeKindNextShotIndex([{ shotIndex: 99 }])).toBe(1)
   })
 })

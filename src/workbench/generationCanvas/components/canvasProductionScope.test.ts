@@ -42,6 +42,13 @@ describe('eligibleGenerationNodeIds', () => {
 
     expect(eligibleGenerationNodeIds(nodes, { nodeIds: ['c', 'missing', 'a'] })).toEqual(['a', 'c'])
   })
+
+  it('excludes explicitly protected planning nodes from batch generation', () => {
+    const protectedNode = node('planned-video', 'video', 'idle')
+    protectedNode.meta = { excludedFromBatch: true }
+
+    expect(eligibleGenerationNodeIds([protectedNode], { categoryId: 'shots' })).toEqual([])
+  })
 })
 
 describe('nodesInCanvasProductionScope', () => {

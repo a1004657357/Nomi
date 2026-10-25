@@ -174,24 +174,6 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
       }
     }
   },
-  "sora-2": {
-    "text_to_video": {
-      "*": {
-        "aspect_ratio": "16:9",
-        "resolution": "720p",
-        "duration": 4,
-        "model": "sora-2"
-      }
-    },
-    "image_to_video": {
-      "*": {
-        "aspect_ratio": "16:9",
-        "resolution": "720p",
-        "duration": 4,
-        "model": "sora-2"
-      }
-    }
-  },
   "veo-3.1": {
     "text_to_video": {
       "*": {
@@ -382,6 +364,28 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
       }
     }
   },
+  "minimax-h3-pixstag": {
+    "text_to_video": {
+      "*": {
+        "ratio": "adaptive",
+        "resolution": "2K",
+        "duration": 5,
+        "aigc_watermark": false,
+        "use_context_ir": false,
+        "return_last_frame": false
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "ratio": "adaptive",
+        "resolution": "2K",
+        "duration": 5,
+        "aigc_watermark": false,
+        "use_context_ir": false,
+        "return_last_frame": false
+      }
+    }
+  },
   "wan-2.7": {
     "text_to_video": {
       "*": {
@@ -483,6 +487,13 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
       }
     }
   },
+  "higgsfield-dop": {
+    "image_to_video": {
+      "*": {
+        "enhance_prompt": true
+      }
+    }
+  },
   "volcengine-seedance-2": {
     "text_to_video": {
       "*": {
@@ -539,6 +550,47 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
         "video_resolution": "720p",
         "duration": 5,
         "model": "seedance2.0fast"
+      }
+    }
+  },
+  "dreamina-seedance-2.5": {
+    "text_to_video": {
+      "*": {
+        "dreamina_cmd": "text2video",
+        "ratio": "16:9",
+        "video_resolution": "720p",
+        "duration": 5,
+        "model": "seedance2.5"
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "dreamina_cmd": "image2video",
+        "video_resolution": "720p",
+        "duration": 5,
+        "model": "seedance2.5"
+      }
+    }
+  },
+  "jimeng-web-seedance-2": {
+    "text_to_video": {
+      "*": {
+        "dreamina_cmd": "text2video",
+        "ratio": "16:9",
+        "video_resolution": "720P",
+        "duration": 5,
+        "generation_count": 1,
+        "model": "jimeng-seedance-2.0-mini"
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "dreamina_cmd": "image2video",
+        "ratio": "16:9",
+        "video_resolution": "720P",
+        "duration": 5,
+        "generation_count": 1,
+        "model": "jimeng-seedance-2.0-mini"
       }
     }
   },
@@ -632,19 +684,6 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
       }
     }
   },
-  "rh-sora-2": {
-    "text_to_video": {
-      "*": {
-        "size": "720x1280",
-        "duration": "4"
-      }
-    },
-    "image_to_video": {
-      "*": {
-        "duration": "4"
-      }
-    }
-  },
   "agnes-video": {
     "text_to_video": {
       "*": {
@@ -685,11 +724,21 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
         "duration": "5",
         "size": "720P",
         "aspect_ratio": "16:9"
+      },
+      "pavo-web": {
+        "duration": "4",
+        "size": "720P",
+        "aspect_ratio": "16:9"
       }
     },
     "image_to_video": {
       "*": {
         "duration": "5",
+        "size": "720P",
+        "aspect_ratio": "16:9"
+      },
+      "pavo-web": {
+        "duration": "4",
         "size": "720P",
         "aspect_ratio": "16:9"
       }

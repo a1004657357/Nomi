@@ -1,4 +1,4 @@
-// 阶段 3 前置探针 **P5**（方案 §4.3）的零额度那两半：扁平版 `nomi_storyboard_write`
+// 阶段 3 前置探针 **P5**（方案 §4.3）的零额度那两半：分镜写动词（20 动词起是 `draft_shots`）
 // ① 有多大（token）② 三条真机见过的畸形参数经 `prepareArguments` 能不能过。
 // ③（真实模型三次调用、首调 operation 命中率）在 `stage3-probe-p5-real.electron.mts`，
 // 它要 Electron 的 safeStorage 才读得到 app 设置里的 key，不在这个 runner 里跑。
@@ -11,38 +11,56 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { estimateTokens } from '@earendil-works/pi-agent-core';
 
-import { createCanvasLaneTools, type CanvasLanePort } from '../../electron/agentLane/laneCanvasTools.js';
+import { createExtendedLaneTools, type LaneExtendedPort } from '../../electron/agentLane/laneExtendedTools.js';
 import type { LaneToolDescriptor } from '../../electron/agentLane/laneRuntimePort.js';
 import { createLaneTools } from '../../electron/agentLane/laneTools.mjs';
+import { storyboardAuthorFieldsSchema } from '../../electron/shared/agentCapabilities/generationPlanSchemas.js';
+import { toPublishedJsonSchema } from '../../electron/shared/agentCapabilities/modelVisibleJsonSchema.js';
 import { createLaneFixture } from './laneFixture.mjs';
 
-const TOOL = 'nomi_storyboard_write';
-/** 方案 §4.3 P5 写的预算。 */
-const TOKEN_BUDGET = 1_200;
+const TOOL = 'draft_shots';
+/**
+ * 方案 §4.3 P5 写的预算。2026-09-12 由 1_200 提到 1_220：整片默认画幅贯通给 plan 顶层加了
+ * `aspectRatio`（实测 schema 4673 → 4765 chars，估计 1_192 → 1_215 tokens，字段本身 92 chars ≈ 23 tokens）。
+ * 为什么不压回 1_200：这个字段**不能更便宜**——它是 `.strict()` envelope 上唯一能写整片画幅的位置
+ * （少它则规划师写的整片画幅在主进程边界被拒收，正是 2026-09-12 根因合同的第一格），
+ * 而压预算的另外两条路都是症状修法：删别的字段/enum（契约变窄）或删工具描述（那 92 chars 也是 23 tokens）。
+ * 这条断言的本意是「长大时有人看见」（见文件头），所以按看得见的方式记账：涨了 23，预算留 5 的余量。
+ */
+// 2026-09-21 重量：core **777**。原来的 1_220 量的是「所有作者字段都摊在 shot 上」那个形状；
+// 作者字段收进 `storyboard` 子树之后，剩下的 envelope 本身就只有这么大。棘轮只减不增，
+// 所以按今天真实的数收紧（777 + 8 的余量），别让一个已经不成立的上限继续当挡板。
+const CORE_TOKEN_BUDGET = 785;
+// 2026-09-20: the original editor's complete author fields are now writable by this
+// tool. Preserve the old core cap separately; explicitly account for the new subtree.
+// This is a +486 total-cap change, not an unchanged budget. No schema field, validator,
+// description or estimator is removed to fit. See core-a-restart.md, P5 contract review.
+// 2026-10-25: the user explicitly approved retaining all 15 existing author fields.
+// Measured full estimate: 2_031; reviewed cap: 2_035 (+329, four tokens of headroom).
+// CORE_TOKEN_BUDGET, descriptions, estimator and exact model-face checks stay unchanged.
+// See docs/plan/2026-10-25-approved-merge-compatibility-register.md.
+const FULL_TOKEN_BUDGET = 2_035;
 
-const ANCHOR = { id: 'anchor-1', kind: 'character', name: '林夏', description: '17-year-old girl, short black hair, school uniform.', carrier: 'visual' };
+type DraftPublishedSchema = {
+  properties: { shots: { items: { properties: Record<string, unknown> } } };
+};
+
 const SHOTS = [
-  { index: 1, shotKind: 'image', durationSec: 0, anchorIds: ['anchor-1'], prompt: 'Wide: she steps onto the rooftop, dusk light behind her.' },
-  { index: 2, shotKind: 'video', durationSec: 4, anchorIds: ['anchor-1'], prompt: 'Slow push-in as she leans on the railing and exhales.' },
+  { title: '天台', prompt: 'Wide: she steps onto the rooftop, dusk light behind her.', taskKind: 'text_to_image' },
+  { title: '栏杆', prompt: 'Slow push-in as she leans on the railing and exhales.', taskKind: 'text_to_video', durationSec: 4 },
 ];
-const PLAN = { operation: 'propose_storyboard_plan', title: '天台的三分钟', anchors: [ANCHOR], shots: SHOTS };
+const PLAN = { shots: SHOTS };
 
 /** 三条畸形，都是 #547 §3.2 那一族（结构化值被二次序列化），各打在扁平 schema 的不同层。 */
-const MALFORMED: ReadonlyArray<{ label: string; args: unknown; operation: string }> = [
-  { label: 'A · whole argument object serialized as a JSON string', args: JSON.stringify(PLAN), operation: 'propose_storyboard_plan' },
-  { label: 'B · `anchors` and `shots` arrays serialized as JSON strings', args: { ...PLAN, anchors: JSON.stringify([ANCHOR]), shots: JSON.stringify(SHOTS) }, operation: 'propose_storyboard_plan' },
-  { label: 'B\' · `select` / `patch` objects serialized as JSON strings', args: { operation: 'patch_shots', select: JSON.stringify({ kind: 'indexes', indexes: [2, 3] }), patch: JSON.stringify({ shotKind: 'video', durationSec: 4 }) }, operation: 'patch_shots' },
+const MALFORMED: ReadonlyArray<{ label: string; args: unknown }> = [
+  { label: 'A · whole argument object serialized as a JSON string', args: JSON.stringify(PLAN) },
+  { label: 'B · `shots` array serialized as a JSON string', args: { shots: JSON.stringify(SHOTS) } },
+  { label: 'C · a single shot object where the array goes', args: { shots: SHOTS[0] } },
 ];
 
-function port(writes: unknown[]): CanvasLanePort {
+function port(writes: unknown[]): LaneExtendedPort {
   return {
-    read: async () => ({ nodes: [], edges: [], groups: [], selectedNodeIds: [] }),
-    write: async (input) => {
-      writes.push(input);
-      const base = { applied: true as const, proposalId: 'proposal-1', result: {}, reconciliation: { ok: true, deviationCount: 0 } };
-      if (input.operation === 'patch_shots') return { ...base, operation: 'patch_shots', changedShotIndexes: [2, 3], changedFields: ['shotKind', 'durationSec'] } as never;
-      return { ...base, operation: input.operation } as never;
-    },
+    execute: async (call) => { writes.push(call.args); return { ok: true, result: { operation: { operationId: 'op-1', state: 'draft', cardHidden: true } } }; },
   };
 }
 
@@ -50,29 +68,49 @@ function withoutTolerance(descriptors: readonly LaneToolDescriptor[]): LaneToolD
   return descriptors.map(({ prepareArguments: _dropped, ...rest }) => ({ ...rest }));
 }
 
-test('P5 ① · size of the flat nomi_storyboard_write schema, by pi\'s own estimator', () => {
-  const tools = createLaneTools(createCanvasLaneTools(port([])));
+test('P5 ① · size of the draft_shots schema, by pi\'s own estimator', () => {
+  const tools = createLaneTools(createExtendedLaneTools(port([])));
   const storyboard = tools.find((tool) => tool.name === TOOL);
   assert.ok(storyboard, `${TOOL} is on the lane`);
   const estimate = (text: string) => estimateTokens({ role: 'user', content: [{ type: 'text', text }], timestamp: 0 });
   const schema = JSON.stringify(storyboard.parameters);
   const schemaTokens = estimate(schema);
   const descriptionTokens = estimate(storyboard.description);
-  console.log(`[P5①] ${TOOL}: schema ${schema.length} chars ≈ ${schemaTokens} tokens · description ${storyboard.description.length} chars ≈ ${descriptionTokens} tokens · total ≈ ${schemaTokens + descriptionTokens} (budget ${TOKEN_BUDGET})`);
+  const core = structuredClone(storyboard.parameters) as DraftPublishedSchema;
+  assert.ok(core.properties.shots.items.properties.storyboard, 'the new authoring subtree is present');
+  delete core.properties.shots.items.properties.storyboard;
+  const coreTokens = estimate(JSON.stringify(core)) + descriptionTokens;
+  console.log(`[P5①] ${TOOL}: schema ${schema.length} chars ≈ ${schemaTokens} tokens · description ${storyboard.description.length} chars ≈ ${descriptionTokens} tokens · total ≈ ${schemaTokens + descriptionTokens} (budget ${FULL_TOKEN_BUDGET}); core ${coreTokens}/${CORE_TOKEN_BUDGET}, authoring increment ${schemaTokens + descriptionTokens - coreTokens}`);
   for (const tool of tools) {
     const size = estimate(JSON.stringify(tool.parameters)) + estimate(tool.description);
     console.log(`[P5①]   ${tool.name}: ≈ ${size} tokens`);
   }
   const properties = Object.keys((storyboard.parameters as { properties: Record<string, unknown> }).properties);
-  assert.deepEqual(properties, ['operation', 'title', 'anchors', 'shots', 'select', 'patch', 'nodeIds'], 'flat root: one enum + every branch field as optional');
-  // B1c moves full guidance/examples into the stable system prompt, meeting the original budget.
-  assert.ok(schemaTokens + descriptionTokens <= TOKEN_BUDGET,
-    `pi's estimate (${schemaTokens + descriptionTokens}) must stay within the original ${TOKEN_BUDGET} budget`);
+  assert.deepEqual(properties, ['operationId', 'taskKind', 'candidate', 'shots'], 'draft_shots root: the draft to revise, per-draft defaults, and the shots');
+  // B1c's original envelope still cannot grow prose beyond its original cap.
+  assert.ok(coreTokens <= CORE_TOKEN_BUDGET, `core estimate (${coreTokens}) exceeds ${CORE_TOKEN_BUDGET}`);
+  assert.ok(schemaTokens + descriptionTokens <= FULL_TOKEN_BUDGET,
+    `full estimate (${schemaTokens + descriptionTokens}) exceeds the explicitly reviewed ${FULL_TOKEN_BUDGET} budget`);
+});
+
+test('P5 authoring growth preserves the complete canonical author schema, including nested constraints', () => {
+  const tool = createLaneTools(createExtendedLaneTools(port([]))).find(item => item.name === TOOL)!;
+  const published = (tool.parameters as DraftPublishedSchema).properties.shots.items.properties.storyboard;
+  // Local references have a different root when embedded in the shots envelope.
+  // Normalize only that location; do not strip any type, constraint or field guidance.
+  const prefix = '#/properties/shots/items/properties/storyboard';
+  const normalized = JSON.parse(JSON.stringify(published, (key, value: unknown) =>
+    key === '$ref' && typeof value === 'string' && value.startsWith(`${prefix}/`)
+      ? `#${value.slice(prefix.length)}` : value)) as Record<string, unknown>;
+  delete normalized.description; // optional wrapper guidance belongs to draft_shots
+  const canonical = { ...toPublishedJsonSchema(storyboardAuthorFieldsSchema) };
+  delete canonical.$schema; // a nested schema has no document-level dialect declaration
+  assert.deepEqual(normalized, canonical, 'budget reduction must not silently narrow original author capabilities');
 });
 
 async function firstCallSucceeds(t: TestContext, arm: 'with-tolerance' | 'without-tolerance', args: unknown) {
   const writes: unknown[] = [];
-  const tools = createCanvasLaneTools(port(writes));
+  const tools = createExtendedLaneTools(port(writes));
   const fixture = await createLaneFixture(t, [
     { type: 'tool', calls: [{ id: 'first', name: TOOL, arguments: args }] },
     { type: 'text', text: 'Done.' },
@@ -85,19 +123,13 @@ async function firstCallSucceeds(t: TestContext, arm: 'with-tolerance' | 'withou
 }
 
 for (const shape of MALFORMED) {
-  test(`P5 ② · ${shape.label} passes prepareArguments → ajv → contract parse, and lands on the right operation`, async (t) => {
+  test(`P5 ② · ${shape.label} passes prepareArguments → ajv, and the shots arrive as an array`, async (t) => {
     const treated = await firstCallSucceeds(t, 'with-tolerance', shape.args);
     assert.equal(treated.ok, true, `first call is not an error: ${treated.text}`);
     assert.equal(treated.writes.length, 1, 'exactly one write reached the domain port');
-    const written = treated.writes[0] as { operation: string; anchors?: unknown; shots?: unknown; select?: unknown; patch?: unknown };
-    assert.equal(written.operation, shape.operation);
-    if (written.operation === 'propose_storyboard_plan') {
-      assert.ok(Array.isArray(written.anchors) && Array.isArray(written.shots), 'the arrays arrive as arrays, not JSON text');
-      assert.deepEqual(written.shots, SHOTS);
-    } else {
-      assert.deepEqual(written.select, { kind: 'indexes', indexes: [2, 3] });
-      assert.deepEqual(written.patch, { shotKind: 'video', durationSec: 4 });
-    }
+    const written = treated.writes[0] as { shots?: unknown };
+    assert.ok(Array.isArray(written.shots), 'the shots arrive as an array, not JSON text');
+    assert.deepEqual(written.shots, shape.label.startsWith('C') ? [SHOTS[0]] : SHOTS);
 
     // 阳性对照：没有容忍钩子，同一条调用必须被拒——否则上面那个绿证明不了容忍在起作用。
     const control = await firstCallSucceeds(t, 'without-tolerance', shape.args);

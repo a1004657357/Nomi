@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { canvasReadResultSchema, projectCanvasRead } from '../shared/agentCapabilities/canvasRead'
+import { safeRunProjection } from '../productionRun/productionRunProjections'
+import type { ProductionRun } from '../productionRun/productionRunTypes'
 import {
   buildCanonicalMcpToolResult,
   buildToolOutcome,
@@ -70,9 +72,9 @@ describe('buildToolOutcome (A2 结果重写：转述原材料 + 参数回显)', 
 describe('nomi_read target=models 转述（交付1：只有 keyStatus=ok 说可用 + 参考能力 + locale）', () => {
   const modelsResult = {
     models: [
-      { vendor: 'apimart', modelKey: 'seedream', label: 'Seedream', kind: 'image', keyStatus: 'ok', statusReason: '已接入且可用', references: { image: true, video: false, audio: false, multiImage: true, referenceModes: ['image_edit'] } },
-      { vendor: 'kie', modelKey: 'kie-x', label: 'Kie X', kind: 'video', keyStatus: 'missing', statusReason: '未配置 Kie 的 API Key；请先在 Nomi 应用的模型接入里填入', references: { image: false, video: false, audio: false, multiImage: false, referenceModes: [] } },
-      { vendor: 'volcengine', modelKey: 'volc-y', label: '火山 Y', kind: 'image', keyStatus: 'locked', statusReason: '火山 的 API Key 已保存但当前宿主身份解不开；请在 Nomi 应用里重新保存该 Key', references: { image: false, video: false, audio: false, multiImage: false, referenceModes: [] } },
+      { vendor: 'apimart', modelId: 'seedream', label: 'Seedream', kind: 'image', keyStatus: 'ok', statusReason: '已接入且可用', accepts: { image: true, video: false, audio: false, multiImage: true }, modeIds: ['image_edit'] },
+      { vendor: 'kie', modelId: 'kie-x', label: 'Kie X', kind: 'video', keyStatus: 'missing', statusReason: '未配置 Kie 的 API Key；请先在 Nomi 应用的模型接入里填入', accepts: { image: false, video: false, audio: false, multiImage: false }, modeIds: [] },
+      { vendor: 'volcengine', modelId: 'volc-y', label: '火山 Y', kind: 'image', keyStatus: 'locked', statusReason: '火山 的 API Key 已保存但当前宿主身份解不开；请在 Nomi 应用里重新保存该 Key', accepts: { image: false, video: false, audio: false, multiImage: false }, modeIds: [] },
     ],
   }
 
@@ -109,7 +111,7 @@ describe('nomi_read target=models 转述（交付1：只有 keyStatus=ok 说可�
 
   it('全部无 key：明说去配 + nextActions=configure_api_key', () => {
     const { text, outcome } = buildToolOutcome('nomi_read', { target: 'models' }, {
-      models: [{ vendor: 'kie', modelKey: 'x', label: 'X', kind: 'image', keyStatus: 'missing', statusReason: '未配置', references: { image: false, video: false, audio: false, multiImage: false, referenceModes: [] } }],
+      models: [{ vendor: 'kie', modelId: 'x', label: 'X', kind: 'image', keyStatus: 'missing', statusReason: '未配置', accepts: { image: false, video: false, audio: false, multiImage: false }, modeIds: [] }],
     })
     expect(text).toContain('无——请先配置 API Key')
     expect(outcome).toMatchObject({ usable: 0, nextActions: ['configure_api_key'] })
@@ -170,14 +172,25 @@ describe('buildToolErrorOutcome (A6 错误契约)', () => {
   })
 
   it('preserves typed generation policy codes in structured MCP outcomes', () => {
-    const error = Object.assign(new Error('generation.single-shot phase_not_ready'), {
-      code: 'phase_not_ready', nextAction: 'finish P0', phase: 'schema_only', capability: 'start',
+    // 2026-09-21：`phase_not_ready` 与 `phase` 随 env flag / 三段式 rollout 一起删除，
+    // 换成仍在册的策略码。**同时新增一条阳性对照**：已删除的码不许再被当成策略码放行，
+    // 否则删了一半（抛的那半没了、认的这半还在）会长出一份失真的清单。
+    const error = Object.assign(new Error('generation.single-shot lease_required'), {
+      code: 'lease_required', nextAction: 'Open a new project session and retry', capability: 'start',
     })
     const { outcome } = buildToolErrorOutcome('nomi_start_generation', error)
     expect(outcome).toMatchObject({
-      kind: 'error', errorCode: 'phase_not_ready', nextAction: 'finish P0', phase: 'schema_only', capability: 'start',
+      kind: 'error', errorCode: 'lease_required', nextAction: 'Open a new project session and retry', capability: 'start',
     })
   })
+
+  it.each(['feature_disabled', 'phase_not_ready'])(
+    '已删除的 %s 不再被当成策略码（它抛不出来了，认它只会留下一份失真的清单）', (code) => {
+      const error = Object.assign(new Error('some private cause'), { code, nextAction: 'x', capability: 'start' })
+      const { outcome } = buildToolErrorOutcome('nomi_start_generation', error)
+      expect(outcome).toMatchObject({ kind: 'error', errorCode: null })
+      expect(outcome).not.toHaveProperty('phase')
+    })
 
   it.each([
     'capability_invocation_unverified',
@@ -224,7 +237,7 @@ describe('buildToolErrorOutcome (A6 错误契约)', () => {
       code: 'human_approval_required', nextAction: 'nomi://settings/automation', phase: 'e1_paid', capability: 'gate_decide',
     })
     const { text, outcome } = buildToolErrorOutcome('nomi_decide_generation_gate', error)
-    expect(text).toContain('请在 Nomi 确认这次生成')
+    expect(text).toContain('这一步要你本人在 Nomi 里确认一次')
     expect(text).not.toContain('human_approval_required')
     expect(outcome).toMatchObject({ errorCode: 'human_approval_required', nextActions: ['in_nomi'], nextAction: 'nomi://settings/automation' })
   })
@@ -238,6 +251,16 @@ describe('buildToolErrorOutcome (A6 错误契约)', () => {
     expect(text).not.toContain('retry')
     expect(outcome).toMatchObject({ nextActions: ['wait_reconciliation'] })
     expect(outcome).toMatchObject({ recovery: { allowAutomaticRetry: false, allowNewAttempt: true, nextAction: 'manual_review' } })
+  })
+
+  it('names the unknown shot and tells the agent not to generate it again (the user decides in the task center)', () => {
+    const run = { runId: 'run-1', status: 'needs_attention', stageId: 'generate', budget: {}, jobs: [{ jobId: 'job-1', status: 'submission_unknown', metadata: { shotId: 'shot-1' } }] }
+    const zh = buildToolOutcome('nomi_read', { target: 'run', projectId: 'p1', runId: 'run-1' }, run).text
+    expect(zh).toContain('shot-1 结果未知，服务商可能已经收下；不要再调用 generate 生成它')
+    expect(zh).toContain('请让用户去服务商后台核对，要不要重新生成由用户在任务中心决定')
+    const en = buildToolOutcome('nomi_read', { target: 'run', projectId: 'p1', runId: 'run-1' }, run, 'en').text
+    expect(en).toContain('shot-1: outcome unknown, the provider may have already received it; do not call generate for it again')
+    expect(en).toContain('leave the decision to generate again to the user in the task center')
   })
 
   it('keeps the recovery message in the requested locale', () => {
@@ -255,5 +278,33 @@ describe('buildProgressStartMessage (A1 起始帧参数回显)', () => {
     expect(buildProgressStartMessage('nomi_run_start', { playbook: 'brand.promo' }))
       .toBe('正在创建制作草稿 · brand.promo')
     expect(buildProgressStartMessage('nomi_read', { target: 'canvas' })).toBeNull()
+  })
+})
+
+// Agent 读 Run 时读的是停下那一刻记下的原因（2026-09-29）：投影透出 stopReason（runStopReason），转述按它说。
+// 以前 needs_attention 一律「有任务卡住了」，Agent 分不清是失败、预算还是重启后要核对。
+describe('nomi_read target=run：停下的原因来自 Run 记下的事实', () => {
+  const stoppedRun = (stop?: ProductionRun['stop']) => ({
+    schemaVersion: 1, runId: 'run-stop', projectId: 'p1', revision: 3, status: 'needs_attention', stageId: 'generate',
+    playbook: { name: 'generation.single-shot', version: '1' }, origin: { host: 'semantic-mcp' },
+    budget: { currency: 'CNY', authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
+    policy: {}, planVersion: 1, snapshotCursor: 3, stages: [], gates: [], jobs: [], artifacts: [],
+    ...(stop ? { stop } : {}), createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z',
+  }) as unknown as ProductionRun
+
+  it('a batch stopped because a shot failed says so, with the recorded reason in the outcome', () => {
+    const projection = safeRunProjection(stoppedRun({ reason: 'failed', at: '2026-09-29T00:00:00.000Z' }))
+    const { text, outcome } = buildToolOutcome('nomi_read', { target: 'run', projectId: 'p1', runId: 'run-stop' }, projection)
+    expect(outcome).toMatchObject({ stopReason: 'failed' })
+    expect(text).toContain('有镜头没生成成功')
+    expect(text, '不是预算停下的，不说额度用完').not.toContain('额度用完')
+  })
+
+  it('an older run that stopped without a recorded reason is never described as a budget stop', () => {
+    const projection = safeRunProjection(stoppedRun())
+    const { text, outcome } = buildToolOutcome('nomi_read', { target: 'run', projectId: 'p1', runId: 'run-stop' }, projection, 'en')
+    expect(outcome).toMatchObject({ stopReason: 'unknown' })
+    expect(text).toContain('reason not recorded')
+    expect(text, '没记原因就不猜成预算').not.toMatch(/budget used up/i)
   })
 })

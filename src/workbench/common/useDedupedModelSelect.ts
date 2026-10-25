@@ -5,11 +5,15 @@
 //   ② 供应商下拉：仅当选中模型有多家可用时出现，让用户锁定某家（写该家 value）。
 // 节点仍存 (vendor, modelKey)，生成路径与失败换家逻辑不变 —— 去重纯发生在选择层。
 import React from 'react'
+import { IconEyeOff } from '@tabler/icons-react'
 import type { ModelOption } from '../../config/models'
 import type { NomiSelectOption } from '../../design'
 import i18n from '../../i18n'
-import { dedupeModelOptions, sortModelProviders, modelCatalogLifecycle, type DedupedModel } from '../../config/modelIdentity'
+import { dedupeModelOptions, pickImplicitVendorMatch, providerConnectionSuffixes, sortModelProviders, modelCatalogLifecycle, type DedupedModel } from '../../config/modelIdentity'
+import { partitionByModelBoxPreference, rememberedProviderIndex, rememberedVendorFor } from '../../config/modelBoxPreference'
+import type { ModelBoxPreferenceSettings } from '../../../electron/shared/contracts/modelBoxPreference'
 import { useVendorPreferenceOrder } from './useVendorPreference'
+import { rememberVendorForModel, useModelBoxPreference } from './useModelBoxPreference'
 import { isModelRecentlyAiling } from '../generationCanvas/runner/modelHealthMemory'
 import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 import { modelIdentityIcon, providerIdentityIcon } from '../../config/modelProviderIdentity'
@@ -32,13 +36,32 @@ const VENDOR_LABELS: Record<string, string> = {
 
 /** 厂商显示名：内置短名映射（下拉附注要短）> option.vendorName（自定义中转的真名）> key 原样。
  *  短名优先：catalog 里内置家的 name 是接入卡全称（如「即梦会员（本地 CLI）」），当 trailing 太啰嗦。 */
-function providerLabel(provider?: ModelProviderRef | null): string {
+export function modelProviderLabel(provider?: ModelProviderRef | null, connectionSuffix?: string): string {
   if (!provider) return translateModelDisplayText('默认')
   const short = provider.vendor ? VENDOR_LABELS[provider.vendor.toLowerCase()] : undefined
-  if (short) return translateModelDisplayText(short)
-  const fromCatalog = provider.option.vendorName?.trim()
-  if (fromCatalog) return translateModelDisplayText(fromCatalog)
-  return translateModelDisplayText(provider.vendor || '默认')
+  const base = short
+    ? translateModelDisplayText(short)
+    : translateModelDisplayText(provider.option.vendorName?.trim() || provider.vendor || '默认')
+  // #831：同一家有多条连接（满血组 / Mini 特价组）时，chip 直接显示**连接名本身**。
+  //
+  // 为什么不是「APIMart · 满血组」：实验室那一格（vo-07）拍出来是 `APIMart · …` —— 两段拼起来
+  // 超出 chip 宽度，被截掉的恰好是**唯一有区分力的那一段**，等于白加。而这一刻品牌名是冗余的：
+  // 两个 chip 本来就同属一家，用户要认的是「哪个分组」。
+  // 后缀由 `providerConnectionSuffixes` 一处算出，且**只进显示名**——不进排序键、不进请求、不进持久化。
+  if (!connectionSuffix) return base
+  return translateModelDisplayText(connectionSuffix) || base
+}
+
+/**
+ * 模型在模型框里的显示名：组名按当前语言走现成的翻译表（`translateModelDisplayText`，与上面的供应商名同一张）。
+ *
+ * 为什么在这一层、不在 `dedupeModelOptions` / `toCatalogModelOptions`：那两层的 label 还是**身份的输入**——
+ * 没显式声明身份的行按 `normalizeModelLabel(label)` 归组，模型框偏好（排序 / 隐藏 / 记住的那家）按 canonicalId 存。
+ * 在那里翻译，身份就随语言变：切一次英文，组会拆开、偏好会对不上。显示名只在这里翻，身份一个字不动。
+ * 2026-09-29 之前供应商名在这里翻、模型名漏了：英文界面的模型框里是「Gemini 3 Pro 图像」「可灵 3.0」。
+ */
+export function modelDisplayLabel(model: Pick<DedupedModel, 'label'>): string {
+  return translateModelDisplayText(model.label)
 }
 
 /** 该模型是否「病」了：**每一家**供应商都在避让期才算。注入判据便于纯函数单测。 */
@@ -66,8 +89,38 @@ function isModelAiling(model: DedupedModel, isAiling: AilingProbe): boolean {
  */
 export const CONNECT_VENDOR_OPTION_VALUE = '\u0000nomi-connect-vendor'
 
+/**
+ * 模型框底部那一行「隐藏模型」。
+ *
+ * 治的是 09-11 群反馈第二条「减少模型怎么操作」：能力（Model.enabled）一直都在，
+ * 但用户想整理模型的那一刻人在画布的模型下拉里，而那里**一个入口都没有**——要整理得离开画布、
+ * 去设置里翻四五层。这一行把入口放在他人所在的地方。
+ *
+ * 刻意**不**在下拉里就地改可见性：隐藏与删除必须留在同一个家里，用户才不会在两处各学一套；
+ * 那个家就是设置里的模型列表，图标（眼睛）与措辞（显示 / 隐藏）与这里逐字相同。
+ * 这条也是全仓所有模型框共用的同一份实现（节点 / 镜卡 / 批量），不各写一份（B7 的「三处心智不一」）。
+ */
+export function modelVisibilityFooterAction(): { label: string; icon: React.ReactNode; onSelect: () => void } {
+  return {
+    label: i18n.t('onboardingProviders.modelControls.manageVisibility'),
+    icon: React.createElement(IconEyeOff, { size: 13, stroke: 1.8, 'aria-hidden': true }),
+    onSelect: openModelCatalog,
+  }
+}
+
 export function openModelCatalog(): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event('nomi-open-model-catalog'))
+}
+
+/**
+ * 模型框底部那一行「已隐藏 N 个 · 在设置里找回」。
+ *
+ * 为什么必须有：隐藏是用户自己做的，但**一周后他不记得了**——一个悄悄变短的列表和
+ * 「这个模型怎么没了/是不是坏了」在屏幕上长得一模一样（D4 诚实交付：缺口明着标）。
+ * 一个都没藏时返回空串，正常人的下拉不该无缘无故多一行脚注。
+ */
+export function modelBoxHiddenNote(hiddenCount: number): string {
+  return hiddenCount > 0 ? i18n.t('generationCommon.parameters.hiddenModels', { count: hiddenCount }) : ''
 }
 
 function connectVendorOption(): NomiSelectOption {
@@ -79,10 +132,50 @@ function connectVendorOption(): NomiSelectOption {
   }
 }
 
+/**
+ * 这一行是**只自检过、还没真跑过一次**的模型吗。
+ *
+ * 2026-09-11 之后，一个中转模型进模型框的凭据是一次免费自检（鉴权 + 模型清单 + 说明卡形状），
+ * 它证明「地址和形状对」，不证明「点了一定能出片」。诚实交付要求把这个差别说出来，
+ * 而不是让用户以为列在这里的东西都验过了（D4）。印记由主进程在发布时写下（promotionMeta.ts）；
+ * 老装机上由真实付费生成认证过的行没有这个印记，因此不会被误标。
+ */
+/**
+ * 这一行是不是「供应商清单里暂时没有它」。
+ *
+ * **要每一家都没列出才算**：同一个模型可能同时挂在两家上，其中一家的清单抖了一下。
+ * 只要还有一家列着它，这一行就不该标——标了等于对用户说「这个模型没了」，而他点下去
+ * 明明能用。与「最近连败」同一口径（那条也是每家都在避让期才成立）。
+ */
+function unlistedByModel(model: DedupedModel): boolean {
+  return model.providers.length > 0 && model.providers.every((provider) => provider.option.unlisted === true)
+}
+
+/** 行尾那串限定语：厂商短名 + 至多两句实话（未试跑 / 暂未列出）。 */
+function providerTrailing(provider: ModelProviderRef, notes: readonly string[]): string {
+  return [modelProviderLabel(provider), ...notes].join(' · ')
+}
+
+function untriedByModel(model: DedupedModel): boolean {
+  return model.providers.some((provider) => {
+    const meta = provider.option.meta
+    if (!meta || typeof meta !== 'object') return false
+    const adapter = (meta as { adapter?: unknown }).adapter
+    return Boolean(adapter && typeof adapter === 'object' && (adapter as { evidence?: unknown }).evidence === 'self-check')
+  })
+}
+
 /** 病的沉到最后 + 灰化 + 右侧标注换成「最近多次失败」；健康的保持原有顺序不动。 */
-export function buildModelSelectOptions(deduped: readonly DedupedModel[], isAiling: AilingProbe, orderedVendorKeys: readonly string[] = []): NomiSelectOption[] {
-  // 空 = 一家都没接入（catalog 层的 keepRunnableVendorOptions 只放行能跑的家），不是「碰巧没模型」。
+export function buildModelSelectOptions(
+  deduped: readonly DedupedModel[],
+  isAiling: AilingProbe,
+  orderedVendorKeys: readonly string[] = [],
+  preference?: ModelBoxPreferenceSettings | null,
+): NomiSelectOption[] {
+  // 空 = 一家都没接入（catalog 层的 keepUsableModelRows 只放行现在真能用的行），不是「碰巧没模型」。
   if (deduped.length === 0) return [connectVendorOption()]
+  // 「藏起来的不进来、排过的排在前面」只在这一处判（`partitionByModelBoxPreference` 是唯一解析点）。
+  const { visible } = partitionByModelBoxPreference(deduped, preference)
   const toOption = (m: DedupedModel): NomiSelectOption => {
     // 「模型来自哪家」的两种表达，**同一行上只用一种**（用户 2026-07-17 要求看得见，
     // 2026-09-06 要求别把模型名挤没）：
@@ -93,26 +186,42 @@ export function buildModelSelectOptions(deduped: readonly DedupedModel[], isAili
     const providers = sortModelProviders(m.providers, orderedVendorKeys)
     const uniqueProviders = providers.filter((provider, index, all) => all.findIndex((candidate) => (candidate.vendor || candidate.option.value) === (provider.vendor || provider.option.value)) === index)
     const multiVendor = uniqueProviders.length > 1
+    // chip 的**顺序**永远是全局供应商顺序（设置里排的那张表）；**高亮**的才是这一行真正会走的那家：
+    // 手点过就是手点的那家，没点过才是顺序里的第一家。两件事分开表达，用户才看得出
+    // 「我改过的是这一行」而不是「全局顺序变了」（2026-09-11 样张：Nano Banana 2 高亮 Kie，其余高亮第一家）。
+    const rememberedIndex = rememberedProviderIndex(uniqueProviders, rememberedVendorFor(m, preference))
+    const activeIndex = rememberedIndex >= 0 ? rememberedIndex : 0
+    const connectionSuffixes = providerConnectionSuffixes(uniqueProviders)
     const chips = multiVendor
       ? uniqueProviders.map((provider, index) => ({
           value: providerAddress(provider),
-          label: providerLabel(provider),
-          active: index === 0,
+          label: modelProviderLabel(provider, provider.vendor ? connectionSuffixes.get(provider.vendor) : undefined),
+          active: index === activeIndex,
         }))
       : undefined
     if (!isModelAiling(m, isAiling)) return {
       more: modelCatalogLifecycle(m) === 'legacy',
       value: m.canonicalId,
-      label: m.label,
+      label: modelDisplayLabel(m),
       icon: modelIdentityIcon(m),
-      ...(multiVendor ? { chips } : { trailing: providerLabel(providers[0]) }),
+      // 「未试跑」附在厂商短名后面，**不另起一个新元素**：2026-09-06 用户拍板过「别把模型名挤没」，
+      // 而这一行要说的只是一句限定语（这家、还没真跑过），不是第二条信息。
+      // 多家那种情况行尾已经是 chip 排（与 trailing 互斥），就不标——多家里总有真跑过的。
+      // 「暂未列出」和「未试跑」同一个槽、同一种写法：都是附在厂商短名后面的一句限定语，
+      // 不是第二条信息、也不拦使用（2026-09-21：清单里查不到不等于用户不要它了）。
+      ...(multiVendor
+        ? { chips }
+        : { trailing: providerTrailing(providers[0], [
+            ...(untriedByModel(m) ? [i18n.t('generationCommon.parameters.untried')] : []),
+            ...(unlistedByModel(m) ? [i18n.t('generationCommon.parameters.unlisted')] : []),
+          ]) }),
     }
     // 「最近多次失败」是行级判断（每一家都在避让期才成立），压过 chip 的换家提示——
     // 这一行现在没有一家能走，摆一排可点的 chip 是在骗人。
     return {
       more: modelCatalogLifecycle(m) === 'legacy',
       value: m.canonicalId,
-      label: m.label,
+      label: modelDisplayLabel(m),
       icon: modelIdentityIcon(m),
       trailing: i18n.t('generationCommon.parameters.recentlyFailing'),
       trailingTone: 'danger',
@@ -120,8 +229,8 @@ export function buildModelSelectOptions(deduped: readonly DedupedModel[], isAili
     }
   }
   // 用户选**之前**就避开坏的，而不是撞了才知道。仍可点（手动选择永不拦，2026-07-30 拍板）。
-  const healthy = deduped.filter((m) => !isModelAiling(m, isAiling))
-  const ailing = deduped.filter((m) => isModelAiling(m, isAiling))
+  const healthy = visible.filter((m) => !isModelAiling(m, isAiling))
+  const ailing = visible.filter((m) => isModelAiling(m, isAiling))
   return [...healthy, ...ailing].map(toOption)
 }
 
@@ -140,11 +249,15 @@ export function buildVendorExplicitModelOptions(
   deduped: readonly DedupedModel[],
   isAiling: AilingProbe,
   orderedVendorKeys: readonly string[] = [],
+  preference?: ModelBoxPreferenceSettings | null,
 ): NomiSelectOption[] {
   if (deduped.length === 0) return [connectVendorOption()]
+  // 批量下拉与折叠下拉共用同一份「显示哪些、排在哪」——藏起来的模型在**每个**模型框里都消失，
+  // 否则用户会在框选工具条里又看见他刚藏掉的那一个。
+  const { visible } = partitionByModelBoxPreference(deduped, preference)
   type Row = { option: NomiSelectOption; ailing: boolean }
   const rows: Row[] = []
-  for (const model of deduped) {
+  for (const model of visible) {
     // 一「模型 × 供应商」一行 —— 折叠维度必须是 vendor，不能是 (vendor, option.value)。
     // 走查实测（2026-08-18）：同一家会把多个 modelKey 挂到同一个显示名
     // （kie 的 nano-banana / nano-banana-kie；kie 的 gpt-image-2-text-to-image /
@@ -172,7 +285,7 @@ export function buildVendorExplicitModelOptions(
           ? {
               value,
               more: modelCatalogLifecycle(model) === 'legacy',
-              label: model.label,
+              label: modelDisplayLabel(model),
               trailing: i18n.t('generationCommon.parameters.recentlyFailing'),
               trailingTone: 'danger',
               dimmed: true,
@@ -180,9 +293,12 @@ export function buildVendorExplicitModelOptions(
           : {
               value,
               more: modelCatalogLifecycle(model) === 'legacy',
-              label: model.label,
+              label: modelDisplayLabel(model),
               icon: modelIdentityIcon(model),
-              trailing: providerLabel(representative),
+              // 摊平版一行就是一家，所以「暂未列出」按**这一家**判，不看别家
+              // （折叠版要每家都没列出才标——那一行代表的是所有家）。
+              trailing: providerTrailing(representative, representative.option.unlisted === true
+                ? [i18n.t('generationCommon.parameters.unlisted')] : []),
             },
       })
     }
@@ -204,9 +320,26 @@ export function resolveProviderByAddress(
   return null
 }
 
-/** 换家优先于换模型：先只在健康供应商里挑；全病（用户明知故选）才回退全集，绝不空选。 */
-export function pickHealthiestProvider(model: DedupedModel, isAiling: AilingProbe, orderedVendorKeys: readonly string[] = []): ModelProviderRef | null {
-  const healthy = sortModelProviders(model.providers.filter((provider) => !isAiling({ modelKey: provider.option.modelKey || provider.option.value, vendor: provider.vendor })), orderedVendorKeys)
+/**
+ * 换家优先于换模型：先只在健康供应商里挑；全病（用户明知故选）才回退全集，绝不空选。
+ *
+ * `rememberedVendor` 压在最前面（用户在这个模型上手点过的那家）：样张原话「你手点过的，永远听你的」。
+ * 它比「避开最近连败的家」更强——手动选择永不拦是 2026-07-30 拍板过的原则，记住的家就是手动选择的
+ * 延长线；同一家里仍优先挑健康的那个变体。记住的家已经不在了（禁用/删除）时由
+ * `rememberedVendorFor` 返回 null，这里自然退回原有两级判据，不报错不卡住。
+ */
+export function pickHealthiestProvider(
+  model: DedupedModel,
+  isAiling: AilingProbe,
+  orderedVendorKeys: readonly string[] = [],
+  rememberedVendor: string | null = null,
+): ModelProviderRef | null {
+  const sick = (provider: ModelProviderRef): boolean => isAiling({ modelKey: provider.option.modelKey || provider.option.value, vendor: provider.vendor })
+  if (rememberedVendor) {
+    const remembered = model.providers.filter((provider) => (provider.vendor || '').trim().toLowerCase() === rememberedVendor.trim().toLowerCase())
+    if (remembered.length > 0) return remembered.find((provider) => !sick(provider)) || remembered[0]
+  }
+  const healthy = sortModelProviders(model.providers.filter((provider) => !sick(provider)), orderedVendorKeys)
   return healthy[0] || sortModelProviders(model.providers, orderedVendorKeys)[0] || null
 }
 
@@ -227,7 +360,7 @@ export function buildProviderSelectOptions(model: DedupedModel | null, orderedVe
     const key = p.vendor || p.option.value
     if (!byVendor.has(key)) byVendor.set(key, {
       value: providerAddress(p),
-      label: providerLabel(p),
+      label: modelProviderLabel(p),
       icon: providerIdentityIcon(p.vendor, p.option.vendorName),
       vendor: p.vendor,
     })
@@ -269,6 +402,8 @@ export interface DedupedModelSelectView {
   onVariantPick: (addressValue: string) => void
   /** 当前选中的去重模型（供上层取档案/变体等）。 */
   selectedModel: DedupedModel | null
+  /** 模型框底部脚注：「已隐藏 N 个 · 在设置里找回」；没藏过就是空串（调用方原样传给 NomiSelect）。 */
+  hiddenNote: string
 }
 
 /**
@@ -285,16 +420,34 @@ export function useDedupedModelSelect(
 ): DedupedModelSelectView {
   const deduped = React.useMemo(() => dedupeModelOptions([...modelOptions]), [modelOptions])
   const orderedVendorKeys = useVendorPreferenceOrder()
+  const preference = useModelBoxPreference()
+  const hiddenNote = React.useMemo(
+    () => modelBoxHiddenNote(partitionByModelBoxPreference(deduped, preference).hidden.length),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language：切语言要重算脚注文案
+    [deduped, preference, i18n.language],
+  )
 
+  // 「当前存的是哪一家」只有一个判定口：记了 vendor → (value, vendor) 精确命中，那家不在就是没选中
+  // （不许悄悄换成同名的别家）；没记 vendor（旧数据）→ pickImplicitVendorMatch，与执行侧落地同一把尺。
+  // 以前没记 vendor 时取「第一个含同名 value 的组」——目录新接入的在前，于是自定义同名模型一加，
+  // 回显就换成了它（2026-09-21 分镜三处复现）。
+  const effectiveVendor = React.useMemo(() => {
+    if (!value) return null
+    const candidates = deduped.flatMap((m) => m.providers).filter((p) => p.option.value === value)
+    if (vendor) return candidates.some((p) => p.vendor === vendor) ? vendor : null
+    return pickImplicitVendorMatch(candidates, (p) => p.vendor, orderedVendorKeys)?.vendor ?? null
+  }, [deduped, value, vendor, orderedVendorKeys])
   const selectedModel = React.useMemo(
-    () => deduped.find((m) => m.providers.some((p) => p.option.value === value && (!vendor || p.vendor === vendor))) || null,
-    [deduped, value, vendor],
+    () => (value && (effectiveVendor !== null || !vendor)
+      ? deduped.find((m) => m.providers.some((p) => p.option.value === value && (effectiveVendor === null || p.vendor === effectiveVendor))) || null
+      : null),
+    [deduped, value, vendor, effectiveVendor],
   )
 
   const modelOptionsView = React.useMemo<NomiSelectOption[]>(
-    () => buildModelSelectOptions(deduped, isModelRecentlyAiling, orderedVendorKeys),
+    () => buildModelSelectOptions(deduped, isModelRecentlyAiling, orderedVendorKeys, preference),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language：切语言要重算 trailing 文案
-    [deduped, i18n.language, orderedVendorKeys],
+    [deduped, i18n.language, orderedVendorKeys, preference],
   )
 
   const onModelPick = React.useCallback(
@@ -303,13 +456,13 @@ export function useDedupedModelSelect(
       const model = deduped.find((m) => m.canonicalId === canonicalId)
       if (!model) return
       // Reopening/reselecting the family must not reset a saved reasoning tier.
-      const current = model.providers.find((p) => p.option.value === value && (!vendor || p.vendor === vendor))
+      const current = model.providers.find((p) => p.option.value === value && (effectiveVendor === null || p.vendor === effectiveVendor))
       if (current) { onChange(current.option.value, current.vendor); return }
-      const best = pickHealthiestProvider(model, isModelRecentlyAiling, orderedVendorKeys)
+      const best = pickHealthiestProvider(model, isModelRecentlyAiling, orderedVendorKeys, rememberedVendorFor(model, preference))
       const preferred = model.providers.find((p) => p.vendor === best?.vendor && p.option.variant?.defaultVariant) || best
       if (preferred) onChange(preferred.option.value, preferred.vendor)
     },
-    [deduped, onChange, value, vendor, orderedVendorKeys],
+    [deduped, onChange, value, effectiveVendor, orderedVendorKeys, preference],
   )
 
   const onModelProviderPick = React.useCallback(
@@ -318,6 +471,9 @@ export function useDedupedModelSelect(
       const picked = model?.providers.find((provider) => providerAddress(provider) === addressValue)
       if (!picked) return
       onChange(picked.option.value, picked.vendor)
+      // 点 chip 本身就是「记住」的触发点——不需要再多一个「记住我的选择」开关（方案 §5 ④：
+      // 把用户已经在做的事包一层开关是纯噪音）。写失败只影响下次的默认家，不该打断这次选择。
+      void rememberVendorForModel(canonicalId, picked.vendor)
     },
     [deduped, onChange],
   )
@@ -330,12 +486,15 @@ export function useDedupedModelSelect(
   const onProviderPick = React.useCallback(
     (addressValue: string) => {
       const picked = selectedModel?.providers.find((p) => providerAddress(p) === addressValue)
-      if (picked) onChange(picked.option.value, picked.vendor)
+      if (!picked) return
+      onChange(picked.option.value, picked.vendor)
+      // 第二段「供应商」下拉与行尾 chip 是同一个动作的两种入口，记忆写在同一处，不分两套。
+      if (selectedModel) void rememberVendorForModel(selectedModel.canonicalId, picked.vendor)
     },
     [selectedModel, onChange],
   )
 
-  const providerValue = resolveProviderSelectValue(selectedModel, value, vendor)
+  const providerValue = resolveProviderSelectValue(selectedModel, value, effectiveVendor)
   const selectedProvider = selectedModel?.providers.find((p) => providerAddress(p) === providerValue)
   const variantOptions = selectedProvider?.option.variant
     ? (selectedModel?.providers || [])
@@ -358,5 +517,6 @@ export function useDedupedModelSelect(
     variantValue: selectedProvider ? providerAddress(selectedProvider) : '',
     onVariantPick,
     selectedModel,
+    hiddenNote,
   }
 }

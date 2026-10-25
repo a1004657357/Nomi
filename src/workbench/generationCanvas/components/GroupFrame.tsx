@@ -12,7 +12,7 @@
  *  · 拖动中给**入组/退组反馈**：进框亮 accent，出框变虚线——颜色只做这一种临时反馈，
  *    框的常驻装饰仍然中性（groupVisualContract 的写死不动）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
 import type { NodeGroup } from '../model/generationCanvasTypes'
@@ -45,6 +45,8 @@ export type CanvasFrameInteraction = {
   onRename: (groupId: string, name: string) => void
   onDescribe: (groupId: string, description: string) => void
   onOpenMenu: (groupId: string, point: { x: number; y: number }) => void
+  /** 单独选中的空框（有成员的框靠成员的选中态表达，不走这里）。 */
+  selectedGroupId?: string | null
 }
 
 export type GroupFrameProps = {
@@ -113,7 +115,9 @@ export default function GroupFrame({
           ? cn('cursor-copy', GROUP_VISUAL_CLASS.dropTarget)
           : readOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
         membershipClass,
+        frame?.selectedGroupId === box.group.id ? 'border-solid border-nomi-accent' : null,
       )}
+      data-frame-selected={frame?.selectedGroupId === box.group.id ? 'true' : undefined}
       style={{
         left: box.left,
         top: box.top,
@@ -122,7 +126,8 @@ export default function GroupFrame({
       }}
       role={readOnly ? undefined : 'button'}
       tabIndex={readOnly ? undefined : 0}
-      // 拖线松手时 useDragToConnect 靠这个属性在元素栈里认出组框（与 data-node-id 同一套命中法）。
+      // 拖线松手时落点模型（reactFlow/canvasConnectionDropTarget）靠这个属性在元素栈里认出组框
+      // （与 data-node-id 同一套命中法）。
       data-group-id={box.group.id}
       data-frame-empty={box.empty ? 'true' : undefined}
       data-frame-membership={preview ? preview.change : undefined}

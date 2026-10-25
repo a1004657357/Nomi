@@ -1,3 +1,4 @@
+import { useProductionCanvasLandingStore } from '../../production/productionCanvasLandingStore'
 import React from 'react'
 import type { ModelOption } from '../../../config/models'
 import i18n from '../../../i18n'
@@ -18,6 +19,7 @@ import {
   writeCanvasBatchConcurrency,
   type CanvasGenerationExecutionGroup,
 } from './canvasProductionScope'
+import { withProjectAction } from '../../project/projectCanvasReadSurface'
 
 export function useCanvasProductionActions(params: { activeCategoryId: string; selectedNodeIds: readonly string[] }) {
   const { activeCategoryId, selectedNodeIds } = params
@@ -34,7 +36,11 @@ export function useCanvasProductionActions(params: { activeCategoryId: string; s
     () => nodesInCanvasProductionScope(nodes, productionScope),
     [nodes, productionScope],
   )
-  const eligibleIds = React.useMemo(() => eligibleGenerationNodeIds(nodes, productionScope), [nodes, productionScope])
+  const productionRuns = useProductionCanvasLandingStore((store) => store.runs)
+  const eligibleIds = React.useMemo(
+    () => eligibleGenerationNodeIds(nodes, productionScope, productionRuns),
+    [nodes, productionScope, productionRuns],
+  )
   const executionGroups = React.useMemo(
     () => groupGenerationNodesByExecutionKind(scopedNodes.filter((node) => !node.locked), edges, nodes),
     [edges, nodes, scopedNodes],
@@ -49,6 +55,7 @@ export function useCanvasProductionActions(params: { activeCategoryId: string; s
     const state = useGenerationCanvasStore.getState()
     void confirmAndRunPlan(buildDependencyWaves(eligibleIds, { nodes: state.nodes, edges: state.edges }), {
       concurrency,
+      initiator: 'user',
     })
   }, [concurrency, eligibleIds])
 
@@ -61,7 +68,7 @@ export function useCanvasProductionActions(params: { activeCategoryId: string; s
           requiredModeForGenerationNode(node, { nodes: state.nodes, edges: state.edges }) === input.requiredMode,
       )
       if (targets.length === 0) {
-        reportCanvasFeedback(i18n.t('generationCommon.production.lockedModelChange'), 'warning', { identity: `model-change:${activeCategoryId}`, reason: 'locked', nodeIds: [...selectedNodeIds] })
+        reportCanvasFeedback(i18n.t('generationCommon.production.lockedModelChange'), 'warning', { projectId: withProjectAction((project) => project.binding.projectId) ?? '', identity: `model-change:${activeCategoryId}`, reason: 'locked', nodeIds: [...selectedNodeIds] })
         return
       }
       const updates = targets.map((node) => ({

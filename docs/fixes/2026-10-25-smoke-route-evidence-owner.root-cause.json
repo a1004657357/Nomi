@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-smoke-route-evidence-owner",
+  "change_kind": "structural",
+  "problem_type": "Smoke harness confuses elapsed time with asynchronous route readiness and reuses historical evidence paths",
+  "symptom": "Smoke62 observes creation momentarily, then fails generation visibility on a Suspense spinner; root failure.json/png are overwritten by new runs.",
+  "direct_cause": "Project and tab transitions use fixed sleeps followed by immediate snapshots, and evidenceDir is the shared historical root.",
+  "class_root": "Smoke progress must depend on bounded observed completion from the existing assertion owner, and evidence identity must belong to a unique run.",
+  "scope_paths": ["tests/ux/smoke.e2e.mjs", "tests/ux/standalone-assert-owner.test.mjs"],
+  "structural_evidence": {
+    "affected_paths": ["tests/ux/smoke.e2e.mjs", "tests/ux/standalone-assert-owner.test.mjs"],
+    "preserved_exports": [],
+    "behavior_preservation": "All original smoke assertions, selectors, helpers, geometry thresholds, URL/project identity and capture names remain. Replace only causally audited UI sleeps with canonical bounded conditions. Root evidence stays historical; mkdtemp basename isolates each run under the same recursively uploaded parent. No configurable arbitrary output path.",
+    "verification_limits": "Only static/source-fragment owner tests and existing Node waiting guard, no App/browser or heavy suite. Canonical poll is real, locator samples are deterministic fixtures; actual smoke acceptance belongs to coordinator's App rerun. No production, budget, timeout-default, baseline, global setup, skip or user-memory changes."
+  },
+  "regression_tests": ["tests/ux/standalone-assert-owner.test.mjs"],
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-24"
+}

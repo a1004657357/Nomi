@@ -1,12 +1,11 @@
 import { notify } from '../../../ui/notificationPolicy'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconCheck,
   IconDownload,
   IconEye,
   IconMovie,
-  IconRefresh,
   IconTrash,
 } from '@tabler/icons-react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -22,21 +21,17 @@ import NodeMediaPreviewDialog from './NodeMediaPreviewDialog'
 import { DeferredNodeVideo } from './DeferredNodeMedia'
 import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
 import { useResultDownload } from './useResultDownload'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
-import { reworkProductionShot } from '../../production/productionShotActions'
+import { isProjectExecutionContextCurrent, withProjectAction } from '../../project/projectCanvasReadSurface'
+import { getDesktopBridge } from '../../../desktop/bridge'
+import { computeMediaMetaPatch } from './nodeSizing'
+import { findCanvasResultMediaDimensions } from '../../project/projectMediaMigration'
 import { historyVideoTimeFromPointer, nudgeHistoryVideoTime } from './historyVideoScrub'
 import { resolveResultStackPlacement, type ResultStackPlacement } from './nodeResultStackPlacement'
 import { getGenerationNodeIcon } from './renderRegistry'
+import { CANVAS_RESULT_DRAG_MIME, encodeCanvasResultDrag } from '../components/canvasResultDrag'
+import { logRendererError } from '../../../desktop/rendererLog'
 
 const INITIAL_VISIBLE_RESULTS = 12
-
-function productionMetaOf(node: GenerationCanvasNode): { runId: string; shotId?: string } | null {
-  const meta = node.meta as Record<string, unknown> | undefined
-  const runId = typeof meta?.productionRunId === 'string' ? meta.productionRunId.trim() : ''
-  if (!runId) return null
-  const shotId = typeof meta?.productionShotId === 'string' ? meta.productionShotId.trim() : ''
-  return { runId, ...(shotId ? { shotId } : {}) }
-}
 
 /**
  * 版本堆叠伪卡上的媒体示能。复用 `getGenerationNodeIcon` 这个唯一出口，所以
@@ -199,6 +194,28 @@ function HistoryVideoThumb({
   )
 }
 
+/**
+ * 版本托盘里的一行：按着 Alt/⌥ 拖出去 → 在画布松手处复制出一张独立素材卡（落卡在舞台 onDrop，
+ * components/canvasResultDrag.ts）。不按 Alt 的拖动直接取消——托盘里的拖动原本就什么也不做，
+ * 点一下仍是「设为当前版本」。
+ */
+function startResultCopyDrag(event: React.DragEvent<HTMLElement>, nodeId: string, entry: GenerationNodeResult): void {
+  if (!event.altKey || !entry.url) {
+    event.preventDefault()
+    return
+  }
+  event.stopPropagation()
+  const thumb = event.currentTarget.querySelector('img')
+  const original = thumb && thumb.naturalWidth > 0 && thumb.getAttribute('src') === entry.url ? thumb : null
+  event.dataTransfer.effectAllowed = 'copy'
+  event.dataTransfer.setData(CANVAS_RESULT_DRAG_MIME, encodeCanvasResultDrag({
+    sourceNodeId: nodeId,
+    resultIdentity: resultIdentity(entry),
+    ...(original ? { width: original.naturalWidth, height: original.naturalHeight } : {}),
+  }))
+  if (thumb) event.dataTransfer.setDragImage(thumb, thumb.width / 2, thumb.height / 2)
+}
+
 function ResultThumb({
   result,
   title,
@@ -239,14 +256,14 @@ export function NodeResultStack({
   onFeedback,
   node,
   readOnly,
-  selected,
+  open,
   onOpenChange,
 }: {
   onFeedback: (message: string) => void
   node: GenerationCanvasNode
   readOnly: boolean
-  selected: boolean
-  onOpenChange?: (open: boolean) => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }): JSX.Element | null {
   const feedbackOwnerRef = React.useRef<string | null>(node.id)
   feedbackOwnerRef.current = node.id
@@ -259,27 +276,14 @@ export function NodeResultStack({
 
   const { t } = useTranslation()
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
-  const [open, setOpen] = React.useState(false)
+  const selectNode = useGenerationCanvasStore((state) => state.selectNode)
   const [visibleCount, setVisibleCount] = React.useState(INITIAL_VISIBLE_RESULTS)
   const [hoveredId, setHoveredId] = React.useState('')
   const [preview, setPreview] = React.useState<GenerationNodeResult | null>(null)
-  const [rerunBusy, setRerunBusy] = React.useState(false)
   const [placement, setPlacement] = React.useState<ResultStackPlacement>('right')
   const trayRef = React.useRef<HTMLElement | null>(null)
   const entries = React.useMemo(() => listStableNodeMediaResults(node), [node])
   const currentId = node.result ? resultIdentity(node.result) : ''
-  const production = productionMetaOf(node)
-  const showSingleProductionAction = Boolean(production && selected && entries.length === 1)
-  const showStack = entries.length >= 2 || showSingleProductionAction
-
-  React.useEffect(() => {
-    if (showStack) return
-    setOpen(false)
-  }, [showStack])
-
-  React.useEffect(() => {
-    onOpenChange?.(open)
-  }, [onOpenChange, open])
 
   React.useEffect(() => {
     if (!open) {
@@ -309,22 +313,48 @@ export function NodeResultStack({
     }))
   }, [node.id, open, placement])
 
-  if (!showStack) return null
-
-  const switchTo = (entry: GenerationNodeResult): void => {
+  const switchTo = async (entry: GenerationNodeResult): Promise<void> => {
     if (readOnly || resultIdentity(entry) === currentId) return
-    updateNode(node.id, { result: entry, status: 'success', error: undefined })
+    const project = withProjectAction((loaded) => loaded)
+    let meta: Record<string, unknown> | undefined
+    if (project) {
+      try {
+        const assets = [] as Array<{ id?: string; data?: Record<string, unknown> }>
+        let cursor: string | null = null
+        do {
+          const desktop = getDesktopBridge()
+          if (!desktop?.assets?.list) break
+          const page = await desktop.assets.list({ projectId: project.binding.projectId, cursor, limit: 500 })
+          if (!page) break
+          assets.push(...page.items)
+          cursor = page.cursor || null
+        } while (cursor)
+        if (isProjectExecutionContextCurrent(project)) {
+          const dimensions = findCanvasResultMediaDimensions(entry, assets)
+          const patch = dimensions
+            ? computeMediaMetaPatch({ resultType: entry.type, meta: node.meta || {}, ...dimensions, durationSeconds: entry.durationSeconds })
+            : null
+          if (patch) meta = patch.meta
+        }
+      } catch {
+        // Result switching remains usable when an old sidecar cannot be read.
+      }
+    }
+    updateNode(node.id, { result: entry, ...(meta ? { meta } : {}), status: 'success', error: undefined })
   }
 
   const remove = async (entry: GenerationNodeResult): Promise<void> => {
     if (readOnly) return
+    // 删除动作起点签发原项目；确认框期间换了项目即取消，不删新项目的东西。
+    const loaded = withProjectAction((project) => project)
+    if (!loaded) return
     const confirmed = await confirmDialog({
       title: t('generationCommon.resultStack.deleteTitle'),
       message: t('generationCommon.resultStack.deleteMessage'),
       confirmLabel: t('generationCommon.resultStack.delete'),
       danger: true,
     })
-    if (!confirmed) return
+    if (!confirmed || !isProjectExecutionContextCurrent(loaded)) return
     const latest = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
     const identity = resultIdentity(entry)
     const asset = latest
@@ -335,19 +365,12 @@ export function NodeResultStack({
       return
     }
     try {
-      const outcome = await deleteAssetResult(asset)
+      const outcome = await deleteAssetResult(asset, loaded)
       if (outcome.failedFileCount > 0) reportFeedback(t('generationCommon.resultStack.deleteFileFailed'))
     } catch (error) {
-      console.error('delete node result failed', error)
+      logRendererError('node-result-delete-failed', error)
       reportFeedback(t('generationCommon.resultStack.deleteFailed'))
     }
-  }
-
-  const rerun = (): void => {
-    const projectId = getActiveWorkbenchProjectId()
-    if (!production || !projectId || rerunBusy) return
-    setRerunBusy(true)
-    void reworkProductionShot(projectId, production.runId, production.shotId, reportFeedback).finally(() => setRerunBusy(false))
   }
 
   return (
@@ -357,8 +380,10 @@ export function NodeResultStack({
         count={entries.length}
         label={t('generationCommon.resultStack.versionCount', { count: entries.length })}
         expanded={open}
-        onToggle={() => setOpen((value) => !value)}
-        forceTrigger={showSingleProductionAction}
+        onToggle={() => {
+          if (!open) selectNode(node.id, false)
+          onOpenChange(!open)
+        }}
         mediaGlyph={<StackMediaGlyph kind={node.kind} />}
         mediaKind={node.kind}
       />
@@ -386,17 +411,6 @@ export function NodeResultStack({
                 <div className="text-body-sm font-semibold text-nomi-ink">{t('generationCommon.resultStack.title')}</div>
                 <div className="text-micro text-nomi-ink-60">{t('generationCommon.resultStack.versionCount', { count: entries.length })}</div>
               </div>
-              {production && !readOnly ? (
-                <button
-                  type="button"
-                  className="inline-flex min-h-7 items-center gap-1 rounded-nomi-sm border border-nomi-line px-2 text-micro font-medium text-nomi-ink hover:bg-nomi-ink-05 disabled:opacity-40"
-                  disabled={rerunBusy}
-                  onClick={rerun}
-                >
-                  <IconRefresh size={13} stroke={1.8} />
-                  {t('generationCommon.resultStack.rerun')}
-                </button>
-              ) : null}
             </header>
             <div className={cn(NODE_SCROLL_REGION_CLASS_NAME, 'min-h-0 overflow-y-auto p-2')} role="list">
               {entries.slice(0, visibleCount).map((entry, index) => {
@@ -413,6 +427,8 @@ export function NodeResultStack({
                     )}
                     data-result-stack-item={identity}
                     data-current={isCurrent ? 'true' : undefined}
+                    draggable={!readOnly}
+                    onDragStart={(event) => startResultCopyDrag(event, node.id, entry)}
                     onPointerEnter={() => setHoveredId(identity)}
                     onPointerLeave={(event) => {
                       if (event.currentTarget.contains(document.activeElement)) return

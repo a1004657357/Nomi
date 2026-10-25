@@ -7,7 +7,7 @@
  * 进度**不新造状态机**：会话真相源是主进程（`integrationSessionGet` 的投影），
  * 这里只做「哪个会话是外部 Agent 在推」+「stage → 五步」两件事。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 
 import { getDesktopBridge } from '../../desktop/bridge'
 import type { McpInfo } from '../../desktop/mcpBridgeTypes'
@@ -44,11 +44,7 @@ function readSnapshot(value: unknown): SessionSnapshot | null {
   }
 }
 
-export function AiAssistedOnboardingSection({
-  onManualConnect,
-}: {
-  onManualConnect: () => void
-}): JSX.Element | null {
+export function AiAssistedOnboardingSection(): JSX.Element | null {
   const [info, setInfo] = React.useState<McpInfo | null>(null)
   const [session, setSession] = React.useState<LiveSession | null>(null)
   const [snapshot, setSnapshot] = React.useState<SessionSnapshot | null>(null)
@@ -168,7 +164,6 @@ export function AiAssistedOnboardingSection({
       info={info}
       progress={progress}
       onOpenAssistantConnections={openAssistantConnections}
-      onManualConnect={onManualConnect}
       firstSeen={firstSeen}
     />
   )

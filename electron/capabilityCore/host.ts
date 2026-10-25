@@ -16,6 +16,7 @@ import { runTask, fetchTaskResult } from '../runtime'
 import { verifyToken } from './security'
 import { installIntegrationSessionRuntime } from '../integrationCertification/integrationSessionRuntimeInstall'
 import { applySystemProxy } from '../systemProxy'
+import { flushPendingTechnicalReviews } from '../review/reviewTrace'
 import { readProxyPrefs } from '../proxySettings'
 import { getProductionRunService } from '../productionRun/productionRunRuntime'
 import { rpcErrorWirePayload } from './mcpRpcError'
@@ -108,9 +109,11 @@ async function run(): Promise<number> {
       productionRuns,
       origin: { host: 'external' },
     })
+    await flushPendingTechnicalReviews()
     emit({ ok: true, result })
     return 0
   } catch (error) {
+    await flushPendingTechnicalReviews()
     emit({ ok: false, error: rpcErrorWirePayload(error) })
     return 1
   }

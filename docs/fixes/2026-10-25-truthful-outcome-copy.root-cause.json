@@ -1,0 +1,167 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-truthful-outcome-copy",
+  "problem_type": "Localized outcome copy introduces billing language unsupported by observable request state",
+  "symptom": "noChargeClaims fails on English network hint; full-walk dictionary checks fail on Chinese pre-confirmation no-charge promise and ambiguous English free-composition rationale.",
+  "direct_cause": "Actual UI locale values mention provider charging or imply no charge; a separate English rationale uses free to mean unconstrained composition, which is ambiguous to the financial wording invariant.",
+  "class_root": "Failure/confirmation UI must describe known request state and next steps without inferring financial outcomes; creative-composition wording must be unambiguous and remain display-only.",
+  "affected_population": [
+    "Chinese/English batch confirmation copy",
+    "English network error narration",
+    "English display of canonical text-to-image rationale"
+  ],
+  "scope_paths": [
+    "src/i18n/locales/generationCommon.ts",
+    "src/i18n/locales/canvasComponents.ts",
+    "src/i18n/locales/customWorkflow.ts",
+    "scripts/fixtures/tsx-i18n-display.json",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "entry_points": [
+    "BatchPlanOverlay confirmation translation",
+    "narrateGenerationError network hint",
+    "translateCanvasComponentText canonical rationale adapter"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is localized product wording tied to existing request-state facts and source/display ownership. No provider billing fact or external service semantics are assumed.",
+  "invariants": [
+    "Do not change billing, confirmation, authorization, retry, frozen source defaults or request routing",
+    "Do not weaken noChargeClaims/outcomeText detectors or their exemptions",
+    "Keep locale keys, interpolation order and the existing request/next-step facts",
+    "Change only one reviewed fixture Chinese value and retain all original fixture/binding/class hash constants, 475 keys/37 files/111 bindings and original 21 approved action-label changes",
+    "Canonical rationale and user prompt data remain unchanged when switching language"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "symbol": "zhCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enCustomWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enGenerationCommon"
+    }
+  ],
+  "door_reduction": {
+    "before": 5,
+    "after": 5,
+    "why_not": "Localized resource exports and their real consumers remain distinct by language/namespace. Keep the existing i18n owner and fix only actual display copy."
+  },
+  "generality_proof": "Unmodified guards check the complete real dictionaries. New bilingual regression executes the actual i18n singleton, network narrator and canonical display adapter and compares frozen raw rationale/prompt JSON. The display Node guard explicitly restores this one reviewed old value before checking its unchanged full fixture hash.",
+  "shared_boundaries": [
+    {
+      "path": "src/i18n/locales/generationCommon.ts",
+      "symbol": "enGenerationCommon",
+      "responsibility": "Localized network narration without a financial inference"
+    },
+    {
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "symbol": "zhCanvasComponents",
+      "responsibility": "Shared pre-confirmation display key without a no-charge promise"
+    },
+    {
+      "path": "src/i18n/locales/customWorkflow.ts",
+      "symbol": "enCustomWorkflow",
+      "responsibility": "Display-only English creative rationale with unambiguous composition wording"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+      "entry_point": "canvasComponents.inParallelNoRequestsOrChargesBeforeConfirmation",
+      "disposition": "enforced",
+      "evidence": "The existing UI still displays wave/concurrency and confirmation behavior; only its locale string changes."
+    },
+    {
+      "path": "src/workbench/observability/narrate.ts",
+      "entry_point": "narrateGenerationError",
+      "disposition": "enforced",
+      "evidence": "The real narrator reads the edited English network hint, retaining error reason and network/proxy next steps."
+    },
+    {
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "entry_point": "translateCanvasComponentText",
+      "disposition": "enforced",
+      "evidence": "Known canonical rationale is translated only at display boundary; sourceDefaults and stored values are untouched."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any locale or render path can turn a request-state message into an unverified financial claim; source/display mixing can also rewrite raw user data.",
+    "same_class_scan": [
+      "Generated i18n resource export consumer doors",
+      "Ran both unchanged original dictionary guards and identified exact offending keys",
+      "Read BatchPlanOverlay and the actual narrator/display adapter",
+      "Read strict display fixture counts/hash restoration; one exact reviewed copy delta only"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/i18n/locales/canvasComponents.ts",
+    "invariant": "Shared locale owners express truthful state without billing promises and retain data identity.",
+    "failure_mode": "Existing whole-dictionary guards still reject financial claims; exact fixture guard rejects any additional unreviewed string/binding/layout changes.",
+    "exception_policy": "none",
+    "strategy": "Correct actual locale values, preserve all billing logic/detectors, and add precise bilingual source/display and fixture-delta evidence.",
+    "artifacts": [
+      "src/i18n/locales/generationCommon.ts",
+      "src/i18n/locales/canvasComponents.ts",
+      "src/i18n/locales/customWorkflow.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/observability/truthfulOutcomeCopy.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "src/workbench/observability/truthfulOutcomeCopy.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/i18n/locales/generationCommon.ts",
+      "src/i18n/locales/canvasComponents.ts",
+      "src/i18n/locales/customWorkflow.ts"
+    ],
+    "rationale": "Replace billing-implicating outcome text and ambiguous English creative wording in the actual resource owners; do not touch unused legacy production locale fragments."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse existing i18next and display/narration APIs. No dependency change is required for copy truthfulness.",
+    "exit_criteria": []
+  },
+  "migration": "No data migration. Locale key IDs and canonical rationale source values remain unchanged; only display strings and one exact fixture value change.",
+  "residual_risks": [
+    "No actual App/Provider billing acceptance is run or claimed",
+    "English free composition is recorded as semantic ambiguity rather than a billing promise; wording is clarified without changing detection",
+    "The unchanged door-map tool lists resource consumers rather than standalone export definitions, leaving two door-coverage advisories for generationCommon.ts and customWorkflow.ts. Actual generated doors and real locale owner boundaries are retained without fabricated entries or checker changes."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/i18n/locales",
+    "tests": [
+      "src/workbench/observability/truthfulOutcomeCopy.test.ts",
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/observability/truthfulOutcomeCopy.test.ts"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

@@ -23,7 +23,7 @@ import { createBlankProject, prepareIsolation, readProjectPayload } from '../../
 import { stationTimeout } from './_station-budget.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const shotsDir = path.join(repoRoot, 'tests/ux/shots/director/electron')
+const shotsDir = process.env.NOMI_DIRECTOR_ELECTRON_SHOTS_DIR || path.join(repoRoot, 'tests/ux/shots/director/electron')
 fs.mkdirSync(shotsDir, { recursive: true })
 // 每次走查一个新隔离目录：上一轮 Electron 若还没完全退出会锁住旧目录（Windows rm EPERM）
 const iso = prepareIsolation(path.join(repoRoot, '.tmp', `director-electron-walk-${Date.now().toString(36)}`), { requireCatalog: false })
@@ -65,7 +65,9 @@ const check = (label, ok, detail = '') => {
   return ok
 }
 const consoleErrors = []
-const { app, win } = await launchNomiApp({ name: 'director-electron', userDataDir: iso.chromiumDir, settingsDir: iso.settingsDir, projectsDir: iso.projectsDir })
+const { app, win } = await launchNomiApp({ name: 'director-electron', userDataDir: iso.chromiumDir, settingsDir: iso.settingsDir,
+  projectsDir: iso.projectsDir, mainRequire: [path.join(repoRoot, 'scripts/walkthrough-network-guard.cjs')],
+  env: { NOMI_WALK_NET_LOG: path.join(shotsDir, 'network-guard.jsonl') } })
 const snap = async (label) => {
   shotIndex += 1
   const file = path.join(shotsDir, `${String(shotIndex).padStart(2, '0')}-${label}.png`)
@@ -187,7 +189,7 @@ for (const theme of ['light', 'dark']) {
   check(`② ${theme} 主题：选中片段白字白边、悬停保持不透明底色`, true)
 }
 await applyColorSchemeForShot(win, originalTheme)
-await win.keyboard.press('Control+Shift+P')
+await win.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P')
 const screenshotToast = win.locator('[role="alert"], [role="status"]', { hasText: '已截图' }).first()
 await expectVisible(screenshotToast, '按 Ctrl+Shift+P 后没有「已截图」提示（桌面落盘桥没工作？）', stationTimeout({ operations: 2 }))
 check('② 截图经桌面桥落盘', true)
@@ -208,12 +210,19 @@ const sent = await expect.poll(() => {
 }, { timeout: stationTimeout({ operations: 2 }), intervals: [1000] }).toBe(true).then(() => true, () => false)
 check('② 截图落成画布 image 节点 + reference 边（磁盘）', sent)
 
-// ③ 视频镜头 → 运镜芯片 → 应用 → 常驻 Host 出 mp4 + 喂目标镜头
-// 退出导演台后视口停在导演台节点上，视频节点在视口外（React Flow 视口外节点不可见）→ 先适应视图
-await clickOrFail(win.getByRole('button', { name: '适应视图' }).first(), '画布·适应视图')
-await clickOrFail(win.locator(`[data-node-id="${VIDEO_ID}"]`).first(), '画布·选中视频节点')
-await clickOrFail(win.locator('[aria-label="运镜"]').first(), '视频 composer·运镜芯片')
-await clickOrFail(win.locator('button', { hasText: /^应用$/ }).first(), '运镜弹层·应用')
+// ③ The official composer retired its camera-move chip. Seed only the local capture
+// request on the real authored project; exercise the actual persistent Host and IPC,
+// not an obsolete UI control or any provider. Motion quality is not asserted here.
+const captureNodeId = await win.evaluate(({ sourceId, targetId }) => {
+  const store = window.__nomiCanvasStore
+  const source = store?.getState().nodes.find(node => node.id === sourceId)
+  if (!source?.meta?.directorProject) return null
+  const node = store.getState().addNode({ kind: 'director', title: '本地运镜导出验收', prompt: '',
+    position: { x: 100, y: 500 }, meta: { directorProject: structuredClone(source.meta.directorProject),
+      cameraMoveAutoCapture: { targetNodeId: targetId, fps: 24, frameCount: 24, move: 'push_in' } } })
+  return node.id
+}, { sourceId: DIRECTOR_ID, targetId: VIDEO_ID })
+check('③ 已有导演工程接入本地离屏采帧请求', Boolean(captureNodeId))
 // 新节点由 layoutPlannedNodes 排到既有节点旁，常在视口外（React Flow 只渲染视口内节点）→ 以磁盘为准
 const applied = await expect.poll(() => readCanvas().nodes.filter((node) => node.kind === 'director').length >= 2, { timeout: stationTimeout({ operations: 2 }), intervals: [1000] }).toBe(true).then(() => true, () => false)
 check('③ 应用后多出一个「运镜参考」director 节点（磁盘）', applied)
@@ -279,7 +288,9 @@ check('⑤ 保存等待期间双击返回仍保留工作台，释放锁后保存
 // 冷启动从磁盘恢复，不能用同一个 store 的内存证明保存成功。
 const savedCanvas = readCanvas()
 await app.close()
-const restarted = await launchNomiApp({ name: 'director-electron-reopen', userDataDir: iso.chromiumDir, settingsDir: iso.settingsDir, projectsDir: iso.projectsDir })
+const restarted = await launchNomiApp({ name: 'director-electron-reopen', userDataDir: iso.chromiumDir, settingsDir: iso.settingsDir,
+  projectsDir: iso.projectsDir, mainRequire: [path.join(repoRoot, 'scripts/walkthrough-network-guard.cjs')],
+  env: { NOMI_WALK_NET_LOG: path.join(shotsDir, 'network-guard.jsonl') } })
 try {
   const reopened = restarted.win
   reopened.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })

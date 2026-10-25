@@ -18,10 +18,13 @@
     "electron/comfyuiProbe.ts",
     "electron/comfyuiProgressSocket.ts",
     "electron/comfyuiTemplates.ts",
+    "electron/credentialRedirect.test.ts",
+    "electron/jimengWeb/seedanceBridge.ts",
     "electron/localRuntime/localTextCapabilityProbe.ts",
     "electron/localRuntime/localTextEndpoints.ts",
+    "electron/pavoWeb/bridge.ts",
     "electron/proxyProbe.ts",
-    "electron/telemetry/aptabaseAdapter.ts",
+    "electron/telemetry/intakeClient.ts",
     "electron/vendor/vendorBaseFallback.ts"
   ],
   "privateHostImporters": [

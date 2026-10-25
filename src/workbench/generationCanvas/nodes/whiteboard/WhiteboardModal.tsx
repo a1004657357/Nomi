@@ -1,7 +1,8 @@
 /**
  * [INPUT]: 依赖 react-dom 的 createPortal、../fullscreenZIndex 的 FULLSCREEN_Z_INDEX、
  *          ../../../../ui/app-shell/windowChrome 的 currentFullscreenOverlayTopOffset、
- *          ../../store/generationCanvasStore（节点读写）、../../adapters/persistNodeImage（落盘）、
+ *          ../../store/generationCanvasStore（节点读写）、../../adapters/persistNodeImage（绑定项目落盘）、
+ *          ../../../project/projectCanvasReadSurface（跨页面稳定、换项目取消的执行上下文）、
  *          ./WhiteboardDrawingTool（画板本体）、./whiteboardState（序列化）
  * [OUTPUT]: 对外提供 WhiteboardModal：白板全屏壳
  * [POS]: whiteboard 的页面根：把画板工具撑成一张整窗工作面，负责「打开/关闭/存回节点」这条生命周期；
@@ -9,7 +10,7 @@
  *        顶部一条的点击会被当成拖窗口吃掉、窗口控件也埋在下面（与 issue #58 同根，见 windowChrome）。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { IconBrush } from '@tabler/icons-react'
@@ -25,12 +26,14 @@ import type {
 } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { persistNodeImageFile } from '../../adapters/persistNodeImage'
+import { isProjectImportCancellation } from '../../adapters/assetImportAdapter'
+import { withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 import WhiteboardDrawingTool, { type WhiteboardDrawingToolHandle } from './WhiteboardDrawingTool'
 import type { WhiteboardResultLibraryItem } from './whiteboardTypes'
 import type { WhiteboardInitialImage, WhiteboardState } from './whiteboardTypes'
 import { readWhiteboardState, serializeWhiteboardState } from './whiteboardState'
 import { getCanvasDimensions } from './lib/canvas'
-import { mediaNodeSize } from '../nodeSizing'
+import { computeMediaMetaPatch, mediaNodeSize } from '../nodeSizing'
 import i18n from '../../../../i18n'
 
 type WhiteboardModalProps = {
@@ -146,7 +149,8 @@ export default function WhiteboardModal({
   }, [t])
 
   const saveImageWhiteboardSnapshot = React.useCallback(
-    async (whiteboardState: WhiteboardState | null, options?: { skipIfUnchanged?: boolean }) => {
+    async (whiteboardState: WhiteboardState | null, project: ProjectExecutionContext, options?: { skipIfUnchanged?: boolean }) => {
+      project.assertCurrent()
       const latestSource = useGenerationCanvasStore.getState().nodes.find((node) => node.id === nodeId)
       if (!latestSource) throw new Error(t('generationCommon.whiteboard.imageNodeMissing'))
       const serializedState = whiteboardState ? serializeWhiteboardState(whiteboardState) : null
@@ -159,11 +163,16 @@ export default function WhiteboardModal({
       }
 
       const file = await captureFile()
-      const snapshotUrl = await persistNodeImageFile(file, nodeId)
+      project.assertCurrent()
+      const snapshotUrl = await persistNodeImageFile(file, nodeId, project)
+      project.assertCurrent()
       if (!snapshotUrl) throw new Error(t('generationCommon.whiteboard.snapshotSaveFailed'))
 
       const dimensions = dimensionsForWhiteboardState(serializedState)
       const snapshotResult = makeWhiteboardSnapshotResult(nodeId, snapshotUrl)
+      const mediaMeta = dimensions
+        ? computeMediaMetaPatch({ resultType: snapshotResult.type, meta: latestSource.meta || {}, width: dimensions.width, height: dimensions.height })?.meta
+        : undefined
       const snapshotSize = dimensions
         ? mediaNodeSize(dimensions.width, dimensions.height, latestSource.size?.width)
         : null
@@ -182,14 +191,8 @@ export default function WhiteboardModal({
           localOnly: false,
           uploadStatus: 'uploaded',
           ...(serializedState ? { whiteboardState: serializedState } : {}),
-          ...(dimensions
-            ? {
-                imageWidth: dimensions.width,
-                imageHeight: dimensions.height,
-                imageAspectRatio: dimensions.width / Math.max(1, dimensions.height),
-                previewHeight: snapshotSize?.previewHeight ?? latestSource.meta?.previewHeight,
-              }
-            : {}),
+          ...(mediaMeta || {}),
+          ...(dimensions ? { previewHeight: snapshotSize?.previewHeight ?? latestSource.meta?.previewHeight } : {}),
         },
       })
       return true
@@ -207,22 +210,24 @@ export default function WhiteboardModal({
       onClose()
       return
     }
-    savingRef.current = true
-    setScreenshotBusy(true)
-    void (async () => {
+    void withProjectAction(async (project) => {
+      savingRef.current = true
+      setScreenshotBusy(true)
       try {
-        await saveImageWhiteboardSnapshot(currentWhiteboardState, { skipIfUnchanged: true })
+        await saveImageWhiteboardSnapshot(currentWhiteboardState, project, { skipIfUnchanged: true })
+        project.assertCurrent()
 
         exitFullscreenIfNeeded()
         onClose()
       } catch (error) {
+        if (project.signal.aborted || isProjectImportCancellation(error)) return
         savingRef.current = false
         setScreenshotBusy(false)
         reportFeedback(
           error instanceof Error && error.message ? error.message : t('generationCommon.whiteboard.saveFailed'),
         )
       }
-    })()
+    })
   }, [exitFullscreenIfNeeded, onClose, persistWhiteboardState, saveImageWhiteboardSnapshot, sourceKind, t, reportFeedback])
 
   React.useEffect(() => {
@@ -238,75 +243,89 @@ export default function WhiteboardModal({
 
   const handleCreateScreenshotNode = React.useCallback(async () => {
     if (screenshotBusy) return
-    setScreenshotBusy(true)
-    setFeedback(null)
-    try {
-      const currentWhiteboardState = drawingRef.current?.getState() || null
-      if (sourceKind === 'image') {
-        await saveImageWhiteboardSnapshot(currentWhiteboardState)
+    await withProjectAction(async (project) => {
+      setScreenshotBusy(true)
+      setFeedback(null)
+      try {
+        project.assertCurrent()
+        const currentWhiteboardState = drawingRef.current?.getState() || null
+        if (sourceKind === 'image') {
+          await saveImageWhiteboardSnapshot(currentWhiteboardState, project)
+          project.assertCurrent()
 
-        return
-      }
+          return
+        }
 
-      persistWhiteboardState(currentWhiteboardState)
-      const file = await captureFile()
-      const snapshotUrl = await persistNodeImageFile(file, nodeId)
-      if (!snapshotUrl) throw new Error(t('generationCommon.whiteboard.snapshotSaveFailed'))
+        persistWhiteboardState(currentWhiteboardState)
+        const file = await captureFile()
+        project.assertCurrent()
+        const snapshotUrl = await persistNodeImageFile(file, nodeId, project)
+        project.assertCurrent()
+        if (!snapshotUrl) throw new Error(t('generationCommon.whiteboard.snapshotSaveFailed'))
 
-      const latestState = useGenerationCanvasStore.getState()
-      const latestSource = latestState.nodes.find((node) => node.id === nodeId)
-      const dimensions = dimensionsForWhiteboardState(currentWhiteboardState)
+        const latestState = useGenerationCanvasStore.getState()
+        const latestSource = latestState.nodes.find((node) => node.id === nodeId)
+        const dimensions = dimensionsForWhiteboardState(currentWhiteboardState)
+        const screenshotMeta = dimensions
+          ? computeMediaMetaPatch({ resultType: 'image', meta: {}, width: dimensions.width, height: dimensions.height })?.meta
+          : undefined
 
-      const created = addNode({
-        kind: 'image',
-        title: t('generationCommon.whiteboard.screenshotName', {
-          title: latestSource?.title || t('generationCommon.whiteboard.title'),
-        }),
-        prompt: '',
-        position: {
-          x: Math.round((latestSource?.position.x || 120) + (latestSource?.size?.width || 320) + 80),
-          y: Math.round((latestSource?.position.y || 360) + 260),
-        },
-        categoryId: latestSource?.categoryId || 'shots',
-        select: false,
-        meta: {
-          source: 'whiteboard-screenshot',
-          sourceNodeId: nodeId,
-          ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
-        },
-      })
-      const snapshotResult = makeWhiteboardSnapshotResult(created.id, snapshotUrl)
-      updateNode(created.id, {
-        result: snapshotResult,
-        history: [snapshotResult],
-        status: 'success',
-        meta: {
-          ...(created.meta || {}),
-          source: 'whiteboard-screenshot',
-          sourceNodeId: nodeId,
-          ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
-        },
-      })
-      if (sourceKind === 'whiteboard') {
-        const latestSourceAfterCreate = useGenerationCanvasStore.getState().nodes.find((node) => node.id === nodeId)
-        updateNode(nodeId, {
-          result: snapshotResult,
-          history: [
-            snapshotResult,
-            ...(latestSourceAfterCreate?.history || []).filter((entry) => entry.id !== snapshotResult.id),
-          ],
-          status: 'success',
+        const created = addNode({
+          kind: 'image',
+          title: t('generationCommon.whiteboard.screenshotName', {
+            title: latestSource?.title || t('generationCommon.whiteboard.title'),
+          }),
+          prompt: '',
+          position: {
+            x: Math.round((latestSource?.position.x || 120) + (latestSource?.size?.width || 320) + 80),
+            y: Math.round((latestSource?.position.y || 360) + 260),
+          },
+          categoryId: latestSource?.categoryId || 'shots',
+          select: false,
+          meta: {
+            source: 'whiteboard-screenshot',
+            sourceNodeId: nodeId,
+            ...(screenshotMeta || {}),
+          },
         })
-      }
-      connectNodes(nodeId, created.id, 'reference')
+        const snapshotResult = makeWhiteboardSnapshotResult(created.id, snapshotUrl)
+        updateNode(created.id, {
+          result: snapshotResult,
+          history: [snapshotResult],
+          status: 'success',
+          meta: {
+            ...(created.meta || {}),
+            source: 'whiteboard-screenshot',
+            sourceNodeId: nodeId,
+            ...(screenshotMeta || {}),
+          },
+        })
+        if (sourceKind === 'whiteboard') {
+          const latestSourceAfterCreate = useGenerationCanvasStore.getState().nodes.find((node) => node.id === nodeId)
+          const sourceMeta = dimensions
+            ? computeMediaMetaPatch({ resultType: snapshotResult.type, meta: latestSourceAfterCreate?.meta || {}, width: dimensions.width, height: dimensions.height })?.meta
+            : undefined
+          updateNode(nodeId, {
+            result: snapshotResult,
+            history: [
+              snapshotResult,
+              ...(latestSourceAfterCreate?.history || []).filter((entry) => entry.id !== snapshotResult.id),
+            ],
+            status: 'success',
+            ...(sourceMeta ? { meta: sourceMeta } : {}),
+          })
+        }
+        connectNodes(nodeId, created.id, 'reference')
 
-    } catch (error) {
-      reportFeedback(
-        error instanceof Error && error.message ? error.message : t('generationCommon.whiteboard.screenshotFailed'),
-      )
-    } finally {
-      setScreenshotBusy(false)
-    }
+      } catch (error) {
+        if (project.signal.aborted || isProjectImportCancellation(error)) return
+        reportFeedback(
+          error instanceof Error && error.message ? error.message : t('generationCommon.whiteboard.screenshotFailed'),
+        )
+      } finally {
+        if (!project.signal.aborted) setScreenshotBusy(false)
+      }
+    })
   }, [
     addNode,
     captureFile,

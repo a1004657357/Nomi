@@ -37,8 +37,8 @@ const storyboardAnchorSchema = z.object({
     .string()
     .min(1)
     .describe("Stable anchor id; becomes the canvas clientId."),
-  kind: z.enum(["character", "scene", "prop", "style"]),
-  name: z.string().describe("Display name & shot-reference key ('林夏' / '天台' / '红书包' / '全片风格')."),
+  kind: z.enum(["character", "scene", "prop", "style"]).describe("Reference anchor kind."),
+  name: z.string().describe("Display name and shot-reference key in the user's language (e.g. '林夏' / '天台')."),
   description: z
     .string()
     .describe("Reusable anchor appearance or prompt text."),
@@ -76,7 +76,7 @@ const storyboardShotSchema = z.object({
   modelKey: z
     .string()
     .optional()
-    .describe("已指定填目录键；未指定用默认。"),
+    .describe("Catalog model key if the user named one; omit for the default model."),
   modeId: z
     .string()
     .optional()
@@ -84,7 +84,7 @@ const storyboardShotSchema = z.object({
   params: z
     .record(generationParamValueSchema)
     .optional()
-    .describe("已指定按档案填；未指定派生，禁编键。"),
+    .describe("Only parameter keys the selected model's profile declares; omit to derive defaults. Never invent keys."),
   subtitle: z
     .string()
     .optional()
@@ -95,8 +95,8 @@ const storyboardShotSchema = z.object({
     .describe("Verbatim spoken dialogue: speaker and line."),
   transition: z
     .object({
-      type: z.enum(["cut", "dissolve", "fade", "match_cut", "whip_pan"]),
-      durationFrames: z.number().int().positive().optional(),
+      type: z.enum(["cut", "dissolve", "fade", "match_cut", "whip_pan"]).describe("Transition type."),
+      durationFrames: z.number().int().positive().describe("Transition duration in frames.").optional(),
     })
     .optional()
     .describe("Transition to next shot; cut means hard cut, omit if unauthored."),
@@ -105,7 +105,7 @@ const storyboardShotSchema = z.object({
       enabled: z
         .boolean()
         .optional()
-        .describe("Set true only for 图片+视频 mode: create a first-frame image before the video."),
+        .describe("Set true only for image-plus-video mode: create a first-frame image before the video."),
       prompt: z
         .string()
         .optional()
@@ -136,6 +136,26 @@ export const storyboardPlanParamsSchema = z.object({
   shots: jsonTolerantArray(z.array(storyboardShotSchema).min(1).max(24)),
 });
 
+// Shared gray-model prop contract. Staging and camera-move references render the
+// same prop vocabulary; keeping one schema also makes the MCP operation union
+// lossless when it is flattened for model-facing JSON Schema.
+export const grayModelPropsSchema = z
+  .array(
+    z.object({
+      kind: z.enum([
+        "car", "building", "tree", "streetlamp", "wall", "suv", "bus",
+        "bicycle", "scooter", "sofa", "diningTable", "fridge",
+        "washingMachine", "trashBins", "atm", "backpack",
+      ]).describe("Gray-model prop kind."),
+      position: z.array(z.number()).length(2).optional().describe("Ground [x,z] meters, relative to the subject at origin."),
+      rotationY: z.number().optional().describe("Yaw in degrees."),
+      scale: z.number().optional().describe("Uniform scale (0.1–10, default 1)."),
+    }),
+  )
+  .max(12)
+  .optional()
+  .describe("Placed gray-model props; use sceneTemplate for a full backdrop.");
+
 // ── 站位参考 schema（create_staging_reference 的参数；镜像渲染层 stagingBuilder 的 StagingSpec，
 // 进程隔离故两处各一份，与 storyboardPlan 同例。pose 枚举=已校准的预设 id）。──
 export const stagingReferenceParamsSchema = z.object({
@@ -146,7 +166,7 @@ export const stagingReferenceParamsSchema = z.object({
   characters: z
     .array(
       z.object({
-        name: z.string().optional().describe("Character label, e.g. '林夏' / '角色A'."),
+        name: z.string().optional().describe("Character label in the user's language (e.g. '林夏' / '角色A')."),
         pose: z
           .enum([
             "standing",
@@ -180,17 +200,17 @@ export const stagingReferenceParamsSchema = z.object({
     .describe("Layout: side-by-side is a row; line is a front-to-back queue."),
   camera: z
     .object({
-      angle: z.enum(["front", "three-quarter", "side", "back"]).optional(),
+      angle: z.enum(["front", "three-quarter", "side", "back"]).describe("Reference camera angle.").optional(),
       height: z
         .enum(["eye", "low", "high", "overhead"])
         .optional()
         .describe("low = low-angle look up; high = high-angle look down; overhead = top-down."),
-      shot: z.enum(["wide", "medium", "close"]).optional(),
+      shot: z.enum(["wide", "medium", "close"]).describe("Reference framing.").optional(),
     })
     .optional(),
   environment: z.enum(["studio", "day", "night"]).optional(),
   crowd: z
-    .object({ rows: z.number().int(), columns: z.number().int() })
+    .object({ rows: z.number().int().describe("Crowd row count."), columns: z.number().int().describe("Crowd column count.") })
     .optional()
     .describe("Optional background crowd grid behind the main characters."),
   // 灰模布景（走 UI 同一套 builder）：整套场景模板 + 单件语义道具，给参考图一个可读的环境/尺度背景。
@@ -198,39 +218,7 @@ export const stagingReferenceParamsSchema = z.object({
     .enum(["street", "room"])
     .optional()
     .describe("Gray backdrop: street or room; environment=day lights the street."),
-  props: z
-    .array(
-      z.object({
-        kind: z.enum([
-          "car",
-          "building",
-          "tree",
-          "streetlamp",
-          "wall",
-          "suv",
-          "bus",
-          "bicycle",
-          "scooter",
-          "sofa",
-          "diningTable",
-          "fridge",
-          "washingMachine",
-          "trashBins",
-          "atm",
-          "backpack",
-        ]),
-        position: z
-          .array(z.number())
-          .length(2)
-          .optional()
-          .describe("Ground [x,z] meters, relative to characters at origin."),
-        rotationY: z.number().optional().describe("Yaw in degrees."),
-        scale: z.number().optional().describe("Uniform scale (0.1–10, default 1)."),
-      }),
-    )
-    .max(12)
-    .optional()
-    .describe("Placed gray-model props; use sceneTemplate for a full backdrop."),
+  props: grayModelPropsSchema,
   // 词表外逃生口（站位）：词表(layout/pose/facing…)是精确首选，但站位/构图意图不在词表里时
   // 不要硬塞最近的词——填自由文本，执行器不渲站位图、把它当 composition 指令追加进关键帧图 prompt。
   customBlocking: z
@@ -302,39 +290,7 @@ export const cameraMoveParamsObjectSchema = z.object({
     .enum(["street", "room"])
     .optional()
     .describe("Gray backdrop beneath the subject at origin."),
-  props: z
-    .array(
-      z.object({
-        kind: z.enum([
-          "car",
-          "building",
-          "tree",
-          "streetlamp",
-          "wall",
-          "suv",
-          "bus",
-          "bicycle",
-          "scooter",
-          "sofa",
-          "diningTable",
-          "fridge",
-          "washingMachine",
-          "trashBins",
-          "atm",
-          "backpack",
-        ]),
-        position: z
-          .array(z.number())
-          .length(2)
-          .optional()
-          .describe("Ground [x,z] meters, relative to subject at origin."),
-        rotationY: z.number().optional().describe("Yaw in degrees."),
-        scale: z.number().optional().describe("Uniform scale (0.1–10, default 1)."),
-      }),
-    )
-    .max(12)
-    .optional()
-    .describe("Placed gray-model props; use sceneTemplate for a full backdrop."),
+  props: grayModelPropsSchema,
 });
 
 /** Workflow guidance shared by the model profiles; field schemas retain their concise meanings. */
@@ -346,13 +302,14 @@ export const STORYBOARD_MODEL_GUIDELINES = Object.freeze([
   "Same-sceneId shots must be contiguous; omit without grouping. Match all shot kinds to requested mode; default image unless video is explicit. Image: duration 0, no motion/transition/dialogue. Video: seconds, clamped to model max.",
   "Reference anchors by id. Video prompts: camera move + action progression, no repeated static anchors. Preserve captions and speaker/line dialogue verbatim on canvas/timeline. Explicit hard cut: cut; unauthored transition: omit.",
   "modelKey, mode/variant and parameter keys must come from available models; omit unknowns for defaults. First frames use image models; prefer image_ref/edit with visual anchors.",
-  "First frame: static composition, shot size, light, pose/expression, environment; no motion, action progression, dialogue, subtitles or sound. Use supported image parameters. 图片+视频: first frame belongs inside its video shot, never a separate shot."
+  "First frame: static composition, shot size, light, pose/expression, environment; no motion, action progression, dialogue, subtitles or sound. Use supported image parameters. Image-plus-video mode: first frame belongs inside its video shot, never a separate shot.",
+  "aspectRatio is film-level: set it once at plan top level; only a genuinely different shot overrides it via params.aspect_ratio. Never copy one ratio into every shot."
 ]);
 
 export const STAGING_MODEL_GUIDELINES = Object.freeze([
   "shotClientId: this turn's create_canvas_nodes clientId or existing shot/keyframe/video id. Render connects as composition_ref; omit id for standalone reference.",
   "Stage 1–6 characters using precise 3D vocabulary, or supply customBlocking. Default pose standing; squat=deep squat, crouch=upright half-crouch, single-knee=proposal kneel, cheer=arms up; hands-on-hips, point and wave are literal poses.",
-  "layout: side-by-side=shoulder-to-shoulder row（并排/一字排开）; line=front-to-back queue（纵队）; facing=two facing each other; behind=one ahead of another; circle=around a center.",
+  "layout: side-by-side=shoulder-to-shoulder row; line=front-to-back queue; facing=two facing each other; behind=one ahead of another; circle=around a center.",
   "sceneTemplate supplies a gray backdrop: street has roads/lane lines/sidewalk/buildings/trees/lamps/cars; room has three walls/bed/table/sofa/ceiling light. Use it for environment and scale; street needs environment=day for a lit sky. Props are individual objects; prefer sceneTemplate for whole backdrops. Positions are [x,z] ground meters relative to characters at origin; omitted props auto-spread to their right.",
   "For out-of-vocabulary multi-tier/over-the-shoulder/prop-relative/reference-image compositions, use customBlocking film terms, never a wrong layout/pose. It injects a KEYFRAME IMAGE prompt directive, not a 3D render, and is less precise. With customBlocking, characters/layout/camera may be omitted; never omit both characters and customBlocking."
 ]);

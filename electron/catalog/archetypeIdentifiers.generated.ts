@@ -63,11 +63,6 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "grok-imagine-1.5",
     "grok_imagine_1_5"
   ],
-  "sora-2": [
-    "sora-2",
-    "sora-2-pro",
-    "sora2"
-  ],
   "veo-3.1": [
     "veo-3.1",
     "veo3.1",
@@ -120,6 +115,9 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   "minimax-h3-apimart": [
     "MiniMax-H3"
   ],
+  "minimax-h3-pixstag": [
+    "pixstag/MiniMax-H3"
+  ],
   "wan-2.7": [
     "wan-2.7",
     "wan2.7",
@@ -152,6 +150,12 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   "minimax-h3-regeneration": [
     "MiniMax-H3-Regeneration"
   ],
+  "higgsfield-dop": [
+    "higgsfield-ai/dop/standard",
+    "higgsfield-ai/dop/turbo",
+    "higgsfield-dop-standard",
+    "higgsfield-dop-turbo"
+  ],
   "volcengine-seedance-2": [
     "doubao-seedance-2-0-260128",
     "doubao-seedance-2-0-fast-260128",
@@ -167,8 +171,19 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "seedance2.0",
     "seedance2.0_vip",
     "seedance2.0fast_vip",
-    "seedance2.0mini",
-    "seedance2.5"
+    "seedance2.0mini"
+  ],
+  "dreamina-seedance-2.5": [
+    "dreamina-seedance-2.5",
+    "dreamina/seedance2.5"
+  ],
+  "jimeng-web-seedance-2": [
+    "jimeng-web-seedance-2.0",
+    "jimeng-seedance-2.0-mini",
+    "jimeng-seedance-2.0-fast-vip",
+    "jimeng-seedance-2.0-vip",
+    "jimeng-seedance-2.0-fast",
+    "jimeng-seedance-2.0"
   ],
   "dreamina-multiframe": [
     "dreamina-multiframe"
@@ -191,10 +206,6 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   "rh-hailuo-2.3": [
     "rh-hailuo-2.3"
   ],
-  "rh-sora-2": [
-    "rhart-video-s-official",
-    "sora-2-rh"
-  ],
   "agnes-video": [
     "agnes-video",
     "agnes-video-v2.0",
@@ -205,6 +216,18 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   ],
   "agnes-video-2.5-flash": [
     "agnes-video-2.5-flash"
+  ],
+  "jimeng-web-image": [
+    "jimeng-web-image",
+    "jimeng-image-5.0-pro",
+    "jimeng-image-5.0-lite",
+    "jimeng-image-4.7",
+    "jimeng-image-4.6",
+    "jimeng-image-4.5",
+    "jimeng-image-4.1",
+    "jimeng-image-4.0",
+    "jimeng-image-3.1",
+    "jimeng-image-3.0"
   ],
   "minimax-music-3": [
     "minimax/music-3",
@@ -248,10 +271,13 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "muse_image"
   ],
   "grok-imagine-image-2": [
-    "grok_imagine_image_2"
+    "grok_imagine_image_2",
+    "grok-imagine-2.0-ext"
   ],
   "gemini-image-3-pro": [
-    "gemini_image3_pro"
+    "gemini_image3_pro",
+    "gemini-3-pro-image-preview",
+    "nano-banana-pro"
   ],
   "gemini-image-3.1-flash": [
     "gemini_image3.1_flash"
@@ -264,7 +290,9 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "gpt-image-2-text-to-image",
     "gpt-image-2-image-to-image",
     "gpt-4o-image",
-    "gpt_image_2"
+    "gpt_image_2",
+    "codex-img2",
+    "codex-imagegen-img2"
   ],
   "seedream": [
     "seedream",
@@ -298,7 +326,6 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "nano-banana",
     "google/nano-banana",
     "google/nano-banana-edit",
-    "nano-banana-pro",
     "gemini-2.5-flash-image-preview",
     "gemini_2.5_flash"
   ],
@@ -438,5 +465,39 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   ],
   "agnes-image-2.1": [
     "agnes-image-2.1-flash"
+  ],
+  "nomi-local-speech": [
+    "whisper-cpp-local",
+    "nomi-local-speech"
+  ],
+  "higgsfield-soul-2": [
+    "higgsfield-ai/soul/v2/standard",
+    "higgsfield-soul-2",
+    "soul-2"
+  ],
+  "higgsfield-soul-cinema": [
+    "higgsfield-ai/soul/cinema",
+    "higgsfield-soul-cinema",
+    "soul-cinema"
+  ],
+  "gpt-image-2.5-flare": [
+    "gpt-image-2.5-flare",
+    "gpt-image-2-5-flare-text-to-image",
+    "gpt-image-2-5-flare-image-to-image"
+  ],
+  "gpt-image-2.5-sunburst": [
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2-5-sunburst-text-to-image",
+    "gpt-image-2-5-sunburst-image-to-image"
+  ],
+  "imagen-4-fast": [
+    "google/imagen4-fast",
+    "imagen4-fast",
+    "imagen-4-fast"
+  ],
+  "imagen-4-ultra": [
+    "google/imagen4-ultra",
+    "imagen4-ultra",
+    "imagen-4-ultra"
   ]
 };

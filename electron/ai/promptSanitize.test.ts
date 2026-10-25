@@ -34,7 +34,17 @@ describe("sanitizeForBroadCompat", () => {
   });
 
   it("strips zero-width characters", () => {
-    expect(sanitizeForBroadCompat("a​b‌c")).toBe("abc");
+    for (const code of [0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2060, 0xfeff]) {
+      expect(sanitizeForBroadCompat(`a${String.fromCharCode(code)}b`)).toBe("ab");
+    }
+  });
+
+  it("normalizes only the existing special-space set and keeps Chinese and emoji", () => {
+    for (const code of [0x00a0, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x3000]) {
+      expect(sanitizeForBroadCompat(`a${String.fromCharCode(code)}b`)).toBe("a b");
+    }
+    expect(sanitizeForBroadCompat("中文参考图🖼️")).toBe("中文参考图🖼️");
+    expect(sanitizeForBroadCompat("a\u2001b\u2010c")).toBe("a\u2001b\u2010c");
   });
 
   it("preserves ASCII unchanged", () => {

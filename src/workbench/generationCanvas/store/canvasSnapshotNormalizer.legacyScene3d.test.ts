@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeStoreSnapshot } from './canvasSnapshotNormalizer'
 
-// 切换门（2026-09-03）：磁盘里的老 scene3d 节点在加载时迁成 director 节点，工程落到 meta.directorProject，AI 出图标志原样保留
-describe('normalizeStoreSnapshot — 老 scene3d 节点迁成 director', () => {
-  it('kind 换成 director、scene3dState 变 directorProject、自动出图标志保留、其它字段不动', () => {
+// The customized scene3d editor owns Blender state; the official director is a separate node kind.
+describe('normalizeStoreSnapshot — preserve customized scene3d nodes', () => {
+  it('preserves scene3d state, capture flags and Blender metadata without a lossy director migration', () => {
     const snap = normalizeStoreSnapshot({
       nodes: [{
         id: 'legacy-1',
@@ -17,25 +17,34 @@ describe('normalizeStoreSnapshot — 老 scene3d 节点迁成 director', () => {
             cameras: [{ id: 'c', name: '机位', visible: true, position: [0, 1.5, 5], rotation: [0, 0, 0], target: [0, 1.3, 0], fov: 40, aspectRatio: '16:9', lensDepth: 0 }],
           },
           stagingAutoCapture: { targetNodeId: 'shot-1' },
+          blenderSceneFile: '/local-fixture/scene.blend',
         },
       }],
     })
     expect(snap.nodes).toHaveLength(1)
     const node = snap.nodes[0]
-    expect(node.kind).toBe('director')
+    expect(node.kind).toBe('scene3d')
     expect(node.title).toBe('站位参考')
     expect(node.position).toEqual({ x: 10, y: 20 })
-    expect(node.meta?.scene3dState).toBeUndefined()
-    const project = node.meta?.directorProject as { scenes: Array<{ objects: unknown[]; cameras: unknown[] }> }
-    expect(project.scenes[0].objects).toHaveLength(1)
-    expect(project.scenes[0].cameras).toHaveLength(1)
+    expect(node.meta?.directorProject).toBeUndefined()
+    const scene = node.meta?.scene3dState as { objects: unknown[]; cameras: unknown[] }
+    expect(scene.objects).toHaveLength(1)
+    expect(scene.cameras).toHaveLength(1)
+    expect(node.meta?.blenderSceneFile).toBe('/local-fixture/scene.blend')
     expect(node.meta?.stagingAutoCapture).toEqual({ targetNodeId: 'shot-1' })
   })
 
-  it('没有 scene3dState 的空老节点也能迁成空工程的 director 节点', () => {
+  it('retains an empty customized scene3d node for its own editor to initialize', () => {
     const snap = normalizeStoreSnapshot({ nodes: [{ id: 'legacy-2', kind: 'scene3d', title: '3D', position: { x: 0, y: 0 } }] })
+    expect(snap.nodes[0].kind).toBe('scene3d')
+    expect(snap.nodes[0].meta?.directorProject).toBeUndefined()
+  })
+
+  it('keeps official director nodes separate and preserves their project payload', () => {
+    const directorProject = { id: 'official-director', scenes: [] }
+    const snap = normalizeStoreSnapshot({ nodes: [{ id: 'director-1', kind: 'director', position: { x: 0, y: 0 }, meta: { directorProject } }] })
     expect(snap.nodes[0].kind).toBe('director')
-    const project = snap.nodes[0].meta?.directorProject as { scenes: Array<{ objects: unknown[] }> }
-    expect(project.scenes[0].objects).toHaveLength(0)
+    expect(snap.nodes[0].meta?.directorProject).toEqual(directorProject)
+    expect(snap.nodes[0].meta?.scene3dState).toBeUndefined()
   })
 })

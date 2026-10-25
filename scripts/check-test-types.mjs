@@ -3,6 +3,9 @@
 //
 // 为什么需要这个门岗：`pnpm typecheck` 走 tsconfig.app.json + electron/tsconfig.json，
 // 两份都 exclude 了 *.test.ts；而 vitest 用 esbuild 转译，**只删类型标注、从不核对**。
+// scripts/**/*.ts 同理：由 tsx 直接跑，没有任何 tsconfig 收它。2026-09-17 生产端给
+// LocalSpeechProgress 加了 starting 阶段，local-speech-live-check.ts 的二元三目原样把它当
+// transcribing 读，脚本一条素材都跑不完——tsc 早就能报 TS2339，只是没人让它看这个目录。
 // 结果是 694 个测试文件的类型无人检查——写在测试里的类型级护栏（Required<T> 夹具 /
 // Record<keyof T,…> 穷尽表 / satisfies / @ts-expect-error）全是装饰品，类型漂移不报红。
 // 2026-08-25 实跑一次挖出真漂移：canvasEventReplay 的 Op 联合漏了 lock 变体（生成器和
@@ -14,12 +17,12 @@
 //
 // 棘轮语义：基线按「文件 → 错误数」记账。
 //   · src/ 已清零 → 不在基线里 → 新增任何 src 测试类型错当场报红。
-//   · electron/ 与 evals/ 有存量 → 记在基线里，只许变少不许变多，后续慢慢清零。
+//   · electron/、evals/ 与 scripts/ 有存量 → 记在基线里，只许变少不许变多，后续慢慢清零。
 // 重记基线：node ./scripts/check-test-types.mjs --update-baseline
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -29,27 +32,39 @@ const NATIVE_PROJECT = 'tests/agent-runtime/tsconfig.json'
 const require = createRequire(import.meta.url)
 const tscBin = require.resolve('typescript/bin/tsc')
 
+/**
+ * 异步跑一份 tsc。两份工程（agent-runtime 原生测试 / 全部测试文件）互不依赖，并发跑——
+ * 2026-10-01 用户按门岗账本拍板「test-types 与 typecheck 合成一次 tsc」：两份 tsconfig 的 module / lib / types
+ * 不兼容（electron 是 CommonJS + 顶层 await 冲突，见上），塞不进同一个 TS program，能合的是**墙钟**——
+ * 这里并发，外层 scripts/typecheck.mjs 再把整个 check:test-types 与 app / electron / pi 三份生产类型检查并发。
+ */
 function runTypecheck(project) {
-  const result = spawnSync(process.execPath, [tscBin, '-p', project, '--noEmit', '--pretty', 'false'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [tscBin, '-p', project, '--noEmit', '--pretty', 'false'], { cwd: repoRoot })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += chunk })
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.on('error', (error) => resolve({ error, status: null, stdout, stderr, signal: null }))
+    child.on('close', (status, signal) => resolve({ status, signal, stdout, stderr }))
+  }).then((result) => {
+    if (result.error || result.signal || result.status === null) {
+      console.error(`✖ 无法运行 tsc (${project})：${result.error?.message ?? result.signal ?? 'no exit status'}`)
+      process.exit(1)
+    }
+    return result
   })
-  if (result.error || result.signal || result.status === null) {
-    console.error(`✖ 无法运行 tsc (${project})：${result.error?.message ?? result.signal ?? 'no exit status'}`)
-    process.exit(1)
-  }
-  return result
 }
 
 // Native node:test suites use the same strict NodeNext boundary as production.
 // They have no baseline: even --update-baseline must not admit a native error.
-const native = runTypecheck(NATIVE_PROJECT)
+const [native, tsc] = await Promise.all([runTypecheck(NATIVE_PROJECT), runTypecheck(PROJECT)])
 if (native.status !== 0) {
-  console.error(`✖ agent-runtime 测试类型门岗未通过（必须 0 错误）\n${native.stdout}${native.stderr}`)
+  console.error(`✖ agent-runtime 测试类型门岗未通过（必须 0 错误）
+${native.stdout}${native.stderr}`)
   process.exit(1)
 }
 console.log('✅ agent-runtime 测试类型通过：0 个错误')
-const tsc = runTypecheck(PROJECT)
 
 // tsc 的错误行形如：src/a/b.test.ts(12,34): error TS2345: ...
 // 续行（缩进的补充说明）不计数，只认带 file(line,col) 的那一行。
@@ -114,5 +129,5 @@ if (totalNow < totalBase) {
   console.log(`✅ 测试类型门岗通过：${totalNow} 个错（基线 ${totalBase}，少了 ${totalBase - totalNow} 个）`)
   if (cleared.length) console.log(`   已清零 ${cleared.length} 个文件 → 记得跑 --update-baseline 把棘轮拧紧`)
 } else {
-  console.log(`✅ 测试类型门岗通过：src/ 0 错；存量 ${totalNow} 个（electron/ + evals/，棘轮只减不增）`)
+  console.log(`✅ 测试类型门岗通过：src/ 0 错；存量 ${totalNow} 个（electron/ + evals/ + scripts/，棘轮只减不增）`)
 }

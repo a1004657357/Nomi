@@ -1,3 +1,6 @@
+import { filmBibleSchema } from '../domain/cinematicSchema'
+import type { FilmBibleV1 } from '../domain/cinematicTypes'
+import type { StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
 import { z } from 'zod'
 
 import { createDefaultTimeline } from '../timeline/timelineMath'
@@ -63,6 +66,10 @@ export const workbenchProjectPayloadSchema = z.object({
   categories: z.array(projectCategorySchema).optional(),
   /** S5-b-1:快照覆盖到事件日志的哪个 seq——hydrate 时重放其后的尾巴(崩溃恢复)。可选,老项目无。 */
   generationCanvasLastSeq: z.number().optional(),
+  // Retired storyboard projections are read from raw input by normalizePayload;
+  // this schema describes canonical storage, not a second active-view owner.
+  /** 项目级跨镜头事实。老项目无字段时由当前分镜按需派生，首次应用补丁后持久化。 */
+  filmBible: filmBibleSchema.nullable().optional(),
   /** 每篇原稿的分镜设计（唯一持久化 owner）。 */
   storyboardDesignsByDocumentId: z.record(
     z.array(z.object({
@@ -82,6 +89,8 @@ export const workbenchProjectPayloadSchema = z.object({
 
 export const workbenchProjectRecordSchema = workbenchProjectSummarySchema.extend({
   version: workbenchProjectRecordVersionSchema,
+  immutableProjectUuid: z.string().uuid().optional(),
+  projectGeneration: z.number().int().positive().optional(),
   payload: workbenchProjectPayloadSchema,
 })
 
@@ -136,12 +145,20 @@ export type WorkbenchProjectPayload = {
   categories?: ProjectCategory[]
   /** S5-b-1:快照覆盖到日志的 seq(尾部重放游标);老项目无此字段则跳过重放。 */
   generationCanvasLastSeq?: number
+  /** @deprecated Legacy input only; normalizePayload migrates it into the canonical map. Writers must not emit it. */
+  storyboardPlan?: StoryboardPlan | null
+  /** @deprecated Legacy input only; committed state belongs to each canonical design. */
+  storyboardPlanCommitted?: boolean
+  /** 电影项目级事实；禁止放入 API Key、Cookie 或 Provider 私有配置。 */
+  filmBible?: FilmBibleV1 | null
   storyboardDesignsByDocumentId?: Record<string, StoryboardDesign[]>
   /** Preview editing surface dimensions and visibility are project-local UI state. */
   editingPanelLayout?: EditingPanelLayout
 }
 
 export type WorkbenchProjectRecordV1 = WorkbenchProjectSummary & {
+  immutableProjectUuid?: string
+  projectGeneration?: number
   version: 1
   payload: WorkbenchProjectPayload
 }
@@ -165,5 +182,6 @@ export function createDefaultWorkbenchProjectPayload(): WorkbenchProjectPayload 
     timeline: createDefaultTimeline(),
     generationCanvas: createDefaultGenerationCanvasSnapshot(),
     categories: cloneBuiltinCategories(),
+    filmBible: null,
   }
 }

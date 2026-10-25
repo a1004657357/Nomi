@@ -1,0 +1,150 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-bundle-glb-single-owner",
+  "problem_type": "Duplicate bundled GLB URL owners bypass the established render-only asset boundary",
+  "symptom": "bundleAssetUrlBoundary finds six URL declaration modules instead of the unchanged four allowed modules.",
+  "direct_cause": "Scene3D redeclares the Nomi model/animation URLs and ueSpike declares the separate UE4 URL instead of reusing the existing mannequin asset owner.",
+  "class_root": "Bundled mannequin asset addresses must have one render-only source owner while existing consumers retain their distinct model/animation identities.",
+  "affected_population": [
+    "Scene3D Nomi model and locomotion rendering",
+    "Existing UE4 mannequin rig consumers"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/director/scene/character/mannequinAssets.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/ueSpike/ue4MannequinRig.ts"
+  ],
+  "entry_points": [
+    "MANNEQUIN_MODEL_URL / MANNEQUIN_ANIMATION_URL / UE4_MANNEQUIN_MODEL_URL"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is module ownership of already-bundled repository assets. No GLB bytes, rig/library behavior, binary license or third-party API is changed or assumed.",
+  "invariants": [
+    "The four-path URL whitelist and detector are unchanged",
+    "Every existing asset basename and public export remains unchanged",
+    "Nomi model, locomotion animation and UE4 model remain distinct; no asset is substituted",
+    "Only the established render-only mannequinAssets module constructs these URLs; no URL enters project persistence"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/panels/dialogs/ActionPreview.tsx",
+      "symbol": "MANNEQUIN_MODEL_URL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/characterAsset.ts",
+      "symbol": "MANNEQUIN_MODEL_URL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/scene/entities/CharacterEntity.tsx",
+      "symbol": "MANNEQUIN_MODEL_URL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts",
+      "symbol": "MANNEQUIN_ANIMATION_URL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "MANNEQUIN_MODEL_URL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "UE4_MANNEQUIN_MODEL_URL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "MANNEQUIN_ANIMATION_URL"
+    }
+  ],
+  "door_reduction": {
+    "before": 7,
+    "after": 7,
+    "why_not": "These are legitimate render-only loaders and existing public re-export consumers. Keep their APIs and make them share address construction rather than removing rig/rendering functionality."
+  },
+  "generality_proof": "The original whole-src boundary test remains unchanged. New real-import tests assert old consumer values equal the canonical owner, exact pre-fix resolved asset paths remain the same and UE4/animation are not substituted with the Nomi model.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/mannequinAssets.ts",
+      "symbol": "MANNEQUIN_MODEL_URL",
+      "responsibility": "Canonical render-only mannequin asset address owner"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+      "entry_point": "Scene3D model and animation imports",
+      "disposition": "enforced",
+      "evidence": "Re-export the canonical owner values while preserving names and exact URLs"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/ueSpike/ue4MannequinRig.ts",
+      "entry_point": "UE4 rig model import",
+      "disposition": "enforced",
+      "evidence": "Re-export its distinct pre-existing UE4 model address from the same owner without touching rig math"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "A second module declaring bundle-relative URLs can create divergent model identity or values that later cross persistence boundaries.",
+    "same_class_scan": [
+      "Original bundle URL guard enumerates all src TS/TSX declarations",
+      "Generated actual symbol door map and inspected all three declaration modules",
+      "Read Nomi/animation/UE4 distinct names and their existing consumers"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/director/scene/character/mannequinAssets.ts",
+    "invariant": "One established render-only module constructs bundled mannequin URLs.",
+    "failure_mode": "The unchanged boundary guard rejects any newly introduced URL owner and real-import regression rejects model substitution or stale compatibility exports.",
+    "exception_policy": "none",
+    "strategy": "Move only URL construction into the existing owner and remove old declarations in the same change.",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/director/scene/character/mannequinAssets.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/ueSpike/ue4MannequinRig.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/scene3d/mannequinAssetOwner.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/scene3d/mannequinAssetOwner.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/ueSpike/ue4MannequinRig.ts"
+    ],
+    "rationale": "Remove duplicate URL constructors, retain compatibility exports only."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No library/API/binary change; this is existing asset ownership.",
+    "exit_criteria": []
+  },
+  "migration": "No project migration, GLB replacement or media commit; public exports and exact resolved paths remain compatible.",
+  "residual_risks": [
+    "No actual Three loader/render or App screenshot is run in this bounded task; only URL/module behavior is verified",
+    "The unchanged door-map tool reports consumer references, not URL definitions or pure re-exports: the real-diff check retains three door-coverage advisories for the three changed asset declaration/export modules. Generated doors are preserved; no manual fake entries, scope omissions, checker changes or exemptions are used."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/director/scene/character",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/scene3d/mannequinAssetOwner.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/scene3d/mannequinAssetOwner.test.ts"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

@@ -1,6 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import ts from 'typescript';
+import { preloadSurfaceSource } from "../preload/preloadSurfaceSources";
+import { EMPTY_LANE_PROJECTION } from '../../src/workbench/ai/lane/laneClient';
+import { sendWorkbenchAiMessage } from '../../src/workbench/ai/workbenchAiClient';
+
+const lane = vi.hoisted(() => ({ singleShot: vi.fn(), abort: vi.fn(), assets: vi.fn(), usage: vi.fn() }));
+vi.mock('../../src/workbench/ai/lane/laneClient', async load => ({
+  ...await load<typeof import('../../src/workbench/ai/lane/laneClient')>(),
+  laneClient: { singleShot: lane.singleShot, abortSingleShot: lane.abort },
+}));
+vi.mock('../../src/desktop/bridge', () => ({ getDesktopBridge: () => ({ assets: { list: lane.assets } }) }));
+vi.mock('../../src/workbench/ai/agentUsageStore', () => ({ useAgentUsageStore: { getState: () => ({ addUsage: lane.usage }) } }));
 
 function source(relativePath: string): string {
   return fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
@@ -13,7 +25,7 @@ function exists(relativePath: string): boolean {
 describe("Agent lane production cutover structure", () => {
   it("removes the legacy conversation shells after Host cutover", () => {
     const main = source("electron/main.ts");
-    const preload = source("electron/preload.ts");
+    const preload = preloadSurfaceSource();
     const bridge = source("src/desktop/bridge.ts");
     const app = source("src/workbench/NomiStudioApp.tsx");
 
@@ -32,18 +44,38 @@ describe("Agent lane production cutover structure", () => {
 
   it("keeps the legacy chatV2 renderer transport outside the production graph", () => {
     const main = source("electron/main.ts");
-    const preload = source("electron/preload.ts");
+    const preload = preloadSurfaceSource();
     const bridge = source("src/desktop/bridge.ts");
     const singleShot = source("src/workbench/ai/agentLoopMode.ts");
 
     expect(main).not.toContain("registerAgentChatV2Ipc");
     expect(preload).not.toContain("nomi:agents:chatV2");
     expect(bridge).not.toMatch(/\bagents\s*:/);
-    expect(exists("src/workbench/ai/workbenchAgentRunner.ts")).toBe(false);
+    const runner = ts.transpileModule(source('src/workbench/ai/workbenchAgentRunner.ts'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    }).outputText;
+    expect(runner.trim()).toBe('export {};');
     expect(singleShot).toContain("laneClient.singleShot");
     expect(singleShot).not.toContain("sendWorkbenchAiMessage");
     expect(exists("src/api/desktopAgentsChatStream.ts")).toBe(false);
-    expect(exists("src/workbench/ai/workbenchAiClient.ts")).toBe(false);
+    const client = source('src/workbench/ai/workbenchAiClient.ts');
+    expect(client).toContain('await runSingleShotAgent(');
+    expect(client).not.toMatch(/chatV2|desktopAgentsChatStream|workbenchAgentRunner/);
+    const runtime = ts.createSourceFile('laneDesktopRuntime.ts', source('electron/agentLane/laneDesktopRuntime.ts'), ts.ScriptTarget.Latest, true);
+    const singleShotBodies: string[] = [];
+    function visit(node: ts.Node) {
+      if (ts.isPropertyAssignment(node) && node.name.getText(runtime) === 'singleShot') {
+        singleShotBodies.push(node.initializer.getText(runtime));
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(runtime);
+    expect(singleShotBodies).toHaveLength(1);
+    const singleShotRuntime = singleShotBodies[0];
+    expect(singleShotRuntime).toContain('getCommittedProjectSelection()');
+    expect(singleShotRuntime).toContain('project_binding_stale');
+    expect(singleShotRuntime).toContain('assertProjectSession(event, session)');
+    expect(source('electron/agentLane/laneSingleShot.mts')).toContain('tools: []');
   });
 
   it("keeps the resident shell on one lane projection without local transcript owners", () => {
@@ -108,7 +140,6 @@ describe("Agent lane production cutover structure", () => {
     expect(exists("src/workbench/creation/creationTurnController.ts")).toBe(false);
 
     const productionFiles = [
-      "src/workbench/creation/creationAiReplyText.ts",
       "src/workbench/project/projectPersistenceService.ts",
       "src/workbench/project/releaseWorkbenchProjectSession.ts",
       "src/workbench/workbenchStore.ts",
@@ -120,20 +151,47 @@ describe("Agent lane production cutover structure", () => {
     }
   });
 
-  it("hydrates proposal receipts only after the current lane workspace is installed", () => {
-    const app = source("src/workbench/NomiStudioApp.tsx");
-    const preload = source("electron/preload.ts");
-    const open = app.indexOf("await laneClient.open(committedBinding.binding)");
-    const currentGuard = app.indexOf("surfaceEpoch.assertCurrent()", open);
-    const hydrate = app.indexOf("hydrateCommittedProposalReceipt(await laneReceiptClient.readProposalReceipt(opened.workspaceId))", currentGuard);
-
-    expect(open).toBeGreaterThan(-1);
-    expect(currentGuard).toBeGreaterThan(open);
-    expect(hydrate).toBeGreaterThan(currentGuard);
+  it("keeps proposal receipt recovery on the lane workspace contract", () => {
+    const preload = preloadSurfaceSource();
     expect(preload).toContain("LANE_IPC_CHANNELS.command");
     expect(preload).not.toContain("nomi:projectAgent:");
     expect(preload).not.toContain("projectRoot: proposal");
     expect(preload).not.toContain("sourceHash: proposal");
+  });
+});
+
+describe('preserved custom planners use the real renderer singleShot adapter', () => {
+  const input = { prompt: 'plan', displayPrompt: 'Plan', sessionKey: 'feature:director', projectId: 'project-A',
+    skillKey: 'director', skillName: 'Director', agentVendorKey: 'fixture', agentModelKey: 'text-model', disableTools: false };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lane.assets.mockResolvedValue({ items: [], cursor: null });
+    lane.singleShot.mockResolvedValue({ ok: true, singleShot: { ...EMPTY_LANE_PROJECTION, parts: [
+      { kind: 'assistant-text', sequence: 1, entrySeq: 2, contentIndex: 0, text: 'result', streaming: false },
+    ] } });
+  });
+
+  it('preserves project/model/system input while using one lane request with mandatory approval policy', async () => {
+    const onContent = vi.fn();
+    const response = await sendWorkbenchAiMessage({ ...input, systemPrompt: 'keep source' }, { onContent });
+    expect(response).toMatchObject({ text: 'result', toolCalls: [], artifacts: [] });
+    expect(lane.singleShot).toHaveBeenCalledOnce();
+    expect(lane.singleShot).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-A', featureKey: 'feature:director',
+      context: { systemPrompt: 'keep source', model: { vendorKey: 'fixture', modelKey: 'text-model' }, approvalPolicy: { mode: 'step', spend: 'confirm' } },
+    }));
+    expect(onContent).toHaveBeenCalledWith('result', 'result');
+  });
+
+  it('rejects unclaimed attachment URLs before a lane call and does not expose a tool loop', async () => {
+    await expect(sendWorkbenchAiMessage({ ...input, attachments: [
+      { url: 'https://fixture.invalid/image.png', fileName: 'image.png', contentType: 'image/png', kind: 'image' },
+    ] }, {})).rejects.toThrow('agent_attachment_claim_required');
+    expect(lane.singleShot).not.toHaveBeenCalled();
+    lane.singleShot.mockResolvedValueOnce({ ok: true, singleShot: { ...EMPTY_LANE_PROJECTION, parts: [
+      { kind: 'tool-call', sequence: 1, toolCallId: 'forbidden', toolName: 'write', args: {} },
+    ] } });
+    await expect(sendWorkbenchAiMessage(input, {})).rejects.toThrow('single_shot_tools_disabled');
+    expect(lane.singleShot).toHaveBeenCalledOnce();
   });
 });
 
@@ -147,7 +205,8 @@ describe("一条 lane 的系统提示词每回合整体重新求值（2026-09-11
     const paths = source("electron/agentLane/laneCodingPaths.mts");
 
     expect(port).toContain("systemPrompt: string | (() => string)");
-    expect(port).toContain("skills: readonly SkillRecord[] | (() => readonly SkillRecord[])");
+    // 目录由 pi 的加载器给（async），所以来源可以回 Promise；给数组仍合法（影子夹具）。
+    expect(port).toContain("skills: readonly SkillRecord[] | (() => readonly SkillRecord[] | Promise<readonly SkillRecord[]>)");
     // 可信读根与索引同源：看得见就必须读得到，不许一个活一个死。
     expect(paths).toContain("export type LaneTrustedSkillRoots = readonly string[] | (() => readonly string[])");
   });
@@ -166,8 +225,9 @@ describe("一条 lane 的系统提示词每回合整体重新求值（2026-09-11
     expect(transform).not.toMatch(/\{\s*systemPrompt:\s*\[systemPrompt,/);
     expect(transform).not.toContain("composeSystemPrompt()");
     // 「这条技能要不要 coding 工具」判在准入那一刻，而用户可能刚导入它——先刷再问。
-    const admission = host.slice(host.indexOf("if (command.kind === 'prompt' && !projection.running"), host.indexOf("const admission = await lane.accept"));
-    expect(admission).toContain("await native?.skillIndex.refresh();");
+    const admission = host.slice(host.indexOf("if (command.kind === 'prompt' && !projection.running"), host.indexOf("const accepted = await lane.accept"));
+    expect(admission).toContain("await awaitWithContext(Promise.resolve(native?.skillIndex.refresh()), admission);");
+    expect(admission.indexOf("skillIndex.refresh()")).toBeLessThan(admission.indexOf("laneSkillUnlockReason(currentSkills()"));
     expect(admission).toContain("laneSkillUnlockReason(currentSkills()");
   });
 
@@ -179,7 +239,7 @@ describe("一条 lane 的系统提示词每回合整体重新求值（2026-09-11
     expect(runtime).toContain("currentProjectMemory(binding.projectId)");
     expect(runtime).not.toMatch(/let memory = ''/);
     // 技能库同理：给函数，宿主每回合重读一次。
-    expect(runtime).toContain("skills: () => readSkillRecords().filter(isSkillSelectableInWorkbench)");
+    expect(runtime).toContain("skills: async () => (await readSkillRecords()).filter(isSkillSelectableInWorkbench)");
   });
 
   it("技能索引与可信读根是同一个 owner 的同一份快照", () => {

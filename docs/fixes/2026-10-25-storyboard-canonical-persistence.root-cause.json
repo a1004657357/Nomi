@@ -1,0 +1,191 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-storyboard-canonical-persistence",
+  "problem_type": "Retired active storyboard projections re-enter persisted records beside their canonical multi-document owner",
+  "symptom": "The canonical writer and projection invariant tests fail; nine receipt tests crash inside selectActiveStoryboardDesign before queue behavior can execute.",
+  "direct_cause": "Session still samples and writes the selected plan/committed projection and normalizePayload re-emits it. Raw flat legacy records also lose migration fields in the intermediate legacy record projection.",
+  "class_root": "Read-only legacy inputs must be normalized from their original source into one canonical design map, and no writer may persist an active-view projection as independent project state.",
+  "affected_population": [
+    "Legacy single-plan and per-document-plan-map projects",
+    "Current multi-document projects with multiple inactive designs",
+    "Project switch, delayed save receipt and failure propagation paths"
+  ],
+  "scope_paths": [
+    "src/workbench/project/workbenchProjectSession.ts",
+    "src/workbench/project/projectRecordSchema.ts",
+    "src/workbench/project/projectNormalize.ts",
+    "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts"
+  ],
+  "entry_points": [
+    "normalizeRecord and normalizePayload",
+    "readCurrentWorkbenchProjectPayload and restoreWorkbenchProjectPayload",
+    "saveLocalProject and project persistence subscription"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The invariant is Nomi project/document domain ownership. Existing schemas, raw-input migration, document slice and repository/session readers and writers fully determine it; no external or Provider behavior is assumed.",
+  "invariants": [
+    "Only canonical storyboardDesignsByDocumentId is written; legacy projections remain read-only input compatibility",
+    "Canonical maps, including explicitly empty maps, are authoritative over retired inputs; do not resurrect deleted plans",
+    "Raw version 1/2 and flat legacy records reach migration before schema stripping can erase retired source keys",
+    "Keep all legal documents/designs/plans, committed/status fields, node association identities, Film Bible and user-authored prompt/parameter/meta content",
+    "Do not change debounce, subscription cutover, receipt waiting or error propagation; original nine receipt assertions and their empty store mock remain unchanged",
+    "No daily projects, real media, Provider, PNG, baseline, checker or model surface changes"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/NomiStudioApp.tsx",
+      "symbol": "readCurrentWorkbenchProjectPayload"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "workbenchProjectPayloadSchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/project/projectRecordSchema.ts",
+      "symbol": "workbenchProjectPayloadSchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/project/selectedNodeProjectTransfer.ts",
+      "symbol": "readCurrentWorkbenchProjectPayload"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/project/workbenchProjectSession.ts",
+      "symbol": "readCurrentWorkbenchProjectPayload"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "normalizePayload"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectPersistenceService.ts",
+      "symbol": "restoreWorkbenchProjectPayload"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectRepository.ts",
+      "symbol": "normalizeRecord"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectRepository.ts",
+      "symbol": "normalizePayload"
+    }
+  ],
+  "door_reduction": {
+    "before": 9,
+    "after": 9,
+    "why_not": "Application export, selected-node transfer, session autosave, repository read/save and hydration are legitimate distinct entry points; retain them and repair their existing shared schema/normalizer/session boundaries."
+  },
+  "generality_proof": "Real stores and repository read/save with isolated in-memory Web Storage exercise legacy single/map, current multi-design and version-2 records through migration, hydration, full-owner sampling, asynchronous canonical save receipt, serialized record and reload. Compare complete plans, all documents and design identities and original node/user metadata. Independent tests prove empty-owner precedence and raw flat migration; all original failing and receipt assertions are retained.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "normalizePayload",
+      "responsibility": "Consume validated original legacy inputs, prefer complete canonical ownership and return only canonical project state"
+    },
+    {
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "normalizeRecord",
+      "responsibility": "Give the actual raw input to migration for both wrapped and flat legacy records"
+    },
+    {
+      "path": "src/workbench/project/workbenchProjectSession.ts",
+      "symbol": "readCurrentWorkbenchProjectPayload",
+      "responsibility": "Snapshot all owner designs without reading selected storyboard projections"
+    },
+    {
+      "path": "src/workbench/project/projectRecordSchema.ts",
+      "symbol": "workbenchProjectPayloadSchema",
+      "responsibility": "Describe canonical persisted output while legacy raw migration stays in its existing owner"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/project/projectRepository.ts",
+      "entry_point": "saveLocalProject",
+      "disposition": "enforced",
+      "evidence": "Actual save calls normalizePayload before writing either local Storage or desktop project records; the test executes this function rather than mocking its payload."
+    },
+    {
+      "path": "src/workbench/project/projectPersistenceService.ts",
+      "entry_point": "restoreWorkbenchProjectPayload",
+      "disposition": "enforced",
+      "evidence": "Hydration already restores the complete design map through the real document owner and keeps the existing guard/receipt lifecycle."
+    },
+    {
+      "path": "src/workbench/project/selectedNodeProjectPayload.ts",
+      "entry_point": "buildSelectedNodeProjectPayload",
+      "disposition": "enforced",
+      "evidence": "Legacy null/false input placeholders remain outside this scope; their actual persistence still goes through repository normalizePayload, which emits no retired projection."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any active-only writer or intermediate parsed legacy object can truncate inactive document content or recreate dual source state on every save/reload.",
+    "same_class_scan": [
+      "Generated 9 actual direct doors for session/schema/normalizer and followed repository save to normalization",
+      "Read document slice hydrate/select semantics and current multiple-design owner type",
+      "Read v1/v2 and flat raw record paths, canonical map precedence and plan/Film Bible validation",
+      "Read the unmodified asynchronous save/dispose/cutover implementation and all nine receipt tests",
+      "Read selected-node export input placeholders and confirmed repository normalization before persistence"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/project/projectNormalize.ts",
+    "invariant": "All persisted storyboard content is represented solely by the canonical map after read-only migration.",
+    "failure_mode": "Malformed critical payload and unreadable legacy single plans/commit flags still fail closed without overwriting the existing record; unreadable legacy map entries keep their existing diagnostic policy. Null single plans are empty input. No snapshot samples an undefined selected-projection owner and no empty canonical owner is replaced by legacy content.",
+    "exception_policy": "none",
+    "strategy": "Remove obsolete projection writes/schema output fields in place, retain raw legacy migration and normalize only the complete canonical owner at both session and repository boundaries.",
+    "artifacts": [
+      "src/workbench/project/workbenchProjectSession.ts",
+      "src/workbench/project/projectRecordSchema.ts",
+      "src/workbench/project/projectNormalize.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/project/workbenchProjectSession.ts",
+      "src/workbench/project/projectRecordSchema.ts",
+      "src/workbench/project/projectNormalize.ts"
+    ],
+    "rationale": "Remove retired active projection output paths only; raw legacy reading and deprecated input typing remain compatible and migration is directly tested."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No third-party behavior or dependency lifecycle changes. Reuse existing Zod and state/repository APIs without changing their semantics or adding adapters in production.",
+    "exit_criteria": []
+  },
+  "migration": "Existing load/save boundaries lazily migrate raw legacy single/map inputs into canonical designs, preserving supported user content and node associations. No daily project file is opened or rewritten by this task.",
+  "residual_risks": [
+    "Full coordinator suite, daily App and real Electron filesystem receipt paths are not run in this bounded task",
+    "Existing schema policy strips unknown retired fields and credentials; this task does not claim recovery of already-corrupt or previously-lost content",
+    "Deprecated input-only payload typing remains for callers outside scope; actual writes are normalized before persistence"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/project",
+    "tests": [
+      "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts"
+  },
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-24"
+}

@@ -12,12 +12,20 @@ import type {
   BrowserAssetOverlayRect,
 } from "../core/browserViewTypes";
 import { registerAppWindow } from "../../appWindowRegistry";
+import type { ProjectBinding } from "../../shared/projectBinding";
 
 const BROWSER_ASSET_OVERLAY_SHAPE_SLOP = 10;
 let browserAssetOverlayRendererUrlResolver: (() => string) | null = null;
 
 export function setBrowserAssetOverlayRendererUrlResolver(resolver?: () => string): void {
   browserAssetOverlayRendererUrlResolver = resolver ?? browserAssetOverlayRendererUrlResolver;
+}
+
+// 浮层窗没有自己的项目会话：它显示的项目只由主进程按父窗口已提交的项目面签发（main 注入，无则 null）。
+let browserAssetOverlayProjectResolver: (owner: BrowserWindow) => ProjectBinding | null = () => null;
+
+export function setBrowserAssetOverlayProjectResolver(resolver: (owner: BrowserWindow) => ProjectBinding | null): void {
+  browserAssetOverlayProjectResolver = resolver;
 }
 
 export function getOwnerWindowForSender(sender: WebContents): BrowserWindow {
@@ -102,7 +110,9 @@ export function sendBrowserAssetOverlayConfig(
   captureRequest: BrowserAssetOverlayCaptureRequest | null = null,
 ): void {
   if (record.window.isDestroyed()) return;
+  const owner = BrowserWindow.fromId(record.ownerWindowId);
   record.window.webContents.send("browser:asset-overlay:config", {
+    projectBinding: owner && !owner.isDestroyed() ? browserAssetOverlayProjectResolver(owner) : null,
     opened: record.window.isVisible(),
     viewId: record.viewId,
     bounds: record.hostBounds,
@@ -172,9 +182,26 @@ export function applyBrowserAssetOverlayShape(
 
 export function applyBrowserAssetOverlayMouseEvents(record: BrowserAssetOverlayRecord): void {
   if (record.window.isDestroyed()) return;
+  const shapedDockInteractive = Boolean(record.shapeInteractive && record.dockMode && record.popoverRect);
+  const dragCaptureInteractive = browserAssetOverlayUsesDragCapture({
+    dragInteractive: record.dragInteractive,
+    dockMode: record.dockMode,
+    hasPopoverRect: Boolean(record.popoverRect),
+  });
   const interactive =
-    record.shapeInteractive || record.pointerInteractive || record.hoverInteractive || record.dragInteractive;
+    shapedDockInteractive || record.pointerInteractive || record.hoverInteractive || dragCaptureInteractive;
   record.window.setIgnoreMouseEvents(!interactive, { forward: true });
+}
+
+export function browserAssetOverlayUsesDragCapture(input: {
+  dragInteractive: boolean;
+  dockMode: BrowserAssetOverlayDockMode;
+  hasPopoverRect: boolean;
+}): boolean {
+  // A floating transparent child window has no shape. Making it interactive for a
+  // cross-WebContents drag blocks the whole canvas until dragend/timeout. Docked
+  // popovers are shaped to their visible bounds, so only that case is safe.
+  return input.dragInteractive && Boolean(input.dockMode) && input.hasPopoverRect;
 }
 
 export function showBrowserAssetOverlay(
@@ -245,7 +272,7 @@ export function setBrowserAssetOverlayDragInteractive(record: BrowserAssetOverla
       record.dragInteractive = false;
       record.dragInteractiveResetTimer = null;
       applyBrowserAssetOverlayMouseEvents(record);
-    }, 30_000);
+    }, 8_000);
   }
   applyBrowserAssetOverlayMouseEvents(record);
 }

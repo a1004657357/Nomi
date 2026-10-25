@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { generationNodeStatusSchema } from '../../../../electron/shared/canvas/generationNodeStatus'
-import { CATEGORY_IDS } from './generationCanvasTypes'
+import { CATEGORY_IDS, GENERATION_COLLECTION_ITEM_STATUSES, GENERATION_QUALITY_STATUSES } from './generationCanvasTypes'
 import { GENERATION_NODE_KINDS } from './generationNodeKinds'
+import { creativeResourceSchema } from '../../../config/capabilityRecipes'
 
 export const generationNodeKindSchema = z.enum(GENERATION_NODE_KINDS)
 
@@ -38,11 +39,38 @@ export const generationProvenanceSchema = z.object({
   agentRunId: z.string().optional(),
 }).strict()
 
+export const model3dValidationSummarySchema = z.object({
+  version: z.literal(1),
+  glbVersion: z.number(),
+  byteLength: z.number().nonnegative(),
+  meshCount: z.number().int().nonnegative(),
+  primitiveCount: z.number().int().nonnegative(),
+  nodeCount: z.number().int().nonnegative(),
+  materialCount: z.number().int().nonnegative(),
+  textureCount: z.number().int().nonnegative(),
+  imageCount: z.number().int().nonnegative(),
+  embeddedImageCount: z.number().int().nonnegative(),
+  externalImageCount: z.number().int().nonnegative(),
+  externalImageUris: z.array(z.string()),
+  externalBufferCount: z.number().int().nonnegative(),
+  externalBufferUris: z.array(z.string()),
+  animationCount: z.number().int().nonnegative(),
+  skinCount: z.number().int().nonnegative(),
+  bounds: z.object({
+    min: z.tuple([z.number(), z.number(), z.number()]),
+    max: z.tuple([z.number(), z.number(), z.number()]),
+    size: z.tuple([z.number(), z.number(), z.number()]),
+    diagonal: z.number().nonnegative(),
+  }),
+  warnings: z.array(z.string()),
+}).strict()
+
 export const generationNodeResultSchema = z.object({
   id: z.string().min(1),
   type: z.enum(['image', 'video', 'text', 'audio', 'model3d']),
   url: z.string().optional(),
   thumbnailUrl: z.string().optional(),
+  providerUrl: z.string().optional(),
   text: z.string().optional(),
   model: z.string().optional(),
   durationSeconds: z.number().optional(),
@@ -50,20 +78,76 @@ export const generationNodeResultSchema = z.object({
   taskKind: generationNodeTaskKindSchema.optional(),
   assetId: z.string().optional(),
   assetRefId: z.string().optional(),
+  model3dValidation: model3dValidationSummarySchema.optional(),
   raw: z.unknown().optional(),
   createdAt: z.number(),
   provenance: generationProvenanceSchema.optional(),
 })
 
+export const generationResultCollectionItemSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  azimuth: z.number().optional(),
+  elevation: z.number().optional(),
+  shotSize: z.string().optional(),
+  energy: z.number().min(0).max(4).optional(),
+  affinity: z.number().min(0).max(4).optional(),
+  status: z.enum(GENERATION_COLLECTION_ITEM_STATUSES),
+  result: generationNodeResultSchema.optional(),
+  candidates: z.array(generationNodeResultSchema).optional(),
+  selectedResultId: z.string().min(1).optional(),
+  error: z.string().optional(),
+})
+
+export const generationResultCollectionSchema = z.object({
+  id: z.string().min(1),
+  recipeId: z.string().min(1),
+  createdAt: z.number(),
+  source: z.object({
+    nodeId: z.string().min(1),
+    resultId: z.string().min(1),
+    label: z.string().min(1),
+    url: z.string().optional(),
+    thumbnailUrl: z.string().optional(),
+    providerUrl: z.string().optional(),
+  }).optional(),
+  items: z.array(generationResultCollectionItemSchema),
+  quality: z.object({
+    version: z.literal(1),
+    kind: z.enum(['grid9', 'multiview', 'panorama', 'portrait', 'mood', 'style', 'video', 'model3d']),
+    evaluator: z.string().min(1),
+    status: z.enum(GENERATION_QUALITY_STATUSES),
+    evaluatedAt: z.number(),
+    checks: z.array(z.object({
+      id: z.string().min(1),
+      label: z.string().min(1),
+      status: z.enum(GENERATION_QUALITY_STATUSES),
+      summary: z.string().min(1),
+      details: z.array(z.string()).optional(),
+      itemIds: z.array(z.string()).optional(),
+      metrics: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+    })),
+    metrics: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+    humanReview: z.object({
+      verdict: z.enum(['accepted', 'rejected']),
+      reviewedAt: z.number(),
+      note: z.string().max(500).optional(),
+    }).optional(),
+  }).optional(),
+})
+
 export const generationNodeRunRecordSchema = z.object({
   id: z.string().min(1),
   status: generationNodeRunStatusSchema,
+  attempt: z.object({ vendorKey: z.string().min(1), modelKey: z.string().min(1) }).optional(),
+  projectId: z.string().optional(),
   taskId: z.string().optional(),
   taskKind: generationNodeTaskKindSchema.optional(),
   assetId: z.string().optional(),
   assetRefId: z.string().optional(),
   progress: generationNodeProgressSchema.optional(),
   resultId: z.string().optional(),
+  textDocumentDigest: z.string().regex(/^sha256-[a-f0-9]{64}$/).optional(),
   error: z.string().optional(),
   raw: z.unknown().optional(),
   startedAt: z.number(),
@@ -96,6 +180,8 @@ export const generationCanvasNodeSchema = z.object({
   references: z.array(z.string()).optional(),
   result: generationNodeResultSchema.optional(),
   history: z.array(generationNodeResultSchema).optional(),
+  creativeResource: creativeResourceSchema.optional(),
+  resultCollections: z.array(generationResultCollectionSchema).optional(),
   progress: generationNodeProgressSchema.optional(),
   runs: z.array(generationNodeRunRecordSchema).optional(),
   status: generationNodeStatusSchema.optional(),

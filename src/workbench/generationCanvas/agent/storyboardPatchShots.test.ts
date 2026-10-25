@@ -6,6 +6,24 @@ import {
   StoryboardPatchShotsError,
 } from './storyboardPatchShots'
 import type { StoryboardPlan } from './storyboardPlan'
+import { compileShotOutbound } from './storyboardPromptCompiler'
+import { canvasWriteSemanticInputSchema } from '../../../../electron/shared/agentCapabilities/canvasWrite'
+
+it('keeps Agent edits visible to the table and the real outbound prompt compiler', () => {
+  const plan: StoryboardPlan = { title: 'Table', anchors: [], shots: [{ index: 1, shotKind: 'video',
+    durationSec: 5, anchorIds: [], prompt: 'old', videoPrompt: 'old motion', imagePrompt: 'old still' }] }
+  const input = canvasWriteSemanticInputSchema.parse({ operation: 'patch_shots', select: { kind: 'all' },
+    patch: { videoPrompt: 'She opens the door and enters.', imagePrompt: 'A still of the closed door.',
+      scene: 'Kitchen', cameraMove: 'Track right', performance: 'Reach, open, enter', dialogue: 'I am home.' } })
+  if (input.operation !== 'patch_shots') throw new Error('Wrong operation')
+  const { nextPlan } = previewStoryboardPatchShots(plan, input)
+  expect(nextPlan.shots[0]).toMatchObject({ prompt: 'She opens the door and enters.', scene: 'Kitchen',
+    cameraMove: 'Track right', performance: 'Reach, open, enter', dialogue: 'I am home.' })
+  expect(compileShotOutbound(nextPlan.shots[0], 'shot').prompt).toBe('She opens the door and enters.')
+  expect(compileShotOutbound(nextPlan.shots[0], 'keyframe').prompt).toBe('A still of the closed door.')
+  const second = previewStoryboardPatchShots(nextPlan, { operation: 'patch_shots', select: { kind: 'all' }, patch: { prompt: 'New motion' } })
+  expect(compileShotOutbound(second.nextPlan.shots[0], 'shot').prompt).toBe('New motion')
+})
 
 const basePlan: StoryboardPlan = {
   title: '雨夜追凶',

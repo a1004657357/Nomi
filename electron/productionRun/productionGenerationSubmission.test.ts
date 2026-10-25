@@ -49,7 +49,7 @@ function candidate(): PlanCandidate {
   };
 }
 
-function setup() {
+function setup(buildRequest: GenerationProvider["buildRequest"] = (input) => input) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-generation-submit-"));
   roots.push(root);
   const repository = createProductionRunRepository({
@@ -84,7 +84,7 @@ function setup() {
     providers: [{
       providerId: "fixture-provider",
       capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true },
-      buildRequest: (input) => input,
+      buildRequest,
       submit: async () => ({ providerTaskId: "unused" }),
     }],
     now: "2026-08-23T00:00:00.000Z",
@@ -102,10 +102,10 @@ describe("Run-owned semantic generation submission", () => {
     const submit = vi.fn(async () => ({ providerTaskId: "provider-task-1", raw: { accepted: true } }));
     const first = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -130,10 +130,10 @@ describe("Run-owned semantic generation submission", () => {
     const restartedSubmit = vi.fn(async () => ({ providerTaskId: "provider-task-2" }));
     const restarted = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -155,10 +155,10 @@ describe("Run-owned semantic generation submission", () => {
     const submit = vi.fn(async () => ({ providerTaskId: "provider-task-1" }));
     const first = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -172,14 +172,19 @@ describe("Run-owned semantic generation submission", () => {
 
     await expect(first.start({ projectId: "project-1", operationId: "op-1" })).rejects.toBeInstanceOf(SubmissionReceiptUnknownError);
     expect(repository.read("project-1", "op-1")).toMatchObject({ jobs: [{ status: "submission_unknown" }] });
+    const unknownRun = repository.read("project-1", "op-1")!;
+    expect(() => repository.execute("project-1", "op-1", { commandId: "unknown-next-batch", expectedRevision: unknownRun.revision,
+      type: "generation.present", payload: {}, issuedAt: "2026-08-23T00:00:00.000Z" })).toThrow(/reconciliation_required/);
+    expect(repository.read("project-1", "op-1")).toEqual(unknownRun);
+
 
     const restartedSubmit = vi.fn(async () => ({ providerTaskId: "provider-task-2" }));
     const restarted = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       registry,
       provider: {
@@ -200,10 +205,10 @@ describe("Run-owned semantic generation submission", () => {
     const submit = vi.fn(async () => ({ providerTaskId: "provider-task-observe-only" }));
     const runner = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -225,10 +230,10 @@ describe("Run-owned semantic generation submission", () => {
     const query = vi.fn(async (providerTaskId: string) => ({ status: "processing", raw: { taskId: providerTaskId, progress: 42 } }));
     const runner = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -246,12 +251,38 @@ describe("Run-owned semantic generation submission", () => {
       providerStatus: "processing",
       nextAction: "poll",
     });
-    expect(query).toHaveBeenCalledWith("provider-task-poll");
+    // 查询带着这笔任务冻结合同里的模型 / 模式（供应商实例是每次新建的，它自己记不住）。
+    expect(query).toHaveBeenCalledWith("provider-task-poll", { modelId: "fixture-model", mode: "text-to-image" });
     expect(submit).toHaveBeenCalledTimes(1);
     const job = repository.read("project-1", "op-1")?.jobs[0];
     expect(job).toMatchObject({ status: "polling", providerTaskId: "provider-task-poll", providerStatus: "processing" });
     const envelopePath = path.join(root, ".nomi", "runs", "op-1", "jobs", job!.jobId, "runtime-envelope.json");
     expect(JSON.parse(fs.readFileSync(envelopePath, "utf8"))).toMatchObject({ lastPoll: { status: "processing", raw: { progress: 42 } } });
+  });
+
+  it("a fresh submission (re-kick / reopen / restart) polls with the durable model identity, never re-submits", async () => {
+    const { root, repository } = setup();
+    const deps = {
+      repository, beforeDispatch: () => undefined, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1, projectRevision: 0,
+      intentMacKey: "test-intent-key", now: () => "2026-08-23T00:03:00.000Z",
+    };
+    const submit = vi.fn(async () => ({ providerTaskId: "provider-task-late" }));
+    const provider = (query?: GenerationProvider["query"]): GenerationProvider => ({
+      providerId: "fixture-provider",
+      capabilities: { submitIdempotency: false, query: true, reconcile: true, cancel: false },
+      buildRequest: (input) => input,
+      submit,
+      ...(query ? { query } : {}),
+    });
+    await createProductionGenerationSubmission({ ...deps, provider: provider() }).start({ projectId: "project-1", operationId: "op-1" });
+    // 观察窗过了：一个**全新的**提交门面 + 全新的供应商实例（它没交过这笔任务，内存里什么都没记）。
+    const query = vi.fn(async (_taskId: string, context?: { modelId?: string; mode?: string }) => (
+      context?.modelId ? { status: "processing" } : Promise.reject(new Error("cannot poll task without the model it was submitted with"))
+    ));
+    await expect(createProductionGenerationSubmission({ ...deps, provider: provider(query) }).poll({ projectId: "project-1", operationId: "op-1" }))
+      .resolves.toMatchObject({ providerTaskId: "provider-task-late", nextAction: "poll" });
+    expect(query).toHaveBeenCalledWith("provider-task-late", { modelId: "fixture-model", mode: "text-to-image" });
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when a provider returns an unknown poll status", async () => {
@@ -265,10 +296,10 @@ describe("Run-owned semantic generation submission", () => {
     }));
     const runner = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -307,13 +338,15 @@ describe("Run-owned semantic generation submission", () => {
       kind: "image" as const,
       contentHash: "c".repeat(64),
       projectRelativePath: "assets/generated/2026-08-23/image.png",
+      width: 1600,
+      height: 900,
     }));
     const runner = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -337,10 +370,30 @@ describe("Run-owned semantic generation submission", () => {
     expect(materializeOutput).toHaveBeenCalledTimes(1);
     expect(repository.read("project-1", "op-1")).toMatchObject({
       jobs: [{ status: "ready", providerTaskId: "provider-task-materialize" }],
-      artifacts: [{ artifactId: "asset-image-1", jobId: expect.stringContaining("generation-op-1-") , kind: "image", status: "ready", contentHash: "c".repeat(64) }],
+      artifacts: [{ artifactId: "asset-image-1", jobId: expect.stringContaining("generation-op-1-") , kind: "image", status: "ready", contentHash: "c".repeat(64), width: 1600, height: 900 }],
     });
     const jobId = repository.read("project-1", "op-1")!.jobs[0]!.jobId;
     expect(JSON.parse(fs.readFileSync(path.join(root, ".nomi", "runs", "op-1", "jobs", jobId, "runtime-envelope.json"), "utf8"))).toMatchObject({ state: "materialized" });
+  });
+
+  it("seals approved wire pixels and forwards them after restart without changing ready status or resubmitting", async () => {
+    const buildRequest: GenerationProvider["buildRequest"] = () => ({ size: "1024x1024", prompt: "a boat" });
+    const { root, repository } = setup(buildRequest);
+    const submit = vi.fn(async () => ({ providerTaskId: "sized-task" }));
+    const materializeOutput = vi.fn(async () => ({ artifactId: "original", kind: "image" as const, contentHash: "f".repeat(64), projectRelativePath: "original.png", width: 1254, height: 1254 }));
+    const deps = {
+      repository, beforeDispatch: () => undefined, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1, intentMacKey: "test-intent-key", materializeOutput, now: () => "2026-08-23T00:04:00.000Z",
+      provider: { providerId: "fixture-provider", capabilities: { submitIdempotency: false, query: true, reconcile: false, cancel: false, materialize: true }, buildRequest, submit,
+        query: async () => ({ status: "completed" }), materialize: async () => ({ outputs: [{ kind: "image" as const, url: "https://cdn.example/original.png" }] }) },
+    };
+    const runner = createProductionGenerationSubmission(deps);
+    await runner.start({ projectId: "project-1", operationId: "op-1" });
+    await runner.poll({ projectId: "project-1", operationId: "op-1" });
+    const restarted = createProductionGenerationSubmission({ ...deps, provider: { ...deps.provider, buildRequest: () => ({ size: "2048x2048" }) } });
+    await expect(restarted.materialize({ projectId: "project-1", operationId: "op-1" })).resolves.toMatchObject({ nextAction: "completed" });
+    expect(materializeOutput).toHaveBeenCalledWith(expect.objectContaining({ expectedImageSize: "1024x1024" }));
+    expect(repository.read("project-1", "op-1")?.jobs[0].status).toBe("ready");
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a provider without materialization support usable but does not invent a local Artifact", async () => {
@@ -348,10 +401,10 @@ describe("Run-owned semantic generation submission", () => {
     const materializeOutput = vi.fn();
     const runner = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -373,14 +426,21 @@ describe("Run-owned semantic generation submission", () => {
 
   it("can resume after a crash before dispatch only with an explicit not-submitted disposition", async () => {
     const { root, repository } = setup();
-    const beforeDispatch = vi.fn(() => { throw new Error("crash before dispatch"); });
+    // 进程恰好在「提交意向已落盘、还没开始提交」这一刻倒下：写 submitting 的那一笔没有发生。
+    // （以前拿 beforeDispatch 抛错模拟这一刻；它现在是准入闸，排在第一笔耐久写之前，抛错时什么都还没写。）
+    const crashing = {
+      ...repository,
+      execute: (projectId: string, runId: string, command: Parameters<typeof repository.execute>[2]) => {
+        if (command.type === "job.status" && command.payload.status === "submitting") throw new Error("crash before dispatch");
+        return repository.execute(projectId, runId, command);
+      },
+    };
     const firstSubmit = vi.fn(async () => ({ providerTaskId: "provider-task-1" }));
     const first = createProductionGenerationSubmission({
-      repository,
+      repository: crashing,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -388,7 +448,7 @@ describe("Run-owned semantic generation submission", () => {
         buildRequest: (input) => input,
         submit: firstSubmit,
       },
-      beforeDispatch,
+      beforeDispatch: () => undefined,
       now: () => "2026-08-23T00:00:00.000Z",
     });
     await expect(first.start({ projectId: "project-1", operationId: "op-1" })).rejects.toThrow("crash before dispatch");
@@ -398,10 +458,10 @@ describe("Run-owned semantic generation submission", () => {
     const secondSubmit = vi.fn(async () => ({ providerTaskId: "provider-task-1" }));
     const resumed = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -420,10 +480,10 @@ describe("Run-owned semantic generation submission", () => {
     const submit = vi.fn(async () => ({ providerTaskId: "should-not-run" }));
     const runner = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider: {
         providerId: "fixture-provider",
@@ -449,10 +509,10 @@ describe("Run-owned semantic generation submission", () => {
     };
     const first = createProductionGenerationSubmission({
       repository,
+      beforeDispatch: () => undefined,
       projectRoot: root,
       immutableProjectUuid: "project-uuid-1",
       projectGeneration: 1,
-      projectRevision: 0,
       intentMacKey: "test-intent-key",
       provider,
       afterProviderAcceptance: () => { throw new Error("receipt lost after acceptance"); },
@@ -470,5 +530,35 @@ describe("Run-owned semantic generation submission", () => {
     })).toThrow("previous generation attempt is not safely reworkable");
     expect(run.jobs).toEqual([expect.objectContaining({ status: "submission_unknown", attempt: 1 })]);
     expect(firstSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("historical batch observation", () => {
+  it("reads the frozen execution after a new draft and never starts the old authority", async () => {
+    const { root, repository, contract } = setup();
+    const submit = vi.fn(async () => ({ providerTaskId: "historical-task" }));
+    const materializeOutput = vi.fn(async (_input: { contract: unknown }) => ({ artifactId: "historic-artifact", kind: "image" as const, contentHash: "hash", projectRelativePath: "out.png" }));
+    const submission = createProductionGenerationSubmission({
+      repository, beforeDispatch: () => undefined, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1, intentMacKey: "test-intent-key", now: () => "2026-08-23T00:00:00.000Z", materializeOutput,
+      provider: { providerId: "fixture-provider", capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true, materialize: true },
+        buildRequest: input => input, submit, query: async () => ({ status: "succeeded", raw: {} }),
+        materialize: async () => ({ outputs: [{ kind: "image", url: "https://fixture.invalid/out.png" }] }) },
+    });
+    const input = { projectId: "project-1", operationId: "op-1", attempt: 1 };
+    const started = await submission.start(input);
+    await submission.poll(input);
+    await submission.materialize(input);
+    const run = repository.read(input.projectId, input.operationId)!;
+    repository.execute(input.projectId, input.operationId, { commandId: "next-batch", expectedRevision: run.revision,
+      type: "generation.present", payload: {}, issuedAt: "2026-08-23T00:00:00.000Z" });
+    expect(repository.read(input.projectId, input.operationId)!.generationPlan!.contract).toBeUndefined();
+    await expect(submission.poll(input)).resolves.toMatchObject({ jobId: started.jobId, nextAction: "materialize" });
+    await expect(submission.materialize(input)).resolves.toMatchObject({ jobId: started.jobId, artifactId: "historic-artifact" });
+    await expect(submission.resume(input)).resolves.toMatchObject({ operationId: "op-1" });
+    await expect(submission.start(input)).rejects.toThrow(/Seal and confirm/);
+    expect(materializeOutput.mock.calls[0][0].contract).toEqual(contract);
+    expect(materializeOutput).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 });

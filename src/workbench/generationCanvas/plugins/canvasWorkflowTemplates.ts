@@ -1,4 +1,5 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode, NodeGroup } from '../model/generationCanvasTypes'
+import { remapShotNodeReferences } from '../../../../electron/shared/canvas/shotNumbering'
 
 export type CanvasWorkflowTemplateNode = {
   sourceId: string
@@ -234,5 +235,5 @@ export function instantiateCanvasWorkflowTemplate(
       updatedAt: Date.now(),
     }]
   })
-  return { nodes, edges, groups }
+  return { nodes: nodes.map(node => remapShotNodeReferences(node, idMap)), edges, groups }
 }

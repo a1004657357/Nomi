@@ -47,6 +47,11 @@ export type TimelineClip = {
   // 取景（适应/填充 + 缩放 + 平移）。缺省 = DEFAULT_CLIP_FRAMING（contain/1/0/0）。
   // 这是 P0-5「所见即所得」的关键：取景从预览局部 state 提升为时间轴数据，导出据此复现构图。
   framing?: ClipFraming
+  // Gate 1 Slice 7（§19.1）：镜头/revision 关联——目标架构要求 clip 带 shotId + revisionId。
+  // 迁移期 optional（既有 clip 无此字段 → undefined；落时间线时由 sendGenerationNodeToTimeline
+  // /sendStoryboardToTimeline 在 Gate 2+ 逐步填充）。OTIO 交换（Gate 6）将二者作为 metadata 携带。
+  shotId?: string
+  revisionId?: string
 }
 
 export type TimelineTrack = {

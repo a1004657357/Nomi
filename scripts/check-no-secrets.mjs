@@ -117,6 +117,27 @@ const VENDOR_MIN_ENTROPY = 2.5;
  * （本仓库实测 60+ 处：commit ref、产物校验和、skills-lock）。那两个长度改由 KEYWORD_ASSIGNMENT
  * 兜（要求附近有 key/token 字样），是刻意的精度/召回取舍。
  */
+/**
+ * 公开资源标识字段 —— 形状像凭证，结构上不可能是凭证。
+ *
+ * Cloudflare 的 wrangler 配置里，绑定块的 `id`（KV 命名空间、D1 数据库、Durable Object…）
+ * 是**账号下资源的公开标识**，恰好也是 32 位 hex。它不是凭证有两层结构理由：
+ *   ① Cloudflare 自己规定 secret 不许写进 wrangler 配置（走 `wrangler secret put` / `.dev.vars`），
+ *      所以这个文件按设计就不承载凭证；官方示例的 wrangler 配置就带着真 id 公开在文档与模板仓库里。
+ *   ② 光有 id 动不了任何东西——要操作那个资源仍需账号 API token，而 token 不在这里。
+ *
+ * 判据是**文件 + 字段名**两条同时成立，不是放宽 32-hex 规则本身：
+ * 同一份 wrangler 配置里任何**别的**位置出现 32 位 hex 照样报（比如有人把 token 写成 `"vars"`），
+ * 别的文件里的 `id:` 也照样报。这样既认得公开资源标识，又不退化成「赦免整份文件」——
+ * 后者正是当初漏掉 kie.ai 真泄露的病根。
+ */
+const PUBLIC_RESOURCE_ID = {
+  file: /(?:^|\/)wrangler\.(?:jsonc?|toml)$/,
+  // 绑定块里 Cloudflare 定义为公开资源标识的字段名；`id` 之外的都写全，避免误伤自造字段。
+  // JSON 配置里字段名带引号（`"id":`），TOML 里不带（`id =`）——两种都要认。
+  field: /\b(?:id|database_id|namespace_id|account_id|zone_id|dataset|index_name)\b["']?\s*[:=]/,
+};
+
 const BARE_HEX32 = /(?<![0-9a-zA-Z])(?:[0-9a-f]{32}|[0-9A-F]{32})(?![0-9a-fA-F])/g;
 const HEX32_MIN_ENTROPY = 3.0;
 const GLUE_CHAR = /[A-Za-z0-9_\-./]/;
@@ -157,12 +178,16 @@ const INLINE_ALLOW = /nomi-secret-scan:allow\s+\S/;
 /**
  * 豁免标记棘轮：只减不增。想加第 N+1 个必须顺手把这个数字改大，
  * 一行 diff、review 看得见——防止「随手标一下就绿了」把门岗降级成橡皮图章。
- * 当前 3 个：scripts/lib/feedback/bilibili.test.mjs 的 B站 WBI 公开测试向量（社区文档已知答案，非凭证）。
+ * 当前 5 个：scripts/lib/feedback/bilibili.test.mjs 的 B站 WBI 公开测试向量（社区文档已知答案，非凭证）；
+ * electron/feedback/feedbackReport.test.ts 的脱敏金测试靶子（合成的 sk- 串，存在的意义就是被断言「不许出现在产物里」）；
+ * scripts/lib/intake-radar/cloudflare.node-test.mjs 的 FAKE_ACCOUNT_ID（占位 32 位十六进制串，
+ * 只用来测「从 wrangler whoami 输出里挑账号 id」的解析逻辑，只在定义处写一次字面量，
+ * 其余测试都引用这个常量，不会再长出第二处）。
  */
-const MAX_INLINE_ALLOWS = 3;
+const MAX_INLINE_ALLOWS = 5;
 
-/** 扫一行里的凭证。返回 [{name, sample}]。 */
-function findCredentials(line) {
+/** 扫一行里的凭证。返回 [{name, sample}]。`scanPath` 用于公开资源标识这条字段级判据。 */
+function findCredentials(line, scanPath = "") {
   const out = [];
   for (const { name, re } of VENDOR_KEY_RULES) {
     for (const m of line.matchAll(re)) {
@@ -178,6 +203,8 @@ function findCredentials(line) {
     const glued = GLUE_CHAR.test(line[start - 1] ?? "") || GLUE_CHAR.test(line[end] ?? "");
     if (glued) continue; // URL 段 / 文件名 / 复合 ID 的一部分
     if (shannonEntropy(m[0]) < HEX32_MIN_ENTROPY) continue; // magic bytes 之类结构化数据
+    // 公开资源标识（wrangler 配置里的绑定 id）：文件与字段名两条同时成立才放行。
+    if (PUBLIC_RESOURCE_ID.file.test(scanPath) && PUBLIC_RESOURCE_ID.field.test(line.slice(0, start))) continue;
     out.push({ name: "疑似明文 API key（32 位 hex）", sample: m[0] });
   }
   for (const m of line.matchAll(KEYWORD_ASSIGNMENT)) {
@@ -248,7 +275,7 @@ function scan(files, staged) {
       }
     }
     const lines = content.split("\n");
-    const perLine = lines.map((line) => findCredentials(line));
+    const perLine = lines.map((line) => findCredentials(line, scanPath));
     lines.forEach((line, i) => {
       const found = perLine[i];
       if (!found.length) return;
@@ -278,6 +305,110 @@ function scan(files, staged) {
   return hits;
 }
 
+// ============================================================================
+// 私有待办编号（2026-10-01）：形如 `T-<两位前缀>-<数字>` 的编号是**私有待办正本**里的条目，
+// 公开仓库里出现它们 = 把私有待办的存在与结构泄露出来（编号本身不是凭证，但它指向一份不公开的账）。
+// 老文件里约 130 处历史编号不追溯——**只查新增的行**，所以改一个含历史编号的老文件、没新增编号，不红。
+//   · pre-commit（staged）：只看 `git diff --cached` 里新增的行；
+//   · CI / `--all`：只看 merge-base(origin/main, HEAD)..HEAD 里新增的行（同一条规则，同一份判据）；
+//   · 显式给文件：整份文件算新增（测试与手动抽查用）。
+// 没有行级豁免标记：要写问题就写问题本身（「上下文超窗」「写入回执卡死」），不写编号。
+// ============================================================================
+export const PRIVATE_TODO_ID = /\bT-(?:RL|AG|QA|CV|DS|MO|ED|MD|EC|WB|CR)-\d+\b/g;
+const PRIVATE_TODO_ID_ADVICE = "私有待办编号不进公开仓库，改成写问题本身";
+
+/** 解析 `git diff -U0` 的输出 → Map<文件, [{no, text}]>（只含新增行；二进制文件没有 hunk，自然为空）。 */
+export function parseAddedLines(diffText) {
+  const added = new Map();
+  let file = null;
+  let lineNo = 0;
+  for (const raw of String(diffText).split("\n")) {
+    if (raw.startsWith("+++ ")) {
+      const target = raw.slice(4).trim();
+      file = target === "/dev/null" ? null : target.replace(/^b\//, "");
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (hunk) { lineNo = Number(hunk[1]); continue; }
+    if (file && raw.startsWith("+") && !raw.startsWith("+++")) {
+      if (!added.has(file)) added.set(file, []);
+      added.get(file).push({ no: lineNo, text: raw.slice(1) });
+      lineNo += 1;
+    }
+  }
+  return added;
+}
+
+function scanPrivateTodoIds(addedByFile) {
+  const hits = [];
+  for (const [file, lines] of addedByFile) {
+    // 不走路径白名单：本扫描器自己、安全文档也不许写真实编号（规则的正则里没有数字，不会自己命中自己；测试里的编号运行时拼）。
+    for (const { no, text } of lines) {
+      for (const m of text.matchAll(PRIVATE_TODO_ID)) {
+        hits.push({ f: `${file}:${no}`, kind: "私有待办编号", detail: `${m[0]} —— ${PRIVATE_TODO_ID_ADVICE}` });
+      }
+    }
+  }
+  return hits;
+}
+
+/** 合并进行中：另一个父提交（MERGE_HEAD）；不是合并 = null。 */
+function mergeHeadSha() {
+  try { return execFileSync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null; } catch { return null; }
+}
+
+/** 去掉「另一个父提交的同一文件里本来就有」的行：剩下的才是这次合并里手写的。 */
+export function dropLinesInOtherParent(addedByFile, readOtherParent) {
+  const kept = new Map();
+  for (const [file, lines] of addedByFile) {
+    const inherited = new Set(String(readOtherParent(file) ?? "").split("\n"));
+    const own = lines.filter(({ text }) => !inherited.has(text));
+    if (own.length) kept.set(file, own);
+  }
+  return kept;
+}
+
+function readFromCommit(sha, file) {
+  try { return execFileSync("git", ["-c", "core.quotePath=false", "show", `${sha}:${file}`], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }); } catch { return ""; }
+}
+
+function gitDiffAdded(args) {
+  try {
+    return parseAddedLines(execFileSync("git", ["-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", ...args], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }));
+  } catch {
+    return null;
+  }
+}
+
+/** CI / --all 的「PR 差异」：显式 base 优先，否则 merge-base(origin/main, HEAD)；拿不到 = null（说明白，不假装通过）。 */
+function prDiffBase() {
+  const explicit = (process.env.SECRET_SCAN_BASE_REF || process.env.ROOT_CAUSE_BASE_REF || "").trim();
+  if (explicit && !/^0+$/.test(explicit)) {
+    try { execFileSync("git", ["rev-parse", "--verify", `${explicit}^{commit}`], { stdio: "ignore" }); return explicit; } catch { /* 往下找 */ }
+  }
+  try { return execFileSync("git", ["merge-base", "HEAD", "origin/main"], { encoding: "utf8" }).trim(); } catch { return null; }
+}
+
+function privateTodoHits(mode, files) {
+  if (mode === "staged") {
+    const added = gitDiffAdded(["--cached", "--diff-filter=AM"]) ?? new Map();
+    const other = mergeHeadSha();
+    return scanPrivateTodoIds(other ? dropLinesInOtherParent(added, (file) => readFromCommit(other, file)) : added);
+  }
+  if (mode === "all") {
+    const base = prDiffBase();
+    if (!base) { console.error("  ⚠️ 私有待办编号：拿不到可信 base，本次不判 PR 差异（不拿算不出来当通过）"); return []; }
+    return scanPrivateTodoIds(gitDiffAdded([base, "HEAD", "--diff-filter=AM"]) ?? new Map());
+  }
+  // 显式文件：整份算新增
+  const whole = new Map();
+  for (const f of files) {
+    const text = readContent(f, false);
+    if (text) whole.set(normalizeScanPath(f), text.split("\n").map((line, i) => ({ no: i + 1, text: line })));
+  }
+  return scanPrivateTodoIds(whole);
+}
+
 // ── 主流程 ──
 const args = process.argv.slice(2);
 let files, mode, staged;
@@ -287,6 +418,7 @@ else if (args.length && !args[0].startsWith("--")) { files = args; mode = "指�
 else { files = listStaged(); mode = "git staged 文件"; staged = true; }
 
 const hits = scan(files, staged);
+hits.push(...privateTodoHits(staged ? "staged" : (scanningAll ? "all" : "files"), files));
 
 if (hits.length) {
   console.error("\n  🔴 安全门岗拦截：检测到疑似敏感数据（明文凭证 / 微信记录 / db_key / 私有配置）");

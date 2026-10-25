@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -10,6 +11,8 @@ import {
 import { cn } from '../../../../utils/cn'
 import { notify } from '../../../../ui/notificationPolicy'
 import { persistNodeImageFile } from '../../adapters/persistNodeImage'
+import { isProjectImportCancellation } from '../../adapters/assetImportAdapter'
+import { withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 import { COMMON_COLORS, clampBrushSize, getCanvasDimensions, type AspectRatioKey, type ToolKey } from './lib/canvas'
 import {
   LeaferCanvas,
@@ -197,8 +200,10 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
     )
 
     const addImageToCanvas = React.useCallback(
-      async (url: string, name?: string) => {
+      async (url: string, name: string, project: ProjectExecutionContext) => {
+        project.assertCurrent()
         const imageSize = await loadImageSize(url)
+        project.assertCurrent()
         const { asset, layer } = createImageAssetForCanvas({
           url,
           name: name ?? t('generationCommon.whiteboard.importedImage'),
@@ -220,8 +225,15 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
     React.useEffect(() => {
       if (!initialImage?.url || importedInitialImageRef.current === initialImage.url || initialState) return
       importedInitialImageRef.current = initialImage.url
-      void addImageToCanvas(initialImage.url, t('generationCommon.whiteboard.originalImage'))
-    }, [addImageToCanvas, initialImage?.url, initialState, t])
+      void withProjectAction(async (project) => {
+        try {
+          await addImageToCanvas(initialImage.url, t('generationCommon.whiteboard.originalImage'), project)
+        } catch (error) {
+          if (project.signal.aborted || isProjectImportCancellation(error)) return
+          reportFeedback(t('generationCommon.whiteboard.importFailed'))
+        }
+      })
+    }, [addImageToCanvas, initialImage?.url, initialState, reportFeedback, t])
 
     const handleUploadImage = React.useCallback(
       async (file: File | null | undefined) => {
@@ -231,18 +243,23 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
           reportFeedback(t('generationCommon.whiteboard.selectImageFile'))
           return
         }
-        setUploading(true)
-        try {
-          const localUrl = await persistNodeImageFile(file, ownerNodeId)
-          const url = localUrl || (await fileToDataUrl(file, t('generationCommon.whiteboard.imageReadFailed')))
-          await addImageToCanvas(url, file.name || t('generationCommon.whiteboard.importedImage'))
-        } catch (error) {
-          reportFeedback(
-            error instanceof Error && error.message ? error.message : t('generationCommon.whiteboard.importFailed'),
-          )
-        } finally {
-          setUploading(false)
-        }
+        await withProjectAction(async (project) => {
+          setUploading(true)
+          try {
+            const localUrl = await persistNodeImageFile(file, ownerNodeId, project)
+            project.assertCurrent()
+            const url = localUrl || (await fileToDataUrl(file, t('generationCommon.whiteboard.imageReadFailed')))
+            project.assertCurrent()
+            await addImageToCanvas(url, file.name || t('generationCommon.whiteboard.importedImage'), project)
+          } catch (error) {
+            if (project.signal.aborted || isProjectImportCancellation(error)) return
+            reportFeedback(
+              error instanceof Error && error.message ? error.message : t('generationCommon.whiteboard.importFailed'),
+            )
+          } finally {
+            if (!project.signal.aborted) setUploading(false)
+          }
+        })
       },
       [addImageToCanvas, ownerNodeId, t, reportFeedback],
     )
@@ -407,25 +424,29 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
     }, [focusResultsOnScreenshot, onScreenshot])
 
     const handleRemoveBackground = React.useCallback(
-      (target: CanvasObjectTarget) => {
+      async (target: CanvasObjectTarget) => {
         if (removeBgBusy || target.kind !== 'asset') return
         const asset = state.canvasAssets.find((a) => a.id === target.id)
         if (!asset?.url) return
-        setFeedback(null)
-        const createdAt = Date.now()
-        setRemoveBgBusy(true)
-        setRemoveBgTargetId(asset.id)
-        setRemoveBgProgress(0)
-        setRemoveBgPhase(null)
-        void (async () => {
+        await withProjectAction(async (project) => {
+          setFeedback(null)
+          const createdAt = Date.now()
+          setRemoveBgBusy(true)
+          setRemoveBgTargetId(asset.id)
+          setRemoveBgProgress(0)
+          setRemoveBgPhase(null)
           try {
             const blob = await removeBackgroundBlob(asset.url, ({ key, current, total }) => {
+              if (project.signal.aborted) return
               if (total > 0) setRemoveBgProgress(Math.round((current / total) * 100))
               setRemoveBgPhase(removeBackgroundProgressMessage(key))
             })
+            project.assertCurrent()
             const file = new File([blob], `rmbg-${asset.id}-${createdAt}.png`, { type: 'image/png' })
-            const localUrl = await persistNodeImageFile(file, ownerNodeId)
+            const localUrl = await persistNodeImageFile(file, ownerNodeId, project)
+            project.assertCurrent()
             const finalUrl = localUrl ?? (await blobToDataUrl(blob))
+            project.assertCurrent()
             setState((current) => ({
               ...current,
               canvasAssets: current.canvasAssets.map((item) =>
@@ -434,16 +455,18 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
             }))
             setActiveCanvasObject({ kind: 'asset', id: asset.id })
             setActiveTool('select')
-
-          } catch {
+          } catch (error) {
+            if (project.signal.aborted || isProjectImportCancellation(error)) return
             reportFeedback(t('generationCommon.whiteboard.removeBackgroundFailed'))
           } finally {
-            setRemoveBgBusy(false)
-            setRemoveBgTargetId(null)
-            setRemoveBgProgress(null)
-            setRemoveBgPhase(null)
+            if (!project.signal.aborted) {
+              setRemoveBgBusy(false)
+              setRemoveBgTargetId(null)
+              setRemoveBgProgress(null)
+              setRemoveBgPhase(null)
+            }
           }
-        })()
+        })
       },
       [ownerNodeId, removeBgBusy, state.canvasAssets, t, reportFeedback],
     )
@@ -707,7 +730,7 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
           ref={fileInputRef}
           className="hidden"
           type="file"
-          accept="image/*"
+          accept={acceptAttrForSurface('image-reference')}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0]
             event.currentTarget.value = ''

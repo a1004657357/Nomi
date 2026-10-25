@@ -1,0 +1,358 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-functional-model-identity",
+  "problem_type": "Model selection and migration lose supplier identity or confuse it with variants",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "symptom": "Five new identity findings; same-name suppliers collapse, video defaults lose vendor, and strategy migration assigns variant as provider.",
+  "direct_cause": "Strategy projection conflates fields, recipe preferences omit vendor filtering, row output drops the resolver's modelVendor, and selected-model predicates are copied at two process edges.",
+  "class_root": "Supplier/model routing identity is not preserved across normalization, selection and node projection; a pure capability predicate has no single implementation owner.",
+  "affected_population": [
+    "Stored storyboard plans and strategy schema/round trips",
+    "Explicit, source-preferred and automatic recipe target selection",
+    "New, reused and concurrently edited storyboard video outputs",
+    "Renderer/main image and PDF capability consumers"
+  ],
+  "scope_paths": [
+    "src/workbench/domain/cinematicTypes.ts",
+    "src/workbench/domain/cinematicSchema.ts",
+    "src/workbench/domain/shotSpecMigration.ts",
+    "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+    "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.ts",
+    "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+    "src/config/textModelCapabilities.ts",
+    "electron/ai/agentUserContent.ts",
+    "electron/shared/textModelCapabilities.ts",
+    "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+    "src/i18n/locales/capabilityWorkflow.ts",
+    "src/workbench/generationCanvas/agent/convertShotToVideo.ts"
+  ],
+  "entry_points": [
+    "planShotToShotSpec / mergeShotSpecIntoPlanShot / historical readers",
+    "selectCapabilityRecipeTarget / strict recipe tool schema / handler",
+    "ensureStoryboardRowVideoOutput / existing video default resolver",
+    "Both existing three-argument capability exports"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "These are repository-owned identity and compatibility contracts; no external model capability or provider behavior is changed or inferred.",
+  "invariants": [
+    "Canonical supplier, model and variant remain separate through schema, projection and node metadata.",
+    "Missing historical supplier stays unknown; ambiguous providerId is preserved but never guessed into routing.",
+    "Same-name multi-supplier selection cannot depend on catalog order.",
+    "Video defaults cannot overwrite an existing or concurrently selected video identity.",
+    "The original three-argument image/PDF predicates delegate to the same shared function and preserve metadata-first/family behavior."
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/ai/canvasTools.ts",
+      "symbol": "capabilityRecipeRunParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "capabilityRecipeRunParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/config/capabilityRecipes/index.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/capabilityWorkflowText.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/capabilityWorkflow.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicSchema.ts",
+      "symbol": "generationStrategySchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicSchema.ts",
+      "symbol": "GenerationStrategyV1"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/cinematicTypes.ts",
+      "symbol": "GenerationStrategyV1"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "GenerationStrategyV1"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "symbol": "CapabilityRecipeTargetPreference"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.ts",
+      "symbol": "selectCapabilityRecipeTarget"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+      "symbol": "findImageShotVideoOutput"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "symbol": "findImageShotVideoOutput"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReview.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReview.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "write",
+      "path": "electron/agentLane/laneDesktopInput.ts",
+      "symbol": "buildAgentUserContent"
+    },
+    {
+      "kind": "write",
+      "path": "electron/agentLane/laneDesktopInput.ts",
+      "symbol": "modelSupportsImageInput"
+    },
+    {
+      "kind": "write",
+      "path": "electron/agentLane/laneDesktopInput.ts",
+      "symbol": "modelSupportsPdfInput"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/textBrainResolver.ts",
+      "symbol": "modelSupportsImageInput"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/textBrainResolver.ts",
+      "symbol": "modelSupportsToolCalls"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/vendorLanguageModel.ts",
+      "symbol": "modelSupportsImageInput"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/vendorLanguageModel.ts",
+      "symbol": "modelSupportsToolCalls"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/textModelCapabilities.ts",
+      "symbol": "metaFlag"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/assistantModelIdentity.ts",
+      "symbol": "modelSupportsToolCalls"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/capability/creativeToolExecute.ts",
+      "symbol": "tryApplyCapabilityToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "inferGenerationStrategy"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "planShotToShotSpec"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/domain/shotSpecReaders.ts",
+      "symbol": "planShotToShotSpec"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "symbol": "videoMetaForShot"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "ensureStoryboardRowVideoOutput"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/visionReviewModels.ts",
+      "symbol": "modelSupportsImageInput"
+    }
+  ],
+  "door_reduction": {
+    "before": 32,
+    "after": 33,
+    "why_not": "Both local detector helpers converge on one shared capability owner. The new read-only derived-video lookup is shared by conversion and storyboard materialization so neither caller replaces an existing selected model. Remaining schema/readers, pair selection/handler and compatibility consumers have distinct roles; no parallel algorithm remains."
+  },
+  "generality_proof": "Canonical schema and bidirectional projection preserve the pair and independent variant; one selector checks supplier/model ambiguity for explicit, source and automatic choices. Row output forwards the existing resolver's full identity and rereads user state after await. One existing shared owner implements both pure predicates without supplier lookup.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "planShotToShotSpec",
+      "responsibility": "Project modelVendor and variant independently; never reinterpret legacy providerId."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "symbol": "selectCapabilityRecipeTarget",
+      "responsibility": "Resolve actual supplier/model pairs and reject ambiguous bare names."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "symbol": "ensureStoryboardRowVideoOutput",
+      "responsibility": "Preserve chosen video identity and propagate default supplier to node metadata."
+    },
+    {
+      "path": "electron/shared/textModelCapabilities.ts",
+      "symbol": "modelSupportsImageInput",
+      "responsibility": "Own metadata-first image/PDF capability inference for an already-selected model, not supplier selection."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+      "symbol": "findImageShotVideoOutput",
+      "responsibility": "Own existing sourceNodeId/reference-edge/ambiguity lookup, shared before defaulting and conversion to retain already-selected derived video identity."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "entry_point": "mergeShotSpecIntoPlanShot",
+      "disposition": "enforced",
+      "evidence": "Round-trip and historical tests prevent pairing a changed model with the previous supplier or variant."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "entry_point": "selectCapabilityRecipeTarget",
+      "disposition": "enforced",
+      "evidence": "Reverse catalog order, source preferences, explicit missing pairs and ambiguous automatic candidates are covered."
+    },
+    {
+      "path": "electron/ai/agentUserContent.ts",
+      "entry_point": "modelSupportsImageInput / modelSupportsPdfInput",
+      "disposition": "enforced",
+      "evidence": "Both original detector suites plus function-identity regressions ensure real ownership consolidation without changing signatures."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.ts",
+      "entry_point": "tryApplyCapabilityToolCall",
+      "disposition": "enforced",
+      "evidence": "Plan-only tests pass strict vendorKey arguments and both canonical/legacy source supplier fields through the real handler into plan.model; ambiguous legacy sources reject without invoking generation."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+      "entry_point": "findImageShotVideoOutput / convertImageShotToVideo",
+      "disposition": "enforced",
+      "evidence": "Two additional row-output regressions failed before shared lookup (2 failed / 21 passed), then both pass alongside all original converter tests (2 files / 31 passed). Existing sourceNodeId and first-frame-linked video models are preserved without invoking a default resolver."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "The same model key can occur under any supplier and old projects remain readable indefinitely.",
+    "same_class_scan": [
+      "Read coordinator log five findings and reproduced check-model-identity locally without baseline changes.",
+      "Traced strategy schema, inferGenerationStrategy, round-trip merge, readShotSpec and readStoryboardAsShotSpecs.",
+      "Traced strict creativeComponentSchemas through recipe handler into explicit/source target preferences.",
+      "Verified the default resolver already returns modelVendor; traced metadata writes and await races.",
+      "Compared both full image/PDF detector algorithms and all original callers/tests; existing shared owner currently owns tool-call predicate.",
+      "Generated final runtime/type-symbol maps before and after: 32 -> 33 doors. Both detector copies are removed; conversion and row materialization share the new existing-video lookup.",
+      "Followed conversion one hop beyond row ownership: existing derived videos can also be found by sourceNodeId or reference edge. Reused those existing rules through a read-only helper; did not copy selection logic."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/domain/shotSpecMigration.ts",
+    "invariant": "Routing is supplier/model paired, variants are independent, and capability inference has one pure implementation.",
+    "failure_mode": "Ambiguous choices reject; unknown legacy supplier remains unknown; absence of a video default remains an error without replacing user settings.",
+    "exception_policy": "none",
+    "strategy": "Enforce canonical strategy fields and pair-aware selection/projection; share predicates through existing public compatibility re-exports.",
+    "artifacts": [
+      "src/workbench/domain/cinematicTypes.ts",
+      "src/workbench/domain/cinematicSchema.ts",
+      "src/workbench/domain/shotSpecMigration.ts",
+      "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.ts",
+      "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "src/config/textModelCapabilities.ts",
+      "electron/ai/agentUserContent.ts",
+      "electron/shared/textModelCapabilities.ts",
+      "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "src/workbench/generationCanvas/agent/convertShotToVideo.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/domain/cinematicTypes.test.ts",
+    "src/workbench/domain/shotSpecMigration.test.ts",
+    "src/workbench/generationCanvas/agent/capabilityRecipeAgent.test.ts",
+    "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.test.ts",
+    "electron/shared/textModelCapabilities.test.ts",
+    "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/domain/cinematicTypes.test.ts",
+    "src/workbench/domain/shotSpecMigration.test.ts",
+    "src/workbench/generationCanvas/agent/capabilityRecipeAgent.test.ts",
+    "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.test.ts",
+    "electron/shared/textModelCapabilities.test.ts",
+    "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/domain/shotSpecMigration.ts",
+      "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "src/config/textModelCapabilities.ts",
+      "electron/ai/agentUserContent.ts",
+      "src/workbench/generationCanvas/agent/convertShotToVideo.ts"
+    ],
+    "rationale": "Remove variant-as-provider writes, bare-name first-supplier selection, lost video suppliers and duplicated capability implementations; retain schema compatibility and existing import paths."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency or external capability changes; retain existing Zod, TypeScript and pure detector algorithms.",
+    "exit_criteria": []
+  },
+  "migration": "Original PlanShot fields remain authoritative. Read and preserve old providerId without guessing its meaning; new strategies use vendorKey and variantId. No stored-project rewrite.",
+  "residual_risks": [
+    "Remote delivery preflight failed once because the existing localhost proxy is unavailable; remote freshness is unverified and no proxy changes were made.",
+    "No actual generation or browser verification; coordinator owns complete CI/integration.",
+    "Legacy providerId alone cannot prove a supplier or variant; preserve it rather than inventing a migration.",
+    "The renderer compatibility facade and removed main detector implementation have no local target-symbol door; v3 reports two non-blocking warnings. External consumers and the actual shared helper are mapped; no fabricated door or checker exclusion."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/domain",
+    "tests": [
+      "src/workbench/domain/cinematicTypes.test.ts",
+      "src/workbench/domain/shotSpecMigration.test.ts"
+    ]
+  }
+}

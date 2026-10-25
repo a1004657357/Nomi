@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   collectAssetUrls,
   firstMappedString,
+  isFailureStatus,
+  isTerminalStatus,
   mappingCandidates,
   maybeParseJsonString,
   pathValues,
@@ -100,8 +102,53 @@ describe("taskStatusFromResponse", () => {
     expect(taskStatusFromResponse({}, null, undefined, ["https://x/a"])).toBe("succeeded");
     expect(taskStatusFromResponse({ error: "boom" }, null, undefined, [])).toBe("failed");
   });
-  it("defaults to queued when nothing matches", () => {
+  // 无状态字段的 create 响应很常见；继续查询但不重发 create。
+  it("defaults to queued when the provider omits status", () => {
     expect(taskStatusFromResponse({}, null, undefined, [])).toBe("queued");
+  });
+});
+
+// ── Gate 1 Slice 5：cancelled 独立 + unknown 态（§10.2）────────────────────────
+describe("taskStatusFromResponse — Gate 1 Slice 5: cancelled & unknown (§10.2)", () => {
+  it("canceled/cancelled → cancelled (no longer folded into failed)", () => {
+    expect(taskStatusFromResponse({ status: "canceled" }, null, undefined, [])).toBe("cancelled");
+    expect(taskStatusFromResponse({ status: "cancelled" }, null, undefined, [])).toBe("cancelled");
+  });
+
+  it("explicit statusMapping cancelled bucket is honored", () => {
+    expect(
+      taskStatusFromResponse(
+        { state: "USER_CANCELED" },
+        { status: ["state"] },
+        { cancelled: ["USER_CANCELED"] },
+        [],
+      ),
+    ).toBe("cancelled");
+  });
+
+  it("missing status: keep polling without recording a fake provider verb", () => {
+    expect(resolveTaskStatus({}, null, undefined, [])).toEqual({ status: "queued", unrecognizedStatus: "" });
+    expect(resolveTaskStatus({ unrelated: "field" }, null, undefined, [])).toEqual({
+      status: "queued",
+      unrecognizedStatus: "",
+    });
+  });
+
+  it("unknown is NOT terminal (isTerminalStatus false → caller keeps querying)", () => {
+    // 钱安全不变量：unknown 不触发重发，只持续查询（见 submissionLedger / taskResultQuery）
+    expect(isTerminalStatus("unknown")).toBe(false)
+    expect(isTerminalStatus("queued")).toBe(false)
+    expect(isTerminalStatus("running")).toBe(false)
+    expect(isTerminalStatus("succeeded")).toBe(true)
+    expect(isTerminalStatus("failed")).toBe(true)
+    expect(isTerminalStatus("cancelled")).toBe(true)
+  });
+
+  it("isFailureStatus treats cancelled as failure-class (preserves legacy === 'failed' semantics)", () => {
+    expect(isFailureStatus("cancelled")).toBe(true)
+    expect(isFailureStatus("failed")).toBe(true)
+    expect(isFailureStatus("succeeded")).toBe(false)
+    expect(isFailureStatus("unknown")).toBe(false)
   });
 });
 
@@ -119,14 +166,15 @@ describe("resolveTaskStatus：未登记动词必须留痕，而不是静默乐�
   });
 
   it("不认得的动词 → 仍返回 queued（不误杀），但带出原始动词（大小写原样）", () => {
-    // "failure"/"rejected" 就是 2026-08-11 真实往返测试里把任务变成「永远转圈」的那两个词。
-    expect(resolveTaskStatus({ status: "failure" }, null, undefined, [])).toEqual({
+    // "failure"/"rejected" 当年（2026-08-11）就是这样的词；如今已进共享词表（shared/taskStatus），
+    // 这里换成仍没人认得的词来钉「认不出 ≠ 失败、但要留痕」。
+    expect(resolveTaskStatus({ status: "cooking" }, null, undefined, [])).toEqual({
       status: "queued",
-      unrecognizedStatus: "failure",
+      unrecognizedStatus: "cooking",
     });
-    expect(resolveTaskStatus({ status: "Rejected" }, null, undefined, [])).toEqual({
+    expect(resolveTaskStatus({ status: "Marinating" }, null, undefined, [])).toEqual({
       status: "queued",
-      unrecognizedStatus: "Rejected",
+      unrecognizedStatus: "Marinating",
     });
   });
 

@@ -62,10 +62,19 @@ export function setEventLogSecretsProvider(provider: () => readonly string[]): v
 
 /**
  * 从 sessionKey 解析 projectId;local/空 → null(不落盘)。
- * sessionKey 形如 `nomi:workbench:<projectId>[:<area>]`,area ∈ {creation, generation}(cdc433c 起按 area 隔离)。
+ * sessionKey 形如 `nomi:workbench:<projectId>[:<area>[:<scope>]]`。director 会话多一段 node scope，
+ * 仍必须只取 projectId，否则 trace / 项目记忆会静默落到不存在的目录。
  * 必须先剥 area 后缀再取 projectId——否则贪婪匹配会把 `proj:creation` 整体当 id,致 trace 全线丢盘(I1/I2)。
  * 全仓唯一的 sessionKey→projectId 解析点（Agent context 等消费者 import 此函数，不另写正则）。
  */
+export function projectIdFromSessionKey(sessionKey: string | undefined): string | null {
+  const key = String(sessionKey || "").trim();
+  const withDirector = /^nomi:workbench:(.+):director:[^:]+$/.exec(key);
+  const withArea = /^nomi:workbench:(.+):(?:creation|generation)$/.exec(key);
+  const id = (withDirector ? withDirector[1] : withArea ? withArea[1] : /^nomi:workbench:(.+)$/.exec(key)?.[1])?.trim() || "";
+  return id && id !== "local" ? id : null;
+}
+
 function segmentPath(dir: string, segIndex: number): string {
   return path.join(dir, `log-${segIndex}.jsonl`);
 }

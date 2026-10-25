@@ -103,8 +103,9 @@ describe("canvas.read canonical contract", () => {
       id: "canvas.read",
       version: 1,
       aliases: {
-        pi: "read_canvas_state",
+        pi: "look_at_canvas",
         mcp: "nomi_canvas_read",
+        method: "nomi_canvas_read",
       },
       inputSchema: canvasReadSemanticInputSchema,
       outputSchema: canvasReadResultSchema,
@@ -117,14 +118,6 @@ describe("canvas.read canonical contract", () => {
       exposure: "mcp_safe",
       requiredScope: "canvas:read",
       targetKind: "project",
-      projections: {
-        pi: {
-          description: "Read the current generation canvas (nodes + edges).",
-        },
-        mcp: {
-          description: "Read the project canvas as compact nodes and edges.",
-        },
-      },
     });
   });
 
@@ -321,6 +314,7 @@ describe("projectCanvasRead", () => {
           position: { x: 12, y: 34 },
           locked: true,
           shotIndex: 2,
+          shotRole: "image",
           hasResult: true,
           currentResultId: "result-current",
           resultIds: ["result-current", "result-old"],
@@ -351,6 +345,7 @@ describe("projectCanvasRead", () => {
       "prompt",
       "resultIds",
       "shotIndex",
+      "shotRole",
       "status",
       "title",
     ]);
@@ -479,7 +474,7 @@ describe("projectCanvasRead", () => {
     expect(projected.edges[0]).not.toHaveProperty("order");
   });
 
-  it("preserves zero-valued sequence numbers", () => {
+  it("preserves zero edge order but never exposes zero as a shot identity", () => {
     const projected = projectCanvasRead({
       nodes: [
         { id: "node-a", kind: "image", shotIndex: 0 },
@@ -488,7 +483,7 @@ describe("projectCanvasRead", () => {
       edges: [{ id: "edge-a", source: "node-a", target: "node-b", order: 0 }],
     });
 
-    expect(projected.nodes[0]?.shotIndex).toBe(0);
+    expect(projected.nodes[0]).not.toHaveProperty("shotIndex");
     expect(projected.edges[0]?.order).toBe(0);
   });
 

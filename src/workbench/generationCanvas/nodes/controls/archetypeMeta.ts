@@ -1,6 +1,6 @@
 // 内置「模型档案」与生成节点 UI 之间的桥（C2b）。
 //
-// 职责：把档案的 modes/slots/params（src/config/modelArchetypes，供应商无关）映射成节点 UI
+// 职责：把档案的 modes/slots/params（electron/shared/modelArchetypes，供应商无关）映射成节点 UI
 // 需要的三样东西 —— ① 模式分段切换的选项、② 当前模式的参考槽（复用现有 ImageUrlSlot 形状）、
 // ③ 当前模式的标量参数。
 //
@@ -18,9 +18,14 @@ import {
   type ArchetypeReferenceSlotKind,
   type ModelArchetype,
   type ModelArchetypeVariant,
+  archetypeBaseModelKey,
+  archetypeVariantForModelId,
+  canonicalArchetypeVariantId,
+  combineChannelForMode,
   resolveArchetypeForModel,
+  resolveArchetypeVariant,
   specializeArchetypeForVariant,
-} from '../../../../config/modelArchetypes'
+} from '../../../../../electron/shared/modelArchetypes'
 import type { ImageUrlSlot } from '../../model/parameterReferenceSlots'
 import { translateModelDisplayText } from '../../../../i18n/modelDisplayText'
 import {
@@ -85,13 +90,8 @@ function readArchetypeNodeMeta(meta: Record<string, unknown> | undefined): Arche
   return { id, modeId, variantId }
 }
 
-/** 有效变体 id，兼容档案声明的历史别名；无匹配返回空串。 */
-function canonicalVariantIdOf(archetype: ModelArchetype, variantId: string | null | undefined): string {
-  const raw = typeof variantId === 'string' ? variantId.trim() : ''
-  if (!raw || !archetype.variants?.length) return ''
-  if (archetype.variants.some((v) => v.id === raw)) return raw
-  const alias = archetype.variantIdAliases?.[raw]
-  return alias && archetype.variants.some((v) => v.id === alias) ? alias : ''
+function matchesArchetype(stored: ArchetypeNodeMeta | null, archetype: ModelArchetype): stored is ArchetypeNodeMeta {
+  return Boolean(stored && (stored.id === archetype.id || archetype.legacyIds?.includes(stored.id)))
 }
 
 /** 当前激活的模式（无命名空间 meta 或 modeId 失效时落到 defaultModeId）。 */
@@ -100,7 +100,11 @@ export function currentArchetypeMode(
   meta: Record<string, unknown> | undefined,
 ): ArchetypeMode {
   const stored = readArchetypeNodeMeta(meta)
-  const modeId = stored && (stored.id === archetype.id || archetype.legacyIds?.includes(stored.id)) ? stored.modeId : ''
+  const storedModeId = matchesArchetype(stored, archetype) ? stored.modeId : ''
+  // The customized Flash profile used these mode IDs before the shared 2.5 schema.
+  const modeId = archetype.id === 'agnes-video-2.5-flash'
+    ? ({ t2v: 'text', firstlast: 'keyframe' } as Record<string, string>)[storedModeId] || storedModeId
+    : storedModeId
   return (
     archetype.modes.find((m) => m.id === modeId) ??
     archetype.modes.find((m) => m.id === archetype.defaultModeId) ??
@@ -108,28 +112,51 @@ export function currentArchetypeMode(
   )
 }
 
+/** 这个节点存着的 variantId（只认同一档案的）与模型名——问唯一 owner 时的那组输入。 */
+function variantInputOf(archetype: ModelArchetype, meta: Record<string, unknown> | undefined): { variantId?: string; modelId?: unknown } {
+  const stored = readArchetypeNodeMeta(meta)
+  return { ...(matchesArchetype(stored, archetype) ? { variantId: stored.variantId } : {}), modelId: meta?.modelKey }
+}
+
 /**
- * 当前激活的变体（对称 currentArchetypeMode）。读 `meta.archetype.variantId`，回落 defaultVariantId，
- * 再回落 variants[0]。无 variants 档案 → null（UI 不显示变体段，传输不带变体 model）。
+ * 当前模式内的激活变体（对称 currentArchetypeMode）。判定只问唯一 owner `resolveArchetypeVariant`：
+ * 存着的 variantId → 模型名是某个变体的专属 key → 默认变体 → 第一个。切换/迁移显式写回合法选择，
+ * 付费卡与宿主再问同一 owner；不让宿主按模式偷偷升级用户指定的型号。
+ * 无 variants 档案 → null（UI 不显示变体段，传输不带变体 model）。
  */
 export function currentArchetypeVariant(
   archetype: ModelArchetype,
   meta: Record<string, unknown> | undefined,
 ): ModelArchetypeVariant | null {
-  const variants = archetype.variants
-  if (!variants || variants.length === 0) return null
-  const stored = readArchetypeNodeMeta(meta)
-  const variantId = stored?.id === archetype.id ? canonicalVariantIdOf(archetype, stored.variantId) : ''
-  return (
-    variants.find((v) => v.id === variantId) ?? variants.find((v) => v.id === archetype.defaultVariantId) ?? variants[0]
-  )
+  return resolveModeVariant(archetype, currentArchetypeMode(archetype, meta).id, variantInputOf(archetype, meta))
 }
 
 export type ArchetypeVariantChoice = { id: string; label: string }
 
+function variantsForMode(archetype: ModelArchetype, modeId?: string): ModelArchetypeVariant[] {
+  const variants = archetype.variants || []
+  if (!modeId) return variants
+  return variants.filter((variant) =>
+    !variant.supportedModeIds || variant.supportedModeIds.includes(modeId),
+  )
+}
+
+function resolveModeVariant(
+  archetype: ModelArchetype,
+  modeId: string,
+  input: Parameters<typeof resolveArchetypeVariant>[1],
+): ModelArchetypeVariant | null {
+  // Filtering candidates must not redefine catalog identity or the shared owner's choice priorities.
+  return resolveArchetypeVariant({
+    ...archetype,
+    catalogModelKey: archetypeBaseModelKey(archetype),
+    variants: variantsForMode(archetype, modeId),
+  }, input)
+}
+
 /** 变体分段切换的选项（标签 = 变体自己的名字）。无 variants / 仅 1 个 → 空（UI 不显示该段）。 */
-export function archetypeVariantChoices(archetype: ModelArchetype): ArchetypeVariantChoice[] {
-  const variants = archetype.variants
+export function archetypeVariantChoices(archetype: ModelArchetype, modeId?: string): ArchetypeVariantChoice[] {
+  const variants = variantsForMode(archetype, modeId)
   if (!variants || variants.length <= 1) return []
   return variants.map((v) => ({ id: v.id, label: translateModelDisplayText(v.label) }))
 }
@@ -344,25 +371,11 @@ export function archetypeModeModelEnum(
   return currentArchetypeMode(archetype, meta).modelEnum ?? null
 }
 
-/** 默认变体 id（无 variants → 空串；声明 variants 时取 defaultVariantId 回落 variants[0]）。 */
-function defaultVariantIdOf(archetype: ModelArchetype): string {
-  const variants = archetype.variants
-  if (!variants || variants.length === 0) return ''
-  return (variants.find((v) => v.id === archetype.defaultVariantId) ?? variants[0]).id
-}
-
-/** 保留当前 variantId（同档案）或回落默认（换档案 / 旧 meta 无 variantId）。 */
-function preservedVariantId(meta: Record<string, unknown>, archetype: ModelArchetype): string {
-  const stored = readArchetypeNodeMeta(meta)
-  const keep = stored?.id === archetype.id ? canonicalVariantIdOf(archetype, stored.variantId) : ''
-  return keep || defaultVariantIdOf(archetype)
-}
-
 /**
  * 切到 nextModeId：改 node.meta.archetype.modeId，并把**存量越界的 select 值夹回新模式的默认**
  * （参考值/照片全局保留，不搬不清）。返回**整份新 meta**。
  * 互斥不在这里发生——发生在 buildArchetypeInputParams（只发当前模式声明的槽键）。这样切回时照片还在。
- * variantId 跟随保留（切 mode 不动变体）；无变体档案则不写 variantId 键。
+ * 兼容的 variantId 跟随保留；不兼容时由唯一 owner 在目标模式的合法候选内回落。无变体档案不写 variantId。
  *
  * ⚠️ 这里必须和 applyArchetypeVariantSwitch 一样调 clampMetaToModeParams —— **模式和变体一样会收窄参数**。
  * 2026-08-26 走查实测：火山 Seedance 2.5 在「文生视频」选了 16:9，切到「首帧」（官方硬约束 ratio 只能
@@ -375,10 +388,12 @@ export function applyArchetypeModeSwitch(
   archetype: ModelArchetype,
   nextModeId: string,
 ): Record<string, unknown> {
-  const variantId = preservedVariantId(meta, archetype)
+  const targetMode = currentArchetypeMode(archetype, { archetype: { id: archetype.id, modeId: nextModeId } })
+  const variantId = resolveModeVariant(archetype, targetMode.id, variantInputOf(archetype, meta))?.id ?? ''
+  if (archetype.variants?.length && !variantId) return meta
   // 按当前变体特化后再取模式参数：变体与模式**都**可能收窄同一个 select，夹的必须是两层叠加后的选项集。
   const specialized = specializeArchetypeForVariant(archetype, variantId)
-  const nextMode = specialized.modes.find((m) => m.id === nextModeId) ?? specialized.modes[0]
+  const nextMode = specialized.modes.find((m) => m.id === targetMode.id) ?? specialized.modes[0]
   const clamped = nextMode ? clampMetaToModeParams(meta, nextMode.params) : meta
   return { ...clamped, archetype: { id: archetype.id, modeId: nextMode.id, ...(variantId ? { variantId } : {}) } }
 }
@@ -418,13 +433,10 @@ export function applyArchetypeVariantSwitch(
 ): Record<string, unknown> {
   const variants = archetype.variants
   if (!variants || variants.length === 0) return meta
-  const stored = readArchetypeNodeMeta(meta)
-  const modeId = stored?.id === archetype.id && stored.modeId ? stored.modeId : archetype.defaultModeId
-  const canonicalNextId = canonicalVariantIdOf(archetype, nextVariantId)
-  const nextVariant =
-    variants.find((v) => v.id === canonicalNextId) ??
-    variants.find((v) => v.id === archetype.defaultVariantId) ??
-    variants[0]
+  const modeId = currentArchetypeMode(archetype, meta).id
+  // 用户点的那一档；认不出的 id 与不传一样落默认变体（唯一 owner 的规则）。
+  const nextVariant = resolveModeVariant(archetype, modeId, { variantId: nextVariantId })
+  if (!nextVariant) return meta
   // 按新变体特化出当前模式的参数声明，把存量越界的 select 值夹回默认（D1：4k→fast 变体不再漏发）。
   const specialized = specializeArchetypeForVariant(archetype, nextVariant.id)
   const mode =
@@ -442,12 +454,12 @@ export function applyArchetypeVariantSwitch(
  * 按 variant.identifierPatterns / variant.modelKey 匹配旧 modelKey。
  *
  * 幂等：modelKey 已是某变体的基础 modelKey 且 variantId 已对 → 返回 null（不循环写）。
- * 无 variants 档案 / 认不出旧串 → 返回 null。返回**待 patch 的字段**（含 modelKey + archetype），由调用方合并。
+ * 无 variants 档案 / 认不出旧串 → 返回 null。返回**待 patch 的字段**（身份及迁移时越界的 select），由调用方合并。
  */
 export function normalizeArchetypeVariantMeta(
   meta: Record<string, unknown>,
   archetype: ModelArchetype,
-): { modelKey: string; archetype: { id: string; modeId: string; variantId: string } } | null {
+): ({ modelKey: string; archetype: { id: string; modeId: string; variantId: string } } & Record<string, unknown>) | null {
   const variants = archetype.variants
   if (!variants || variants.length === 0) return null
   const currentKey = typeof meta.modelKey === 'string' ? meta.modelKey.trim() : ''
@@ -459,31 +471,28 @@ export function normalizeArchetypeVariantMeta(
   // 否则变体全串(doubao-seedance-2.0-fast)在 picker(只有基础选项 + findModelOptionByIdentifier 精确匹配)
   // 命中不到 → 选择显示空（这正是「最大风险点」）。变体信息只由 variantId 承载（与 applyArchetypeVariantSwitch
   // 一致：切变体只改 variantId、不动 modelKey）。
-  const baseModelKey =
-    archetype.catalogModelKey ?? (variants.find((v) => v.id === archetype.defaultVariantId) ?? variants[0]).modelKey
+  const baseModelKey = archetypeBaseModelKey(archetype)!
   // modelKey 已是基础 → variantId 是权威（缺则 currentArchetypeVariant 回落默认），无需迁移、幂等 no-op。
-  // **绝不能用基础串反推变体**——基础串映射到 standard 会把已选的 fast/face 冲掉。
+  // **绝不能用基础串反推变体**——基础串映射到 standard 会把已选的 fast/face 冲掉（唯一 owner 同一条规则）。
   const stored = readArchetypeNodeMeta(meta)
+  const modeId = currentArchetypeMode(archetype, meta).id
+  const resolved = currentArchetypeVariant(archetype, meta)
+  if (!resolved) return null
   if (norm(currentKey) === norm(baseModelKey)) {
-    const canonicalStoredId = stored?.id === archetype.id ? canonicalVariantIdOf(archetype, stored.variantId) : ''
-    // 已下线 variantId（face/fast-face）即使 modelKey 已折叠，也要改写成当前有效 id，避免节点默默回默认。
-    if (canonicalStoredId && canonicalStoredId !== stored?.variantId) {
-      return {
-        modelKey: baseModelKey,
-        archetype: { id: archetype.id, modeId: stored!.modeId, variantId: canonicalStoredId },
-      }
-    }
-    return null
+    if (!matchesArchetype(stored, archetype) || !canonicalArchetypeVariantId(archetype, stored.variantId)) return null
+    // 已折叠的旧别名、旧档案/mode 或不兼容变体也要写回；缺省身份仍由 ensure 初始化。
+    if (resolved.id === stored.variantId && stored.id === archetype.id && stored.modeId === modeId) return null
+  } else {
+    // 只迁移认得出的专属旧串；已有兼容的显式 variantId 仍优先，不能被旧模型名冲掉。
+    if (!archetypeVariantForModelId(archetype, currentKey)) return null
   }
-  // modelKey 是变体全串（旧项目钉死的具体变体）→ 折叠成基础 modelKey + 从串 derive variantId。
-  const matched = variants.find(
-    (variant) =>
-      norm(variant.modelKey) === norm(currentKey) ||
-      (variant.identifierPatterns ?? []).some((p) => norm(p) === norm(currentKey)),
-  )
-  if (!matched) return null
-  const modeId = stored?.id === archetype.id && stored.modeId ? stored.modeId : archetype.defaultModeId
-  return { modelKey: baseModelKey, archetype: { id: archetype.id, modeId, variantId: matched.id } }
+  const mode = currentArchetypeMode(specializeArchetypeForVariant(archetype, resolved.id), meta)
+  const clamped = clampMetaToModeParams(meta, mode.params)
+  // Patch only scalar changes; undefined clears a removed value when the existing caller merges the patch.
+  const scalarPatch = Object.fromEntries(mode.params
+    .filter(({ key }) => !Object.is(meta[key], clamped[key]))
+    .map(({ key }) => [key, clamped[key]]))
+  return { ...scalarPatch, modelKey: baseModelKey, archetype: { id: archetype.id, modeId, variantId: resolved.id } }
 }
 
 /**
@@ -495,18 +504,18 @@ export function ensureArchetypeNodeMeta(
   archetype: ModelArchetype,
 ): Record<string, unknown> | null {
   const stored = readArchetypeNodeMeta(meta)
-  if (stored && archetype.legacyIds?.includes(stored.id)) {
-    const mode = currentArchetypeMode(archetype, meta)
-    return applyArchetypeModeSwitch(preserveLegacyPixelRatio(meta, mode), archetype, mode.id)
+  const mode = currentArchetypeMode(archetype, meta)
+  if (!stored || stored.id !== archetype.id || stored.modeId !== mode.id) {
+    const migrated = stored && archetype.legacyIds?.includes(stored.id) ? preserveLegacyPixelRatio(meta, mode) : meta
+    const next = applyArchetypeModeSwitch(migrated, archetype, mode.id)
+    return next === meta ? null : next
   }
   // 已是该档案：若有变体但 variantId 缺/失效 → 补默认变体（旧 meta 升级）；否则幂等 null。
-  if (stored?.id === archetype.id) {
-    if (!(archetype.variants?.length ?? 0)) return null
-    const canonicalStoredId = canonicalVariantIdOf(archetype, stored.variantId)
-    if (stored.variantId && canonicalStoredId === stored.variantId) return null
-    return applyArchetypeVariantSwitch(meta, archetype, canonicalStoredId || defaultVariantIdOf(archetype))
-  }
-  return applyArchetypeModeSwitch(meta, archetype, archetype.defaultModeId)
+  if (!(archetype.variants?.length ?? 0)) return null
+  const variantId = currentArchetypeVariant(archetype, meta)?.id ?? ''
+  if (stored.variantId && variantId === stored.variantId) return null
+  const next = applyArchetypeVariantSwitch(meta, archetype, variantId)
+  return next === meta ? null : next
 }
 
 /** Split legacy pixel size into the new profile's ratio before its size is clamped.
@@ -605,18 +614,17 @@ export function referenceSlotAccept(kind: ArchetypeReferenceSlotKind): 'image' |
   return ARRAY_SLOT_ROUTE[kind]?.accept ?? SINGLE_SLOT_ACCEPT[kind] ?? 'image'
 }
 
-function volcengineImageContentItem(url: string, role: string): Record<string, unknown> {
-  return { type: 'image_url', image_url: { url }, role }
-}
+/** MiniMax 系 content 项（type + 嵌套 {url} + 顶层 role）：MiniMax v2（H3/Pixstag）与火山方舟同形线缆。 */
+const CONTENT_TYPE_FOR_KIND: Partial<Record<ArchetypeReferenceSlotKind, string>> = { first_frame: 'image_url', last_frame: 'image_url', image_ref: 'image_url', video_ref: 'video_url', audio_ref: 'audio_url' }
 
-function volcengineContentItem(inputKey: string, url: string): Record<string, unknown> | null {
-  if (inputKey === 'volcengine_first_image_content')
-    return volcengineImageContentItem(url, DEFAULT_ROLE_FOR_KIND.first_frame ?? 'first_frame')
-  if (inputKey === 'volcengine_first_role_image_content')
-    return volcengineImageContentItem(url, DEFAULT_ROLE_FOR_KIND.first_frame ?? 'first_frame')
-  if (inputKey === 'volcengine_last_role_image_content')
-    return volcengineImageContentItem(url, DEFAULT_ROLE_FOR_KIND.last_frame ?? 'last_frame')
-  return null
+function contentItemForSlot(
+  slot: { kind: ArchetypeReferenceSlotKind; roleName?: string },
+  url: string,
+): Record<string, unknown> {
+  const type = CONTENT_TYPE_FOR_KIND[slot.kind]
+  const role = slot.roleName ?? DEFAULT_ROLE_FOR_KIND[slot.kind]
+  if (!type) throw new Error(`asContentItem 槽的 kind 不支持内容项序列化: ${slot.kind}`)
+  return { type, [type]: { url }, ...(role ? { role } : {}) }
 }
 
 /**
@@ -714,15 +722,9 @@ export function buildArchetypeInputParams(
       const edgeList = edgeListForArraySlotAccept(arr.accept, references)
       const capped = mergeOrderedReferenceImageUrls(edgeList, metaList, slot.max)
       if (capped.length) {
-        if (inputKey === 'volcengine_image_contents') {
-          const role = DEFAULT_ROLE_FOR_KIND.image_ref ?? 'reference_image'
-          out[inputKey] = capped.map((url) => volcengineImageContentItem(url, role))
-        } else if (inputKey === 'volcengine_video_contents') {
-          const role = DEFAULT_ROLE_FOR_KIND.video_ref ?? 'reference_video'
-          out[inputKey] = capped.map((url) => ({ type: 'video_url', video_url: { url }, role }))
-        } else if (inputKey === 'volcengine_audio_contents') {
-          const role = DEFAULT_ROLE_FOR_KIND.audio_ref ?? 'reference_audio'
-          out[inputKey] = capped.map((url) => ({ type: 'audio_url', audio_url: { url }, role }))
+        // asContentItem（声明驱动）：数组槽 → content 项数组（type/role 由 kind 派生，单源）。
+        if (slot.asContentItem) {
+          out[inputKey] = capped.map((url) => contentItemForSlot(slot, url))
         } else if (!slotAsArray(slot) && slot.max === 1) {
           // 声明 asArray:false 的单容量数组路由槽（Agnes i2v 的 image）→ 发**单图字符串**，声明说话算话。
           // 旧实现无视 asArray 恒发数组 → Agnes Go 后端 Alias.image(string) 解析失败，Windows 用户
@@ -748,14 +750,18 @@ export function buildArchetypeInputParams(
           ? (meta[metaKey] as string).trim()
           : ''
     if (raw) {
-      out[inputKey] = volcengineContentItem(inputKey, raw) ?? (asArray ? [raw] : raw)
+      // asContentItem 单值槽 → 单个 content 项对象；否则按裸字符串 / 字符串数组发。
+      out[inputKey] = slot.asContentItem
+        ? contentItemForSlot(slot, raw)
+        : (asArray ? [raw] : raw)
     }
   }
   // 角色数组合并（通用原语）：把本模式有值的槽 → [{url, role}] 落在 combineSlotsInto.key，删被合并的
   // 扁平键（M2 互斥）。role = slot.roleName ?? 由 kind 派生（单源）。键名来自档案声明，不写死/不 if-vendor。
   // 必须在此构造层拼好整个数组——模板引擎丢得掉 undefined 键/元素，但丢不掉 {url:undefined} 对象（坑）。
-  if (mode.combineSlotsInto) {
-    const flat = mode.combineSlotsInto.flat === true
+  const combineChannel = combineChannelForMode(mode)
+  if (combineChannel) {
+    const flat = combineChannel.flat
     // 扁平模式（Veo 首尾帧）：有序 string[]，[0]=首 [1]=尾。非扁平（Seedance）：[{url,role}]。
     const combinedFlat: string[] = []
     const combinedRoles: Array<{ url: string; role: string }> = []
@@ -776,7 +782,7 @@ export function buildArchetypeInputParams(
       delete out[inputKey]
     }
     const combined = flat ? combinedFlat : combinedRoles
-    if (combined.length) out[mode.combineSlotsInto.key] = combined
+    if (combined.length) out[combineChannel.key] = combined
   }
   // 模式级固定 body 参数（generation_type 等不需用户选的常量）。在 model 字段之前并入，键不与槽/参数冲突。
   if (mode.fixedParams) {

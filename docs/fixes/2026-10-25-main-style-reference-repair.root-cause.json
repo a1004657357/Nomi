@@ -1,0 +1,425 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-main-style-reference-repair",
+  "problem_type": "Invalid design-system references and divergent icons for identical actions",
+  "symptom": "At the supplied integration base, icon semantics reports 3 conflicts; dangling CSS tokens reports 4 uses of the retired transition token; dangling Tailwind reports 27 distinct file/class pairs.",
+  "direct_cause": "Consumers use nonexistent ink/surface/shadow keys and a retired compound duration token, while equivalent exit and fullscreen actions render different Tabler icons.",
+  "class_root": "UI consumers drifted from the live Tailwind mapping and the design system's canonical per-action icon identity. Invalid CSS references fail silently in the renderer.",
+  "affected_population": [
+    "Existing canvas review/result/settings surfaces and 3D control entry points; no stored user data changes"
+  ],
+  "scope_paths": [
+    "src/ui/onboarding/WebBridgeConnectionCard.tsx",
+    "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+    "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+    "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+    "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+    "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+    "scripts/main-style-reference-repair.node-test.mjs",
+    "tailwind.config.ts",
+    "scripts/check-icon-semantics.mjs",
+    "scripts/check-dangling-tailwind.mjs",
+    "scripts/check-dangling-tokens.mjs"
+  ],
+  "entry_points": [
+    "Onboarding refresh and capability settings consume the same live ink token scale",
+    "Quality/review/result surfaces consume existing neutral surfaces and float shadows",
+    "3D header and bottom controls exit the same camera/character state; preview entries open the same fullscreen editor"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The authoritative token mapping, icon dictionary, and application action identities are repository-local. No library API or dependency behavior changes.",
+  "invariants": [
+    "All changed class references resolve in tailwind.config.ts; no aliases or fallback definitions are added",
+    "Duration and easing remain separate live tokens",
+    "Every existing entry for each repaired action uses the same library glyph without removing an entry",
+    "Content, event handlers, geometry, layout and state logic stay unchanged"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/ui/browser/popover/browserAssetPopoverUtils.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/popover/useBrowserAssetActions.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/prompt/browserPromptExtractionRunner.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/onboarding/WebBridgeConnectionCard.tsx",
+      "symbol": "WebBridgeApi"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/api/promptLibraryApi.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/assetImportRejection.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/assetLibraryLocalImport.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/assetSurfaceMigration.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/deleteAssetResult.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/importAudioToLibrary.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/adapters/assetImportAdapter.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/adapters/clipboardImagePaste.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "symbol": "runnableCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/canvasStageDrop.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "symbol": "CapabilityVisionReviewSelection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityVisionReviewSelection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "moodRequestSummary"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "symbol": "reviewLabel"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "qualityTone"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/model/actionLibrary.ts",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/panels/dialogs/ActionSelectModal.tsx",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/panels/inspector/ActionClipInspector.tsx",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/panels/inspector/PoseTab.tsx",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/mannequinAssets.ts",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "symbol": "reviewMoodCollectionWithVisionModel"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "symbol": "reviewMultiviewCollectionWithVisionModel"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+      "symbol": "PROMPT_PICKER_PREVIEW_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeVideoPlaybackGuard.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "symbol": "COMPONENT_ICONS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "symbol": "KIND_LABEL"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "symbol": "ComparisonSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+      "symbol": "ACTION_LIBRARY"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "readTakeCaptureStatus"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/useNodeMediaMeasurement.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/plugins/canvasWorkflowTemplates.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/resultMediaBackfillBridge.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeRetryAction.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationReferenceResolver.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/videoDepth/startVideoDepthDerivation.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/videoDepth/videoDepthClient.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/library/WorkflowLibraryContent.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/promptLibrary/PromptPreviewOverlay.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/skillGallery.ts",
+      "symbol": "sourceUrl"
+    }
+  ],
+  "door_reduction": {
+    "before": 49,
+    "after": 49,
+    "why_not": "These are existing render/read doors, not duplicated state ownership. Separate onboarding, review, result, prompt-picker and 3D surfaces must remain callable. The name-based scan conservatively includes unrelated sourceUrl, failedCount and ACTION_LIBRARY occurrences; none are modified or consolidated."
+  },
+  "generality_proof": "The unchanged repository gates scan all production consumers. The added focused static regression applies their existing scanners to all 16 changed surfaces, verifies both entries of each reported action, checks all four obsolete duration references, and characterizes original callbacks. Replacing invalid references at their consumers keeps one existing live token vocabulary rather than reviving obsolete keys.",
+  "shared_boundaries": [
+    {
+      "path": "scripts/main-style-reference-repair.node-test.mjs",
+      "symbol": "repairedFiles",
+      "responsibility": "Focused static boundary reuses the existing Tailwind and icon scanners across every changed consumer and all existing 3D action entries"
+    },
+    {
+      "path": "tailwind.config.ts",
+      "symbol": "tokenColor",
+      "responsibility": "Unchanged live source of legal token keys, color mappings, duration and easing"
+    },
+    {
+      "path": "scripts/check-icon-semantics.mjs",
+      "symbol": "scanIconSemantics",
+      "responsibility": "Unchanged all-source action/icon consistency gate"
+    },
+    {
+      "path": "scripts/check-dangling-tailwind.mjs",
+      "symbol": "findDanglingClasses",
+      "responsibility": "Unchanged all-source invalid class reference gate"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "entry_point": "BatchGenerateSettingsButton",
+      "disposition": "enforced",
+      "evidence": "Independent settings entry had ink-50/70 and one retired duration reference; the focused regression checks it against the live mapping"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+      "entry_point": "BrowserPromptPickerPopover",
+      "disposition": "enforced",
+      "evidence": "Independent prompt-picker entry had ink-35/70 and one retired duration reference; the same class regression checks both"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+      "entry_point": "CharacterPossessButton",
+      "disposition": "enforced",
+      "evidence": "Header exit controls are scanned alongside both bottom action bars, preserving callbacks and entry count"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "entry_point": "StoryboardTableNode",
+      "disposition": "not-affected",
+      "evidence": "Same-class findings exist but writes to storyboard are explicitly excluded by the task. Its two dangling class findings remain visible, not exempted; coordination must repair them"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "The same invalid reference shape already appears across independent settings, review, result and 3D surfaces.",
+    "same_class_scan": [
+      "pnpm run check:icon-semantics at base: 3 action conflicts",
+      "pnpm run check:dangling-tokens at base: 1 undefined variable / 4 references",
+      "pnpm run check:dangling-tailwind at base: 27 distinct file/class pairs",
+      "Focused findDanglingClasses scan: 37 literal invalid references across the in-scope surfaces",
+      "node scripts/door-map.mjs --read=WebBridgeApi,runnableCount,CapabilityVisionReviewSelection,moodRequestSummary,reviewLabel,qualityTone,failedCount,reviewMoodCollectionWithVisionModel,reviewMultiviewCollectionWithVisionModel,PROMPT_PICKER_PREVIEW_WIDTH,sourceUrl,readTakeCaptureStatus,COMPONENT_ICONS,KIND_LABEL,ComparisonSurface,ACTION_LIBRARY --roots=src"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "scripts/main-style-reference-repair.node-test.mjs",
+    "invariant": "All repaired consumers resolve through the existing live token vocabulary and canonical action glyphs without altering callbacks.",
+    "failure_mode": "Focused regression fails on any dangling key, retired duration reference, action drift or missing original callback. Existing all-source checks keep out-of-scope failures visible.",
+    "exception_policy": "none",
+    "strategy": "Reuse the existing scanners in the new focused regression, remove obsolete references from every in-scope consumer, and retain the all-source gate behavior and baselines unchanged.",
+    "artifacts": [
+      "scripts/main-style-reference-repair.node-test.mjs",
+      "src/ui/onboarding/WebBridgeConnectionCard.tsx",
+      "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+      "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx"
+    ]
+  },
+  "regression_tests": [
+    "scripts/main-style-reference-repair.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/main-style-reference-repair.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No alternate implementation or persisted format is introduced. Old invalid references are replaced in place; the storyboard references remain explicitly out of write scope."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency upgrade or library API change is needed; the existing Tabler and Tailwind configuration already supply the canonical symbols.",
+    "exit_criteria": []
+  },
+  "migration": "No persisted data migration. Existing component content, props, callbacks and layout classes are preserved; only invalid visual references and three glyph uses change.",
+  "residual_risks": [
+    "After the 3 action conflicts are cleared, the unchanged icon checker exposes 39 pre-existing unregistered dictionary icons; semantic review is outside this line's requested 3-conflict repair and the full icon check remains red",
+    "check:tokens remains red: 18 row-edge occurrences in 13 files require real-screen layout approval; no CSS workaround or baseline exemption is applied",
+    "Two dangling Tailwind file/class pairs in StoryboardTableNode.tsx remain outside authorized write scope",
+    "User-project rendering, real 3D screenshots, zh/en visual acceptance, Windows and packaged runtime are unverified",
+    "delivery:preflight --remote fork --base main failed at fetch through the existing unreachable local proxy; no remote freshness claim",
+    "Historical root-cause contracts and CI/dependency work belong to the coordination line"
+  ],
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/main-style-reference-repair.node-test.mjs",
+      "scripts/check-icon-semantics.node-test.mjs",
+      "scripts/check-dangling-tailwind.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/main-style-reference-repair.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

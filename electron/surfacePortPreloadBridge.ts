@@ -33,6 +33,9 @@ import {
   type SurfacePortBindingWire,
   type SurfacePortCancelRequestWire,
   SurfacePortWireError,
+  sameSurfacePortBindingWire,
+  surfacePortFailure,
+  surfacePortReplyPayload,
   type SurfaceSuspensionWire,
   type TimelineReadSurfaceRequestWire,
   type TimelineWriteSurfaceRequestWire,
@@ -198,18 +201,11 @@ function cancelRequest(value: unknown): SurfacePortCancelRequestWire | null {
   return request as unknown as SurfacePortCancelRequestWire;
 }
 
-function sameSurfaceAuthority(left: SurfacePortBindingWire, right: SurfacePortBindingWire): boolean {
-  const leftProject = left?.binding
-  const rightProject = right?.binding
-  return Boolean(leftProject && rightProject)
-    && left.bindingId === right.bindingId
-    && left.nonce === right.nonce
-    && left.surfaceInstanceId === right.surfaceInstanceId
-    && left.portRevision === right.portRevision
-    && leftProject.projectId === rightProject.projectId
-    && leftProject.immutableProjectUuid === rightProject.immutableProjectUuid
-    && leftProject.projectGeneration === rightProject.projectGeneration;
-}
+// C2：这里原来自己列了 7 维，漏掉 version / webContentsId / processId / frameRoutingId / origin。
+// preload 正是主进程与渲染层之间那道信任边界，「这条回复是不是发给我的」靠它答——
+// 两份绑定只在 webContentsId 上不同（同一个项目、另一个窗口）时，旧版会说「是同一个」。
+// 现在用 owner 那一份（13 维），本层不再列字段。
+const sameSurfaceAuthority = sameSurfacePortBindingWire;
 
 export function createCanvasReadSurfacePreloadBridge(
   invoke: Invoke,
@@ -289,15 +285,13 @@ export function createCanvasReadSurfacePreloadBridge(
             events.send(SURFACE_CANVAS_READ_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              result: value,
+              ...surfacePortReplyPayload(value),
             }),
           (error) =>
             events.send(SURFACE_CANVAS_READ_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              error: {
-                code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable",
-              },
+              error: surfacePortFailure(error),
             }),
         );
       });
@@ -318,15 +312,13 @@ export function createCanvasReadSurfacePreloadBridge(
             events.send(SURFACE_DOCUMENT_READ_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              result: value,
+              ...surfacePortReplyPayload(value),
             }),
           (error) =>
             events.send(SURFACE_DOCUMENT_READ_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              error: {
-                code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable",
-              },
+              error: surfacePortFailure(error),
             }),
         );
       });
@@ -350,15 +342,13 @@ export function createCanvasReadSurfacePreloadBridge(
             events.send(SURFACE_DOCUMENT_WRITE_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              result: value,
+              ...surfacePortReplyPayload(value),
             }),
           (error) =>
             events.send(SURFACE_DOCUMENT_WRITE_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              error: {
-                code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable",
-              },
+              error: surfacePortFailure(error),
             }),
         );
       });
@@ -384,13 +374,13 @@ export function createCanvasReadSurfacePreloadBridge(
             events.send(SURFACE_CANVAS_WRITE_CAPTURE_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              result: value,
+              ...surfacePortReplyPayload(value),
             }),
           (error) =>
             events.send(SURFACE_CANVAS_WRITE_CAPTURE_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+              error: surfacePortFailure(error),
             }),
         );
       });
@@ -415,13 +405,13 @@ export function createCanvasReadSurfacePreloadBridge(
             events.send(SURFACE_CANVAS_WRITE_EXECUTE_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              result: value,
+              ...surfacePortReplyPayload(value),
             }),
           (error) =>
             events.send(SURFACE_CANVAS_WRITE_EXECUTE_REPLY_CHANNEL, {
               requestId: request.requestId,
               binding: request.binding,
-              error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+              error: surfacePortFailure(error),
             }),
         );
       });
@@ -446,12 +436,12 @@ export function createCanvasReadSurfacePreloadBridge(
           (value) => events.send(SURFACE_TIMELINE_READ_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            result: value,
+            ...surfacePortReplyPayload(value),
           }),
           (error) => events.send(SURFACE_TIMELINE_READ_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+            error: surfacePortFailure(error),
           }),
         );
       });
@@ -475,12 +465,12 @@ export function createCanvasReadSurfacePreloadBridge(
           (value) => events.send(SURFACE_TIMELINE_WRITE_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            result: value,
+            ...surfacePortReplyPayload(value),
           }),
           (error) => events.send(SURFACE_TIMELINE_WRITE_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+            error: surfacePortFailure(error),
           }),
         );
       });
@@ -505,12 +495,12 @@ export function createCanvasReadSurfacePreloadBridge(
           (value) => events.send(SURFACE_ASSET_READ_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            result: value,
+            ...surfacePortReplyPayload(value),
           }),
           (error) => events.send(SURFACE_ASSET_READ_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+            error: surfacePortFailure(error),
           }),
         );
       });
@@ -535,12 +525,12 @@ export function createCanvasReadSurfacePreloadBridge(
           (value) => events.send(SURFACE_EXPORT_READ_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            result: value,
+            ...surfacePortReplyPayload(value),
           }),
           (error) => events.send(SURFACE_EXPORT_READ_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+            error: surfacePortFailure(error),
           }),
         );
       });
@@ -564,12 +554,12 @@ export function createCanvasReadSurfacePreloadBridge(
           (value) => events.send(SURFACE_EXPORT_WRITE_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            result: value,
+            ...surfacePortReplyPayload(value),
           }),
           (error) => events.send(SURFACE_EXPORT_WRITE_REPLY_CHANNEL, {
             requestId: request.requestId,
             binding: request.binding,
-            error: { code: error instanceof SurfacePortWireError ? error.code : "surface_port_unavailable" },
+            error: surfacePortFailure(error),
           }),
         );
       });

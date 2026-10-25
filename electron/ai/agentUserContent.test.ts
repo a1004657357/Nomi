@@ -16,10 +16,14 @@ describe("modelSupportsImageInput", () => {
     expect(modelSupportsImageInput("gpt-4o", null, undefined)).toBe(true);
     expect(modelSupportsImageInput("claude-3-5-sonnet", null, undefined)).toBe(true);
     expect(modelSupportsImageInput("gemini-2.0-flash", null, undefined)).toBe(true);
+    expect(modelSupportsImageInput("doubao-seed-2.0-lite", null, undefined)).toBe(true);
+    expect(modelSupportsImageInput("doubao-seed-2-0-pro-260215", null, undefined)).toBe(true);
+    expect(modelSupportsImageInput("custom-endpoint", "Doubao Seed 2.0 Pro", undefined)).toBe(true);
   });
   it("returns false for plain text models", () => {
     expect(modelSupportsImageInput("deepseek-chat", null, undefined)).toBe(false);
     expect(modelSupportsImageInput("moonshot-v1-8k", null, undefined)).toBe(false);
+    expect(modelSupportsImageInput("doubao-seed-1.6-lite", null, undefined)).toBe(false);
   });
 });
 

@@ -1,5 +1,9 @@
 import { getDesktopBridge } from '../../../desktop/bridge'
+import { assetKindOf } from '../../assets/assetTypes'
+import { unwrapAssetImportResult } from '../../../../electron/shared/contracts/assetImportResult'
 import type { GenerationNodeResult } from '../model/generationCanvasTypes'
+import { readMediaDimensions, type MediaDimensions } from '../nodes/nodeSizing'
+import { awaitMediaTransfer, describePhaseSilence } from './generationPhaseDeadline'
 
 // 「厂商临时 URL 绝不落进 result.url」的结构闸 + 存量抢救，共用的领域逻辑。
 //
@@ -8,10 +12,10 @@ import type { GenerationNodeResult } from '../model/generationCanvasTypes'
 // 临时 CDN 直链原样当成品返回 → 被 addNodeResult 写进项目文件 → 隔天/过段时间 CDN 过期 →
 // 播放时 4xx/超时 → 纯灰壳（症状「生成的视频过段时间打开播不了」）。
 //
-// 修在渲染层做「最后一道防线」而非只靠主进程：渲染层此刻拿的是「当前打开的项目」这一确切、
-// 同步可读的 projectId，比主进程那条受启动时序影响的 projectId 更可靠。主进程有值时已本地化
-// （result.url 已是 nomi-local → 这里判定为非 http → 立即原样返回，零开销 no-op），只有主进程
-// 漏了才真正补一次。这是同一职责的两道防线，不是并行版：职责单一——result.url 必须落地。
+// 渲染层这道「最后一道防线」用的是运行提交时固定的项目身份（调用方显式传入），绝不读「当前打开的
+// 项目」——结果只落回它所属的项目。主进程有值时已本地化（result.url 已是 nomi-local → 这里判定为
+// 非 http → 立即原样返回，零开销 no-op），只有主进程漏了才真正补一次。这是同一职责的两道防线，
+// 不是并行版：职责单一——result.url 必须落地。
 export function isRemoteHttpUrl(url: string | undefined | null): boolean {
   return typeof url === 'string' && /^https?:\/\//i.test(url.trim())
 }
@@ -20,26 +24,37 @@ export function isRemoteHttpUrl(url: string | undefined | null): boolean {
  * 确保一个生成结果的 url 落到本地。已是 nomi-local / 无 url → 原样返回（no-op）。
  * http(s) → 用 projectId 下载落盘，成功换成本地 url 并把原 CDN 留进 providerUrl；
  * 失败（URL 已过期 / 网络 / 无桌面环境）→ 保持原样，绝不阻断生成或加载（播放守卫会诚实报错）。
+ * 主进程一直没有回音（2026-09-28 那种挂住）同样算失败：最多等一次媒体传输那么久，到点保持原样返回——
+ * 「绝不阻断」要对「永远不返回」也成立，否则生成收尾、打开项目时的存量抢救都会跟着卡死在这里。
  */
 export async function localizeRemoteResultUrl(
   result: GenerationNodeResult,
   projectId: string,
   nodeId: string,
+  onMediaDimensions?: (dimensions: MediaDimensions) => void,
 ): Promise<GenerationNodeResult> {
   if (!isRemoteHttpUrl(result.url)) return result
   const trimmedProjectId = String(projectId || '').trim()
   if (!trimmedProjectId) return result // 无项目可落（headless/首启窗口）→ 交给调用方，不硬塞
   const importRemoteUrl = getDesktopBridge()?.assets?.importRemoteUrl
   if (!importRemoteUrl) return result
+  // 落盘关口按它核字节：结果记着是视频，下载到的就得是视频（V-1213）。不是媒体结果就不落。
+  const expectedKind = assetKindOf(result.type)
+  if (!expectedKind) return result
   const remoteUrl = String(result.url)
   try {
-    const asset = await importRemoteUrl({
+    const asset = unwrapAssetImportResult(await awaitMediaTransfer(importRemoteUrl({
       projectId: trimmedProjectId,
       url: remoteUrl,
       kind: 'generated',
+      expectedKind,
       ownerNodeId: nodeId,
-    })
+    }), (waitedMs) => new Error(describePhaseSilence('finalizing', waitedMs))))
     const localUrl = typeof asset?.data?.url === 'string' ? asset.data.url.trim() : ''
+    if (result.type === 'image' || result.type === 'video') {
+      const dimensions = readMediaDimensions(asset?.data?.width, asset?.data?.height)
+      if (dimensions) onMediaDimensions?.(dimensions)
+    }
     if (!localUrl || localUrl === remoteUrl) return result
     return {
       ...result,

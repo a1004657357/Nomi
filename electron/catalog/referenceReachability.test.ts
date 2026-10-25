@@ -62,12 +62,12 @@ describe("modeSlotReach · 专用 codec 零收窄（修完不能反过来误伤�
     expect(modeSlotReach([slot("first_frame"), slot("last_frame")], APIMART_OMNI)).toEqual(["single", "none"]);
   });
 
-  it("火山原生 i2v：声明了 volcengine_* 键的槽全 full", () => {
+  it("火山原生 i2v：声明了 content 项键（asContentItem 中性键）的槽全 full", () => {
     const slots = [
-      slot("first_frame", "volcengine_first_role_image_content"),
-      slot("last_frame", "volcengine_last_role_image_content"),
-      slot("image_ref", "volcengine_image_contents"),
-      slot("video_ref", "volcengine_video_contents"),
+      slot("first_frame", "first_image_content"),
+      slot("last_frame", "last_image_content"),
+      slot("image_ref", "image_contents"),
+      slot("video_ref", "video_contents"),
     ];
     expect(modeSlotReach(slots, VOLC_I2V)).toEqual(["full", "full", "full", "full"]);
   });

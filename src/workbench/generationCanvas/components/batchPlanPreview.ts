@@ -1,16 +1,19 @@
+import { declareStoreLifetime } from '../../project/storeLifetime'
 // 批量执行计划预览态(harness S2b,样张方案 A:画布原位确认)。
 // 语义铁律:进入预览 ≠ 开始生成——确认前零 vendor 调用零扣费;取消即散,画布零变化。
 import { create } from 'zustand'
 import { reportCanvasFeedback } from './canvasFeedback'
 import { notify, revealNotificationTarget } from '../../../ui/notificationPolicy'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
-import { runGenerationNodesByPlan, spendCostKindForNodes } from '../runner/generationRunController'
+import { isProjectExecutionContextCurrent, isProjectOpen, withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
+import { captureApprovedGenerationInputs, type RunGraph, type RunProjectTarget } from '../runner/runProjectDelivery'
+import { spendCostKindForNodes, type GenerationConfirmationGuards } from '../runner/generationRunController'
+import { runGenerationNodesByPlan } from '../runner/generationRunWaves'
 import { confirmAndMintGrant, describeGenerationCost, generationCostContextForNodes } from '../spend/spendConfirm'
 import { hasLocalAssetReference, resolveAssetUploadConsent } from '../runner/assetUploadConsent'
 import { resolveGenerationReferences } from '../runner/generationReferenceResolver'
 import { buildDependencyWaves, type DependencyWavePlan } from '../runner/dependencyWaves'
+import type { GenerationRunOutcome } from '../runner/generationRunOutcome'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
-import { verifyShotsAndReport } from '../agent/shotVerifyStore'
 import i18n from '../../../i18n'
 import { normalizeCanvasBatchConcurrency } from './canvasProductionScope'
 
@@ -18,25 +21,101 @@ export const BATCH_RUN_TOAST_ID = 'canvas-batch-run'
 
 type BatchPlanPreviewState = {
   plan: DependencyWavePlan | null
+  regenerationSourceNodeId: string | null
   running: boolean
-  open: (plan: DependencyWavePlan) => void
+  open: (plan: DependencyWavePlan, options?: { regenerationSourceNodeId?: string }) => void
   cancel: () => void
   confirm: () => Promise<void>
 }
 
+export type ForkRegenerationNodesResult = {
+  plan: DependencyWavePlan
+  sourceToVariant: ReadonlyMap<string, string>
+}
+
+function hasUsableResult(nodeId: string): boolean {
+  const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
+  return Boolean(node?.result?.url || node?.result?.thumbnailUrl || node?.result?.providerUrl)
+}
+
+export function forkRegenerationNodesInPlan(
+  plan: DependencyWavePlan,
+  requestedSourceNodeIds: readonly string[],
+): ForkRegenerationNodesResult | null {
+  const requestedIds = [...plan.waves.flat(), ...plan.blocked.map((item) => item.nodeId)]
+  const requestedSet = new Set(requestedSourceNodeIds)
+  const orderedSources = requestedIds.filter((nodeId) => requestedSet.has(nodeId) && hasUsableResult(nodeId))
+  if (orderedSources.length === 0) return { plan, sourceToVariant: new Map() }
+
+  const state = useGenerationCanvasStore.getState()
+  if (orderedSources.some((nodeId) => !state.nodes.some((node) => node.id === nodeId))) return null
+
+  const sourceToVariant = new Map<string, string>()
+  for (const sourceNodeId of orderedSources) {
+    const duplicated = useGenerationCanvasStore.getState().duplicateNodeForRegeneration(sourceNodeId)
+    if (!duplicated) return null
+    sourceToVariant.set(sourceNodeId, duplicated.id)
+  }
+
+  // Each duplicate initially inherits the original incoming edges. If both
+  // ends are versioned, point V2 at V2 so the new chain does not consume V1.
+  for (const edge of plan.edgesUsed) {
+    const variantSource = sourceToVariant.get(edge.source)
+    const variantTarget = sourceToVariant.get(edge.target)
+    if (!variantSource || !variantTarget) continue
+    const current = useGenerationCanvasStore.getState()
+    const copiedEdges = current.edges.filter((candidate) => (
+      candidate.source === edge.source
+      && candidate.target === variantTarget
+      && (candidate.mode ?? 'reference') === (edge.mode ?? 'reference')
+      && candidate.targetParamKey === edge.targetParamKey
+    ))
+    for (const copiedEdge of copiedEdges) current.disconnectEdge(copiedEdge.id)
+    useGenerationCanvasStore.getState().connectNodes(variantSource, variantTarget, edge.mode, edge.targetParamKey)
+  }
+
+  const nextIds = requestedIds.map((nodeId) => sourceToVariant.get(nodeId) ?? nodeId)
+  const nextState = useGenerationCanvasStore.getState()
+  return {
+    plan: buildDependencyWaves(Array.from(new Set(nextIds)), {
+      nodes: nextState.nodes,
+      edges: nextState.edges,
+    }),
+    sourceToVariant,
+  }
+}
+
+export function forkRegenerationPlan(
+  plan: DependencyWavePlan,
+  sourceNodeId: string,
+): { plan: DependencyWavePlan; variantNodeId: string } | null {
+  const forked = forkRegenerationNodesInPlan(plan, [sourceNodeId])
+  const variantNodeId = forked?.sourceToVariant.get(sourceNodeId)
+  if (!forked || !variantNodeId) return null
+  return {
+    plan: forked.plan,
+    variantNodeId,
+  }
+}
+
 export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, get) => ({
   plan: null,
+  regenerationSourceNodeId: null,
   running: false,
-  open: (plan) => set({ plan, running: false }),
-  cancel: () => set({ plan: null, running: false }),
+  open: (plan, options = {}) => set({
+    plan,
+    regenerationSourceNodeId: options.regenerationSourceNodeId || null,
+    running: false,
+  }),
+  cancel: () => set({ plan: null, regenerationSourceNodeId: null, running: false }),
   confirm: async () => {
     const { plan, running } = get()
     if (!plan || running) return
-    const projectId = getDesktopActiveProjectId()
+    const projectId = withProjectAction((project) => project.binding.projectId) ?? ''
     set({ running: true })
     try {
-      await confirmAndRunPlan(plan)
-      set({ plan: null })
+      await confirmAndRunPlan(plan, { initiator: 'user' })
+      set({ plan: null, regenerationSourceNodeId: null })
     } catch (error: unknown) {
       reportCanvasFeedback(
         error instanceof Error && error.message
@@ -49,6 +128,7 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
     } finally {
       set({ running: false })
     }
+
   },
 }))
 
@@ -125,36 +205,50 @@ function hostingDisclosureFor(
  */
 export async function confirmAndRunPlan(
   plan: DependencyWavePlan,
-  options: { concurrency?: number } = {},
-): Promise<void> {
+  options: { concurrency?: number } & GenerationConfirmationGuards,
+): Promise<GenerationRunOutcome> {
+  // 点「生成」即动作起点：签发此刻打开的项目。提交前换了项目 = 取消（没花钱）；提交后整批归原项目。
+  const project = withProjectAction((issued) => issued)
+  if (!project) return 'unavailable'
   const ids = plan.waves.flat()
   if (ids.length === 0) {
     // 无可跑 → 复用人话 toast 报「为什么不能跑」。零节点也就没有素材要上传。
-    await runPlanWithToasts(plan, { assetUploadConsent: 'not-needed' })
-    return
+    await runPlanWithToasts(plan, { assetUploadConsent: 'not-needed', project })
+    return 'nothing-to-run'
   }
+  const assertApprovedInputs = captureApprovedGenerationInputs(ids)
   const nodesById = new Map(useGenerationCanvasStore.getState().nodes.map((n) => [n.id, n]))
   const hosting = await resolveBatchHosting(ids)
-  if (!hosting) return
+  // 素材托管那张披露卡也是一次「他没同意这次」，不是一个错误。
+  if (!hosting) return 'declined'
   const grantId = await confirmAndMintGrant({
+    assertCurrent: async () => { await options.assertCurrent?.(); project.assertCurrent() },
     nodeIds: ids,
     nodes: ids.map((id) => nodesById.get(id)),
+    initiator: options.initiator,
     title: i18n.t('generationCommon.batchPlan.startTitle'),
     message: describeGenerationCost(ids.length, spendCostKindForNodes(ids), {
-      ...generationCostContextForNodes(ids.map((id) => nodesById.get(id))),
+      ...generationCostContextForNodes(ids.map((id) => nodesById.get(id)), project.binding.projectId),
       concurrency: normalizeCanvasBatchConcurrency(options.concurrency),
       waveSizes: plan.waves.map((wave) => wave.length),
     }),
     confirmLabel: i18n.t('generationCommon.batchPlan.confirmGenerate'),
     ...hostingDisclosureFor(hosting),
   })
-  if (!grantId) return
+  // **这一行就是那个结局**：2026-09-22 之前它是一个裸 `return`，Agent 那一侧因此读不到
+  // 「他点了取消」，`generate` 只好报 `generation_approval_unavailable`（见 `generationRunOutcome.ts`）。
+  if (!grantId) return 'declined'
+  await options.assertCurrent?.()
+  if (!isProjectExecutionContextCurrent(project)) return 'unavailable'
   await runPlanWithToasts(plan, {
+    project,
+    assertAuthorCurrent: options.assertAuthorCurrent,
+    assertApprovedInputs,
     grantId,
     concurrency: options.concurrency,
-    // 用户刚在上面那张卡里同意了（或判定无需问）——决定在这里定死，波次里不再问第二次。
     assetUploadConsent: hosting.needsConfirmation ? 'allow' : 'not-needed',
   })
+  return 'started'
 }
 
 /** 按计划真实生成 + 可行动的失败反馈。「全部生成」与 S6b agent 受理路径共用(单一执行口)。
@@ -163,9 +257,11 @@ export async function runPlanWithToasts(
   plan: DependencyWavePlan,
   // assetUploadConsent 必填：整批的托管同意在上面那张批量花钱卡里问过了，这里只是把答案带下去。
   // 缺省会让 runner 无从判断「谁问的用户」，那正是 F16b 第二张卡的来源。
-  options: { grantId?: string; concurrency?: number; assetUploadConsent: 'allow' | 'not-needed' },
+  options: { assertAuthorCurrent?: () => Promise<void>; assertApprovedInputs?: (graph: RunGraph, executingNodeId: string) => void; grantId?: string; concurrency?: number; assetUploadConsent: 'allow' | 'not-needed'; project: ProjectExecutionContext },
 ): Promise<void> {
-  const projectId = getDesktopActiveProjectId()
+  // 运行属于发起它的项目：身份（target）在这里定死，之后用户切项目也照样落回原项目。
+  const target: RunProjectTarget = options.project.binding
+  const projectId = target.projectId
   const waves = plan.waves
   const runnable = waves.flat().length
   const notice = describeBlockedNotice(plan)
@@ -185,7 +281,10 @@ export async function runPlanWithToasts(
   const notificationId = `${BATCH_RUN_TOAST_ID}:${projectId}:${options.grantId ?? waves.flat().slice().sort().map(encodeURIComponent).join(':')}`
   try {
     const result = await runGenerationNodesByPlan(plan, {
+      assertAuthorCurrent: options.assertAuthorCurrent,
+      assertApprovedInputs: options.assertApprovedInputs,
       assetUploadConsent: options.assetUploadConsent,
+      target,
       ...(options.grantId ? { grantId: options.grantId } : {}),
       ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
     })
@@ -220,25 +319,22 @@ export async function runPlanWithToasts(
         type: okCount === 0 ? 'error' : 'warning',
         actionLabel: i18n.t('generationCommon.batchPlan.retryFailed', { count: failCount }),
         onAction: async () => {
-          if (getDesktopActiveProjectId() !== projectId && !(await revealNotificationTarget({ projectId, workspaceMode: 'generation' }))) return
-          if (getDesktopActiveProjectId() !== projectId) return
+          if (!isProjectOpen(projectId) && !(await revealNotificationTarget({ projectId, workspaceMode: 'generation' }))) return
+          if (!isProjectOpen(projectId)) return
           const state = useGenerationCanvasStore.getState()
           void confirmAndRunPlan(
             buildDependencyWaves(failureIds, { nodes: state.nodes, edges: state.edges }),
-            { concurrency: options.concurrency },
+            // 通知里的「重试失败的」是人按的这一下，不继承原批次的发起方。
+            options.assertAuthorCurrent
+              ? { concurrency: options.concurrency, assertCurrent: options.assertAuthorCurrent, assertAuthorCurrent: options.assertAuthorCurrent, initiator: 'user' }
+              : { concurrency: options.concurrency, initiator: 'user' },
           )
         },
       })
     }
-    // Stage 1:生成完成 → 对成功的「镜头」节点(有 shotIndex,排除锚卡)跑画面校验(fire-and-forget,
-    // 不阻塞完成 toast;verify 失败静默,绝不把生成完成拖红)。
-    if (okCount > 0) {
-      const nodes = useGenerationCanvasStore.getState().nodes
-      const shotIds = result.successes
-        .map((s) => s.nodeId)
-        .filter((id) => typeof nodes.find((n) => n.id === id)?.shotIndex === 'number')
-      if (shotIds.length > 0) void verifyShotsAndReport(shotIds)
-    }
+    // 用户点「生成全部」只花生成的钱：跑完不再自动调文本模型审片（2026-09-26 用户拍板，TODO ）。
+    // 审片仍是 Agent 做片流程里写明的一步（capabilityApplyHandler.verifyShotsForProduction）；
+    // 这里要自动审片，得等设置开关做出来（下一版），开关归 shotVerifyStore。
   } catch (error: unknown) {
     notify({
       identity: notificationId,
@@ -251,3 +347,13 @@ export async function runPlanWithToasts(
     })
   }
 }
+
+/**
+ * C1 寿命声明：批量计划预览是这个项目画布上的一次待确认动作。
+ * `running` 尤其不能留——切过去看到一个「正在跑」而其实什么都没跑。
+ */
+export const batchPlanPreviewStoreLifetime = declareStoreLifetime({
+  store: 'useBatchPlanPreviewStore',
+  fields: { plan: 'project', regenerationSourceNodeId: 'project', running: 'project' },
+  releaseProject: () => useBatchPlanPreviewStore.setState({ plan: null, regenerationSourceNodeId: null, running: false }),
+})

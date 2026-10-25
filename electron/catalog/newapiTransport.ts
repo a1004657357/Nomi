@@ -17,6 +17,11 @@
 // issue reporter 跑 tests/transport-spike/newapi.mjs 探测确认。
 
 import type { HttpOperation, ProfileKind } from "./types";
+import {
+  assertTransportDeliveryContract,
+  type DeliveryShapedMode,
+  type TransportDeliveryContract,
+} from "./transportDelivery";
 import type { ParamMap } from "./paramTranslate";
 
 const JSON_HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type": "application/json" };
@@ -245,6 +250,35 @@ export const NEWAPI_VIDEO_CREATE_OP: HttpOperation = {
 };
 
 // ── 视频：轮询 query（task_id 走路径参数）──
+//
+// 结果地址在哪：**按 new-api 官方源码定，不按我们自己写的 mock 定**（#1213）。旧映射只认 `data[*].url`——
+// 那是 tests/transport-spike/newapi-mock.mjs 自己编的形状；官方 new-api 的
+// `GET /v1/video/generations/{task_id}`（relay/relay_task.go videoFetchByIDRespBodyBuilder，
+// v1.0.0-rc.10 ~ rc.44 同款）回的是任务信封：
+//   {code:"success", data:{task_id, status:"SUCCESS"|"IN_PROGRESS"|…, result_url, fail_reason, data:<上游原始 JSON>}}
+// 状态 `data.status` 一直认得（resolveTaskStatus 的通用词表），地址却一个都取不到 → 钱扣了、片在上游，
+// 节点报「完成但没有产物」。现在按优先级全认（mappingCandidates 支持数组，collectAssetUrls 只收 http(s)/data:）：
+//   data.result_url                 新版 new-api（PrivateData.ResultURL）
+//   data.fail_reason                旧版 new-api 成功时把地址存在 FailReason（model/task.go GetResultURL 的历史兼容）；
+//                                   失败时这里是原因文本，不是 URL，collectAssetUrls 自然丢掉
+//   data.data.content.video_url     信封里带的方舟原始响应
+//   content.video_url               中转把方舟原始 JSON 直接透传到这条通用路由
+//   url                             new-api Gemini/Vertex 实时查询的简化形状 {status,url}
+//   data[*].url                     部分中转的数组形状（保留）
+// 合同夹具：electron/catalog/relayVideoQueryContract.test.ts（每个形状注明来源）。
+/**
+ * 中转视频查询里结果地址可能在的位置——**唯一一份**，通用 new-api 查询与「中转上的方舟原生查询」
+ * （nativeWireProfiles）共用：中转在方舟原生路由上回的也可能是它自己的任务信封。
+ */
+export const RELAY_VIDEO_RESULT_URL_PATHS: readonly string[] = [
+  "data.result_url",
+  "data.fail_reason",
+  "data.data.content.video_url",
+  "content.video_url",
+  "url",
+  "data[*].url",
+];
+
 export const NEWAPI_VIDEO_QUERY_OP: HttpOperation = {
   method: "GET",
   path: "/v1/video/generations/{{providerMeta.task_id}}",
@@ -252,10 +286,22 @@ export const NEWAPI_VIDEO_QUERY_OP: HttpOperation = {
   response_mapping: {
     task_id: "task_id",
     status: "status",
-    video_url: "data[*].url", // 取回全部产物（n>1 / 多结果），不再只落第一个（旧 data.0.url）
+    video_url: [...RELAY_VIDEO_RESULT_URL_PATHS],
     error_message: "error.message",
   },
 };
+
+/**
+ * 存量目录里的旧版通用视频查询（落盘时抄的是当时的常量，常量改了它不会跟着变）。只认**我们自己
+ * 发过的那两版**原样（`data[*].url` / 更早的 `data.0.url`），用户手改过的 query 一律不碰。
+ * 启动体检（relayNativeWireUpgrade）据此把存量刷成上面的 canonical op。
+ */
+export function isLegacyNewapiVideoQuery(op: HttpOperation | undefined): boolean {
+  if (!op || op.method !== "GET" || op.path !== NEWAPI_VIDEO_QUERY_OP.path) return false;
+  const mapping = op.response_mapping as Record<string, unknown> | undefined;
+  const videoUrl = mapping?.video_url;
+  return typeof videoUrl === "string" && (videoUrl === "data[*].url" || videoUrl === "data.0.url");
+}
 
 // ── 标准参数（落 model.meta.parameters，节点 UI 渲染；key 与上方 body 模板对齐）──
 type ParamControl = {
@@ -314,17 +360,70 @@ export const NEWAPI_STANDARD_AUDIO_PARAMS: ParamControl[] = [
   { key: "speed", label: "语速", type: "number", options: [], min: 0.25, max: 4, defaultValue: 1 },
 ];
 
-/** 一个 new-api 模型的传输配方（按 kind 取 create/query + taskKind；图像另带 image_edit 改图 op、
- *  视频另带 image_to_video 图生视频 op）。 */
-export function newapiTransportFor(kind: "image" | "video" | "audio"): {
+/**
+ * **交付形状的单一真相源**：每条 wire 各自声明同步还是异步，而不是由 `kind` 顺手决定。
+ *
+ * 这张表就是 2026-09-11 类根因的落点（详见 transportDelivery.ts）。旧写法把「图片=同步」
+ * 写死在 `newapiTransportFor` 的 return 里，于是任何把图片做成任务制的中转都必然撞上
+ * `pending task but the adapter has no query operation`——而这句话 08-30 已经从音频那边来过一次。
+ * 现在每格都得自己说清楚，异步那格还得交出查询端点与「任务不要了怎么办」，否则
+ * `assertTransportDeliveryContract` 在模块加载时就抛（R28：能让进程起不来的别留给门岗）。
+ *
+ * 依据（R5 已核 doc.newapi.pro / newapi.ai，见文件头）：
+ *  - `/v1/images/generations` 同步回 `data[]`；`/v1/chat/completions` 改图同步回 message。
+ *  - `/v1/video/generations` 回 `{task_id,status}`，配套 `GET /v1/video/generations/{task_id}`。
+ *    **公开契约里没有取消端点**，所以处置只能是 `poll-to-completion`——编一个取消端点出来违反 R5。
+ *  - `/v1/audio/speech` 同步回裸字节。
+ */
+export const NEWAPI_DELIVERY_CONTRACTS = {
+  text_to_image: { delivery: "synchronous" },
+  image_edit: { delivery: "synchronous" },
+  text_to_video: {
+    delivery: "asynchronous",
+    query: NEWAPI_VIDEO_QUERY_OP,
+    statusMapping: NEWAPI_STATUS_MAPPING,
+    abandon: { via: "poll-to-completion" },
+  },
+  image_to_video: {
+    delivery: "asynchronous",
+    query: NEWAPI_VIDEO_QUERY_OP,
+    statusMapping: NEWAPI_STATUS_MAPPING,
+    abandon: { via: "poll-to-completion" },
+  },
+  text_to_audio: { delivery: "synchronous" },
+} as const satisfies Record<string, TransportDeliveryContract & DeliveryShapedMode>;
+
+// 加载即校验：新增一格异步却忘了 query / statusMapping / 任务处置，进程直接起不住。
+for (const [taskKind, contract] of Object.entries(NEWAPI_DELIVERY_CONTRACTS)) {
+  assertTransportDeliveryContract(`newapi.${taskKind}`, contract);
+}
+
+/** 一条 new-api wire 的完整配方：op + 它自己声明的交付形状。 */
+export type NewapiTransportMode = TransportDeliveryContract & {
   taskKind: ProfileKind;
   create: HttpOperation;
-  /** 图像专有：图生图/改图 mapping（chat/completions 多模态）。落库时按 taskKind:"image_edit" 注册。 */
-  edit?: HttpOperation;
-  /** 视频专有：图生视频 mapping。落库时按 taskKind:"image_to_video" 注册（与 create 共用轮询 query）。 */
-  imageToVideo?: HttpOperation;
   query?: HttpOperation;
   statusMapping?: Record<string, string[]>;
+};
+
+function modeFor(taskKind: keyof typeof NEWAPI_DELIVERY_CONTRACTS, create: HttpOperation): NewapiTransportMode {
+  const contract = NEWAPI_DELIVERY_CONTRACTS[taskKind] as TransportDeliveryContract & DeliveryShapedMode;
+  return {
+    taskKind: taskKind as ProfileKind,
+    create,
+    delivery: contract.delivery,
+    ...(contract.abandon ? { abandon: contract.abandon } : {}),
+    ...(contract.query ? { query: contract.query } : {}),
+    ...(contract.statusMapping ? { statusMapping: contract.statusMapping } : {}),
+  };
+}
+
+/** 一个 new-api 模型的传输配方。交付形状来自 NEWAPI_DELIVERY_CONTRACTS，**不再由 kind 顺手决定**。 */
+export function newapiTransportFor(kind: "image" | "video" | "audio"): NewapiTransportMode & {
+  /** 图像专有：图生图/改图 mapping（chat/completions 多模态）。落库时按 taskKind:"image_edit" 注册。 */
+  edit?: NewapiTransportMode;
+  /** 视频专有：图生视频 mapping。落库时按 taskKind:"image_to_video" 注册（与 create 共用轮询 query）。 */
+  imageToVideo?: NewapiTransportMode;
   params: ParamControl[];
 } {
   if (kind === "video") {
@@ -332,10 +431,18 @@ export function newapiTransportFor(kind: "image" | "video" | "audio"): {
     // 但 taskKind 必须各注册一条 mapping——runtime 按 taskKind 选投递通道，只有 text_to_video 时
     // 图生视频请求找不到通道，参考图整条掉地（imageEditGuardError 会拒发）。共用同一个 op 对象，
     // 不造第二份形状（P1）。
-    return { taskKind: "text_to_video", create: NEWAPI_VIDEO_CREATE_OP, imageToVideo: NEWAPI_VIDEO_CREATE_OP, query: NEWAPI_VIDEO_QUERY_OP, statusMapping: NEWAPI_STATUS_MAPPING, params: NEWAPI_STANDARD_VIDEO_PARAMS };
+    return {
+      ...modeFor("text_to_video", NEWAPI_VIDEO_CREATE_OP),
+      imageToVideo: modeFor("image_to_video", NEWAPI_VIDEO_CREATE_OP),
+      params: NEWAPI_STANDARD_VIDEO_PARAMS,
+    };
   }
   if (kind === "audio") {
-    return { taskKind: "text_to_audio", create: NEWAPI_AUDIO_TTS_OP, params: NEWAPI_STANDARD_AUDIO_PARAMS };
+    return { ...modeFor("text_to_audio", NEWAPI_AUDIO_TTS_OP), params: NEWAPI_STANDARD_AUDIO_PARAMS };
   }
-  return { taskKind: "text_to_image", create: NEWAPI_IMAGE_CREATE_OP, edit: NEWAPI_IMAGE_EDIT_OP, params: NEWAPI_STANDARD_IMAGE_PARAMS };
+  return {
+    ...modeFor("text_to_image", NEWAPI_IMAGE_CREATE_OP),
+    edit: modeFor("image_edit", NEWAPI_IMAGE_EDIT_OP),
+    params: NEWAPI_STANDARD_IMAGE_PARAMS,
+  };
 }

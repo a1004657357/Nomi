@@ -1,20 +1,29 @@
 import i18n from '../../../i18n'
 
 import {
+  hostedAssetThumbnailUrl,
   hostedAssetUrl,
   importWorkbenchLocalAssetFile,
   recoverImportedWorkbenchLocalAssetFile,
   type WorkbenchAssetDto,
 } from '../../api/assetUploadApi'
+import { isProjectImportCancellation, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
+import { surfacePortFailure } from '../../../../electron/shared/surfacePortBinding'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { dropKindFromFile } from '../model/nodeAssetDrop'
 import { readVideoDurationSeconds } from '../../../media/videoDurationProbe'
-import { getGenerationNodeFootprintSize } from '../model/generationNodeKinds'
+import { getGenerationNodeDefaultSize, getGenerationNodeFootprintSize } from '../model/generationNodeKinds'
+import { placementOrigin, type CanvasPlacementAnchor } from '../model/canvasPlacement'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import {
+  admitMediaImport,
+  type MediaImportRejection,
+  type StorageCapacity,
+} from '../../../../electron/shared/contracts/mediaImportPolicy'
+import { readStorageCapacitySnapshot } from '../../assets/storageCapacitySnapshot'
+import { ensureAssetImportProgressBridge, useAssetImportProgressStore } from '../store/assetImportProgressStore'
+import { computeMediaMetaPatch, readMediaDimensions } from '../nodes/nodeSizing'
 
-export const GENERATION_CANVAS_IMAGE_IMPORT_MAX_BYTES = 30 * 1024 * 1024
-// 视频文件远大于图片，单独给宽上限；本地优先 App，用户导入自己的片段。
-export const GENERATION_CANVAS_VIDEO_IMPORT_MAX_BYTES = 600 * 1024 * 1024
 const DATA_URL_FALLBACK_MAX_BYTES = 512 * 1024
 
 export type GenerationAssetImportItem = {
@@ -23,10 +32,16 @@ export type GenerationAssetImportItem = {
   kind: 'image' | 'video'
 }
 
+/** 被准入闸挡下的一个文件——带机器可读原因与数字，调用方据此说人话（「过大」不可行动）。 */
+export type GenerationAssetImportSkip = { fileName: string; rejection: MediaImportRejection }
+
 export type GenerationAssetImportResult = {
+  /** Project replacement is a handled cancellation, never an upload failure or fallback request. */
+  cancelled?: true
   created: GenerationAssetImportItem[]
   skippedDuplicateCount: number
-  skippedTooLargeCount: number
+  /** 准入闸拒收的文件（类型不对 / 硬上限 / 磁盘装不下）。 */
+  rejected: GenerationAssetImportSkip[]
   /** 单次拖入超过 MAX_IMPORT_FILES 被截断丢弃的数量（C5：此前静默丢，无任何提示）。 */
   skippedOverLimitCount: number
   /** 上传/落盘失败、最终落 error 态的数量（让调用方提示「N 张导入失败」）。 */
@@ -34,6 +49,8 @@ export type GenerationAssetImportResult = {
 }
 
 export type ImportImageFilesOptions = {
+  /** 发起导入的那一刻（第一个 await 之前）捕获的原项目生命周期；必传，适配器不再现取当前项目。 */
+  projectContext: ProjectExecutionContext
   basePosition: { x: number; y: number }
   categoryId?: string
   createObjectUrl?: (file: File) => string
@@ -43,6 +60,13 @@ export type ImportImageFilesOptions = {
   uploadFile?: typeof importWorkbenchLocalAssetFile
   recoverFile?: typeof recoverImportedWorkbenchLocalAssetFile
   exactPosition?: boolean
+  /**
+   * basePosition 压在第一张卡的哪一点（比例）。不传 = 左上角。拖入传中心：卡的真实尺寸
+   * （图片按像素比例）只有这里读完尺寸才知道，所以锚点在这里换算，不在调用方按默认尺寸猜。
+   */
+  anchor?: CanvasPlacementAnchor
+  /** 磁盘余量（省一次 IPC 时可注入；不传则现取）。 */
+  capacity?: StorageCapacity | null
 }
 
 type ImageDimensions = {
@@ -84,11 +108,15 @@ function nodeSizeForDimensions(dimensions: ImageDimensions | null): { width: num
 function imageMetaForDimensions(dimensions: ImageDimensions | null): Record<string, unknown> {
   if (!isValidImageDimensions(dimensions)) return {}
   return {
-    imageWidth: dimensions.width,
-    imageHeight: dimensions.height,
-    imageAspectRatio: dimensions.width / dimensions.height,
+    ...(computeMediaMetaPatch({ resultType: 'image', meta: {}, width: dimensions.width, height: dimensions.height })?.meta || {}),
     previewHeight: previewHeightForDimensions(dimensions),
   }
+}
+
+/** 画布上看得见的卡面尺寸：图片卡 = 按像素比例的宽 × 预览高；其余用默认卡尺寸。 */
+function visibleCardSize(dimensions: ImageDimensions | null): { width: number; height: number } {
+  if (!isValidImageDimensions(dimensions)) return getGenerationNodeDefaultSize('asset')
+  return { width: nodeWidthForDimensions(dimensions), height: previewHeightForDimensions(dimensions) }
 }
 
 function layoutColumns(count: number): number {
@@ -105,8 +133,8 @@ function layoutImportPositions(
   const cellWidth = Math.max(...footprints.map((size) => size.width)) + 36
   const cellHeight = Math.max(...footprints.map((size) => size.height)) + 36
   return sizes.map((_, index) => ({
-    x: Math.max(40, Math.round(basePosition.x + (index % columns) * cellWidth)),
-    y: Math.max(40, Math.round(basePosition.y + Math.floor(index / columns) * cellHeight)),
+    x: Math.round(basePosition.x + (index % columns) * cellWidth),
+    y: Math.round(basePosition.y + Math.floor(index / columns) * cellHeight),
   }))
 }
 
@@ -151,50 +179,50 @@ function readFileDataUrl(file: File): Promise<string> {
   })
 }
 
-/** 画布素材节点只承载 image / video（无音频节点 archetype）。音频上传走项目文件源进库
- *  （importAudioFilesToLibrary），不经此路；这里过滤掉是为画布节点导入语义正确。 */
-function importKindForFile(file: File): 'image' | 'video' | null {
-  const kind = dropKindFromFile(file)
-  return kind === 'image' || kind === 'video' ? kind : null
-}
-
-export function filterImportableMediaFiles(files: File[]): {
+/** 画布素材节点只承载 image / video（无音频节点 archetype）。这条窄化不再写在这里，
+ *  由 mediaImportPolicy 的 'generation-canvas' 面声明（带领域理由），此处只负责调它。 */
+export function filterImportableMediaFiles(
+  files: File[],
+  capacity: StorageCapacity | null,
+): {
   files: File[]
   skippedDuplicateCount: number
-  skippedTooLargeCount: number
+  rejected: GenerationAssetImportSkip[]
 } {
   const seen = new Set<string>()
   let skippedDuplicateCount = 0
-  let skippedTooLargeCount = 0
+  const rejected: GenerationAssetImportSkip[] = []
   const out: File[] = []
   for (const file of files) {
-    const kind = importKindForFile(file)
-    if (!kind) continue
     const signature = fileSignature(file)
     if (seen.has(signature)) {
       skippedDuplicateCount += 1
       continue
     }
     seen.add(signature)
-    const maxBytes = kind === 'video' ? GENERATION_CANVAS_VIDEO_IMPORT_MAX_BYTES : GENERATION_CANVAS_IMAGE_IMPORT_MAX_BYTES
-    if ((typeof file.size === 'number' ? file.size : 0) > maxBytes) {
-      skippedTooLargeCount += 1
+    const admission = admitMediaImport(
+      'generation-canvas',
+      { kind: dropKindFromFile(file), sizeBytes: typeof file.size === 'number' ? file.size : 0 },
+      capacity,
+    )
+    if (!admission.ok) {
+      rejected.push({ fileName: file.name || '', rejection: admission })
       continue
     }
     out.push(file)
   }
-  return { files: out, skippedDuplicateCount, skippedTooLargeCount }
+  return { files: out, skippedDuplicateCount, rejected }
 }
 
 type AssetUploadDeps = {
-  uploadFile: (file: File, label: string, meta: { ownerNodeId: string }) => Promise<WorkbenchAssetDto>
+  uploadFile: typeof importWorkbenchLocalAssetFile
   recoverFile: (file: File) => Promise<WorkbenchAssetDto | null>
   probeVideoDuration: (url: string) => Promise<number | null>
 }
 
 // 上传失败（无 data-url 兜底）的 File 留存——供节点「重试导入」复用（C3：此前失败即死，只能删了重拖）。
 // File 不可持久化故只活在内存，重启即清（重启后节点仍是 error 态，文案引导重新导入）。
-const pendingRetryImports = new Map<string, { file: File; kind: 'image' | 'video' }>()
+const pendingRetryImports = new Map<string, { file: File; kind: 'image' | 'video'; context: ProjectExecutionContext }>()
 
 export function clearPendingRetryImports(): void {
   pendingRetryImports.clear()
@@ -206,14 +234,22 @@ async function uploadAndApplyAssetToNode(
   file: File,
   kind: 'image' | 'video',
   deps: AssetUploadDeps,
+  context: ProjectExecutionContext,
 ): Promise<boolean> {
+  context.assertCurrent()
   const store = useGenerationCanvasStore.getState()
+  ensureAssetImportProgressBridge()
   let hosted: WorkbenchAssetDto | null
   try {
-    hosted = await deps.uploadFile(file, deriveLabelFromFileName(file.name), { ownerNodeId: nodeId })
-  } catch {
+    hosted = await deps.uploadFile(file, deriveLabelFromFileName(file.name), {
+      ownerNodeId: nodeId, projectBinding: context.binding, assertCurrent: context.assertCurrent,
+    })
+  } catch (error) {
+    context.assertCurrent()
+    if (surfacePortFailure(error).code !== 'capability_execution_failed') throw error
     hosted = await deps.recoverFile(file)
   }
+  context.assertCurrent()
   const hostedUrl = hostedAssetUrl(hosted)
   if (!hostedUrl) {
     // 图片可在极小阈值内退化成 data-url 落盘；视频体积过大不做兜底（报错 + 留 File 供重试）。
@@ -221,8 +257,9 @@ async function uploadAndApplyAssetToNode(
     const fallbackResult = canPersistSmallFallback
       ? { id: `local-${nodeId}-${Date.now()}`, type: 'image' as const, url: await readFileDataUrl(file), createdAt: Date.now() }
       : null
+    context.assertCurrent()
     if (fallbackResult) pendingRetryImports.delete(nodeId)
-    else pendingRetryImports.set(nodeId, { file, kind })
+    else pendingRetryImports.set(nodeId, { file, kind, context })
     store.updateNode(nodeId, {
       ...(fallbackResult ? { result: fallbackResult, history: [fallbackResult] } : {}),
       status: fallbackResult ? 'success' : 'error',
@@ -235,24 +272,35 @@ async function uploadAndApplyAssetToNode(
         retryableImport: !fallbackResult,
       },
     })
+    // 节点已经换成最终形态（成图/失败卡）才丢进度：先丢会让渐显层提前卸载，闪一帧空卡。
+    useAssetImportProgressStore.getState().clear(nodeId)
     return Boolean(fallbackResult)
   }
   const videoDuration = kind === 'video' ? await deps.probeVideoDuration(hostedUrl) : null
+  const thumbnailUrl = hostedAssetThumbnailUrl(hosted)
+  context.assertCurrent()
   const hostedResult = {
     id: `asset-${nodeId}-${hosted?.id || Date.now()}`,
     type: kind,
     url: hostedUrl,
+    // 落盘边界派生的画布预览：4K 导入图/视频在画布上挂 ≤1024 预览或 poster，源留给编辑/导出。
+    ...(thumbnailUrl ? { thumbnailUrl } : {}),
     assetId: hosted?.id,
     raw: { asset: hosted },
     createdAt: Date.now(),
   }
+  const currentMeta = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)?.meta || {}
+  const hostedDimensions = readMediaDimensions(hosted?.data?.width, hosted?.data?.height)
+  const hostedMediaMeta = hostedDimensions
+    ? computeMediaMetaPatch({ resultType: kind, meta: currentMeta, ...hostedDimensions, durationSeconds: videoDuration || undefined })?.meta
+    : undefined
   pendingRetryImports.delete(nodeId)
   store.updateNode(nodeId, {
     result: hostedResult,
     history: [hostedResult],
     status: 'success',
     meta: {
-      ...(useGenerationCanvasStore.getState().nodes.find((c) => c.id === nodeId)?.meta || {}),
+      ...(hostedMediaMeta || currentMeta),
       source: 'asset-upload',
       uploadStatus: 'uploaded',
       localOnly: false,
@@ -261,6 +309,7 @@ async function uploadAndApplyAssetToNode(
       ...(videoDuration && videoDuration > 0 ? { videoDuration } : {}),
     },
   })
+  useAssetImportProgressStore.getState().clear(nodeId)
   return true
 }
 
@@ -268,17 +317,45 @@ async function uploadAndApplyAssetToNode(
 export async function retryLocalAssetImport(nodeId: string): Promise<boolean> {
   const pending = pendingRetryImports.get(nodeId)
   if (!pending) return false
-  useGenerationCanvasStore.getState().updateNode(nodeId, { status: 'queued', error: undefined })
-  return uploadAndApplyAssetToNode(nodeId, pending.file, pending.kind, {
-    uploadFile: importWorkbenchLocalAssetFile,
-    recoverFile: recoverImportedWorkbenchLocalAssetFile,
-    probeVideoDuration: readVideoDurationSeconds,
-  })
+  try {
+    pending.context.assertCurrent()
+    // 重试导入仍然是「拷文件」，不是「排队等模型」：状态留在 idle，真相在 meta.uploadStatus。
+    useGenerationCanvasStore.getState().updateNode(nodeId, {
+      status: 'idle',
+      error: undefined,
+      meta: { ...(useGenerationCanvasStore.getState().nodes.find((c) => c.id === nodeId)?.meta || {}), uploadStatus: 'uploading', retryableImport: false },
+    })
+    return await uploadAndApplyAssetToNode(nodeId, pending.file, pending.kind, {
+      uploadFile: importWorkbenchLocalAssetFile,
+      recoverFile: recoverImportedWorkbenchLocalAssetFile,
+      probeVideoDuration: readVideoDurationSeconds,
+    }, pending.context)
+  } catch (error) {
+    if (!pending.context.signal.aborted && !isProjectImportCancellation(error)) throw error
+    return false
+  }
 }
+
+export { isProjectImportCancellation }
 
 export async function importLocalMediaFilesToGenerationCanvas(
   inputFiles: File[],
   options: ImportImageFilesOptions,
+): Promise<GenerationAssetImportResult> {
+  const context = options.projectContext
+  try {
+    context.assertCurrent()
+    return await importFilesInProject(inputFiles, options, context)
+  } catch (error) {
+    if (!context.signal.aborted && !isProjectImportCancellation(error)) throw error
+    return { cancelled: true, created: [], skippedDuplicateCount: 0, rejected: [], skippedOverLimitCount: 0, failedCount: 0 }
+  }
+}
+
+async function importFilesInProject(
+  inputFiles: File[],
+  options: ImportImageFilesOptions,
+  context: ProjectExecutionContext,
 ): Promise<GenerationAssetImportResult> {
   const createObjectUrl = options.createObjectUrl ?? ((file: File) => URL.createObjectURL(file))
   const revokeObjectUrl = options.revokeObjectUrl ?? ((url: string) => URL.revokeObjectURL(url))
@@ -286,7 +363,9 @@ export async function importLocalMediaFilesToGenerationCanvas(
   const probeVideoDuration = options.readVideoDuration ?? readVideoDurationSeconds
   const uploadFile = options.uploadFile ?? importWorkbenchLocalAssetFile
   const recoverFile = options.recoverFile ?? recoverImportedWorkbenchLocalAssetFile
-  const filtered = filterImportableMediaFiles(inputFiles)
+  const capacity = options.capacity !== undefined ? options.capacity : await readStorageCapacitySnapshot(context.binding.projectId)
+  context.assertCurrent()
+  const filtered = filterImportableMediaFiles(inputFiles, capacity)
   const created: GenerationAssetImportItem[] = []
   // 单次拖入上限：超出截断（C5：此前 .slice(0,8) 静默丢，无提示）。
   const MAX_IMPORT_FILES = 8
@@ -296,28 +375,36 @@ export async function importLocalMediaFilesToGenerationCanvas(
     return {
       created,
       skippedDuplicateCount: filtered.skippedDuplicateCount,
-      skippedTooLargeCount: filtered.skippedTooLargeCount,
+      rejected: filtered.rejected,
       skippedOverLimitCount,
       failedCount: 0,
     }
   }
 
   const prepared = await Promise.all(accepted.map(async (file) => {
-    const kind = importKindForFile(file) ?? 'image'
+    const kind = dropKindFromFile(file) === 'video' ? 'video' as const : 'image' as const
     // 视频不在导入时离屏读尺寸（节点渲染的 onLoadedMetadata 会回填 W/H + 真实时长，单源 catch-all）；
     // 图片仍即时读尺寸以定节点初始大小。
     let dimensions: ImageDimensions | null = null
     if (kind === 'image') {
       const objectUrl = createObjectUrl(file)
-      dimensions = await readImageDimensions(objectUrl)
-      revokeObjectUrl(objectUrl)
+      try { dimensions = await readImageDimensions(objectUrl) }
+      finally { revokeObjectUrl(objectUrl) }
+      context.assertCurrent()
     }
     const size = nodeSizeForDimensions(dimensions)
     return { file, kind, dimensions, size }
   }))
-  const positions = layoutImportPositions(options.basePosition, prepared.map((item) => item.size))
+  context.assertCurrent()
+  const positions = layoutImportPositions(
+    options.anchor
+      ? placementOrigin({ point: options.basePosition, anchor: options.anchor }, visibleCardSize(prepared[0]?.dimensions ?? null))
+      : options.basePosition,
+    prepared.map((item) => item.size),
+  )
 
   prepared.forEach(({ dimensions, file, kind, size }, index) => {
+    context.assertCurrent()
     const node = useGenerationCanvasStore.getState().addNode({
       kind: 'asset',
       title:
@@ -332,9 +419,12 @@ export async function importLocalMediaFilesToGenerationCanvas(
       categoryId: options.categoryId,
       exactPosition: options.exactPosition,
     })
+    context.assertCurrent()
     useGenerationCanvasStore.getState().updateNode(node.id, {
       ...(size ? { size } : {}),
-      status: 'queued',
+      // 'queued' 是生成词表里的「排队等模型」；导入只是在拷文件，套上它整套生成过程反馈就会误挂上来。
+      // 导入中的唯一真相是 meta.uploadStatus:'uploading'。
+      status: 'idle',
       meta: {
         ...(node.meta || {}),
         source: 'local-drop',
@@ -348,14 +438,14 @@ export async function importLocalMediaFilesToGenerationCanvas(
 
   let failedCount = 0
   await Promise.all(created.map(async ({ node, file, kind }) => {
-    const ok = await uploadAndApplyAssetToNode(node.id, file, kind, { uploadFile, recoverFile, probeVideoDuration })
+    const ok = await uploadAndApplyAssetToNode(node.id, file, kind, { uploadFile, recoverFile, probeVideoDuration }, context)
     if (!ok) failedCount += 1
   }))
 
   return {
     created,
     skippedDuplicateCount: filtered.skippedDuplicateCount,
-    skippedTooLargeCount: filtered.skippedTooLargeCount,
+    rejected: filtered.rejected,
     skippedOverLimitCount,
     failedCount,
   }

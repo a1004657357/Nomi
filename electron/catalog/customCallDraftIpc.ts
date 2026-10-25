@@ -6,7 +6,7 @@ import {
 } from "./customCallDraft";
 import type { BillingModelKind } from "./types";
 
-type RegisterSyncIpc = (channel: string, handler: (...args: never[]) => unknown) => void;
+type RegisterSyncIpc = (channel: string, handler: (payload: unknown) => unknown) => void;
 type DraftActions = {
   create: typeof createCustomCallDraft;
   finalize: typeof finalizeCustomCallDraft;
@@ -32,7 +32,7 @@ export function registerCustomCallDraftIpc(
   registerSyncIpc: RegisterSyncIpc,
   actions: DraftActions = { create: createCustomCallDraft, finalize: finalizeCustomCallDraft },
 ): void {
-  registerSyncIpc("nomi:model-catalog:custom-call:draft-create", ((payload: unknown) => {
+  registerSyncIpc("nomi:model-catalog:custom-call:draft-create", (payload: unknown) => {
     const raw = (payload || {}) as Record<string, unknown>;
     try {
       const identity = actions.create({
@@ -47,9 +47,9 @@ export function registerCustomCallDraftIpc(
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-  }) as (...args: never[]) => unknown);
+  });
 
-  registerSyncIpc("nomi:model-catalog:custom-call:draft-finalize", ((payload: unknown) => {
+  registerSyncIpc("nomi:model-catalog:custom-call:draft-finalize", (payload: unknown) => {
     const raw = (payload || {}) as Record<string, unknown>;
     try {
       const identity = actions.finalize({
@@ -61,5 +61,5 @@ export function registerCustomCallDraftIpc(
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-  }) as (...args: never[]) => unknown);
+  });
 }

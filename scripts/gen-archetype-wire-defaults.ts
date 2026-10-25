@@ -1,4 +1,4 @@
-// 把档案(src/config/modelArchetypes)的参数默认值抽成纯数据，桥接给 electron。
+// 把档案(electron/shared/modelArchetypes)的参数默认值抽成纯数据，桥接给 electron。
 // 为什么要它：electron/tsconfig rootDir 隔离，runtime 不能直接 import src/config 的档案；
 // 但 headless/MCP 生成不经 UI → request.params 为空 → 缺必填参(model 变体 / duration / 比例…) vendor 拒。
 // 本脚本(跑在 electron 编译外、可 import src/config)抽 {archetypeId: {taskKind: {param: defaultValue}}}，
@@ -7,8 +7,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MODEL_ARCHETYPES } from "../src/config/modelArchetypes/index.ts";
-import type { ModelArchetype } from "../src/config/modelArchetypes/types.ts";
+import { MODEL_ARCHETYPES } from "../electron/shared/modelArchetypes/index.ts";
+import type { ModelArchetype } from "../electron/shared/modelArchetypes/types.ts";
 import { modeTransportFor } from "../electron/shared/videoCapabilities/modeTransport.ts";
 
 type WireDefaults = Record<string, Record<string, Record<string, Record<string, unknown>>>>;
@@ -79,7 +79,8 @@ export function buildWireDefaultsFor(archetypes: readonly ModelArchetype[]): Wir
       const model = mode.modelEnum ?? defaultVariant?.modelKey;
       // 通用 params 落 "*"；有 vendorParams 覆盖的 vendor 用自己那组（覆盖=整组替换，与 resolveArchetypeForModel 一致），
       // 只覆盖了 transport 没覆盖参数的 vendor 沿用通用组。
-      const params = (vendorKey === "*" ? undefined : mode.vendorParams?.[vendorKey]) ?? mode.params ?? [];
+      const baseParams = (vendorKey === "*" ? undefined : mode.vendorParams?.[vendorKey]) ?? mode.params ?? [];
+      const params = defaultVariant?.paramOverrides?.[mode.id]?.(baseParams) ?? baseParams;
       const d: Record<string, unknown> = {};
       // 模式级固定 body 常量（如 Veo/Omni 的 generation_type）——headless 也必发，各 vendor 桶都带。
       for (const [k, v] of Object.entries(mode.fixedParams ?? {})) d[k] = v;

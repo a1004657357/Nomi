@@ -1,6 +1,5 @@
 import { validateAnchorModelFit, type AnchorModelFitIssue } from './storyboardAnchorPolicy'
 import { effectiveShotDurationSec, type PlanAnchor, type PlanAnchorCarrier, type PlanAnchorKind, type PlanShot, type StoryboardPlan } from './storyboardPlan'
-import { hasMentions, mentionUrlsInOrder } from '../../assets/promptMentions'
 
 /**
  * 分镜方案的**纯编辑 + 校验**层（S3 字段编辑器的领域逻辑，与渲染解耦、可单测）。
@@ -9,6 +8,13 @@ import { hasMentions, mentionUrlsInOrder } from '../../assets/promptMentions'
  * 不可变操作的唯一真相源（组件只调它、不自己 spread）。删锚**不擦引用它的镜头**，失效引用
  * 由 validatePlan 暴露成红标（plan doc §1.4：标红提示，不去猜）。
  */
+
+/**
+ * 「移到场」下拉里那条「未分场」的值——**不是场 id**，是「把这几镜从场里摘出来」这条命令。
+ * 三个写口（多选条、行级菜单、表的两条 onMoveToScene）必须是同一个串：
+ * 各写一次字面量的代价是改名时只改得动其中几处，剩下那几处静默失效。
+ */
+export const NO_SCENE_VALUE = '__none__'
 
 export const ANCHOR_KIND_LABELS: Record<PlanAnchorKind, string> = {
   character: '角色',
@@ -24,6 +30,53 @@ export const DURATION_OPTIONS_SEC: readonly number[] = [4, 5, 6, 8, 10, 12, 15]
 
 /** 切到视频档/空方案首镜的兜底时长（秒）。 */
 const DEFAULT_VIDEO_DURATION_SEC = 5
+
+// ── 模型身份：(modelKey, modelVendor) 永远成对写 ──
+//
+// 身份唯一键是 `(vendor, modelKey)`：两家供应商提供同名模型（自定义中转也叫 gpt-image-2）是**两个模型**。
+// 2026-09-21 群反馈：分镜三处模型框各自只写 modelKey——镜头保留着旧 modelVendor，界面选的是 APIMart，
+// 请求却发去了自定义那家（花错钱）。修法不是在三个组件里各补一行，而是让「写模型」只有一种形状：
+//   · 类型上：`PlanShotPatch` / `PlanAnchorPatch` 不允许单独出现 modelKey 或 modelVendor；
+//   · 运行时：`updateShotAt` / `updateAnchor` 再兜一次（`any` / 旧 JS 调用者也逃不掉）——
+//     补丁里有 modelKey 却没有 modelVendor，就把 modelVendor 清掉（「不知道哪家」回到旧数据的解析规则，
+//     绝不留一个为别的模型记下的供应商）。
+
+/** 模型身份两半：要么都不写，要么一起写（值可以是 undefined = 回「默认模型」）。 */
+export type PairedModelIdentity =
+  | { modelKey?: never; modelVendor?: never }
+  | { modelKey: string | undefined; modelVendor: string | undefined }
+
+export type PlanShotPatch = Omit<Partial<PlanShot>, 'modelKey' | 'modelVendor'> & PairedModelIdentity
+export type PlanAnchorPatch = Omit<Partial<PlanAnchor>, 'modelKey' | 'modelVendor'> & PairedModelIdentity
+
+/**
+ * 「给这一镜/这张锚换模型」的**唯一**写法：(modelKey, vendor) 成对落盘，模式与参数随模型清空
+ * （它们属于上一个模型）。空 modelKey = 回「默认模型」，供应商一起清。
+ * 镜卡底栏、锚行、批量条、框选条、Agent 改镜全部经这里（或与它同形的 `applyModelToAll`）。
+ */
+export function planModelSelection(modelKey: string | undefined, modelVendor: string | undefined): {
+  modelKey: string | undefined
+  modelVendor: string | undefined
+  modeId: undefined
+  params: undefined
+} {
+  const key = modelKey?.trim() || undefined
+  return { modelKey: key, modelVendor: key ? modelVendor?.trim() || undefined : undefined, modeId: undefined, params: undefined }
+}
+
+/** 运行时兜底：补丁带了 modelKey 却没带 modelVendor → modelVendor 置空，绝不沿用上一个模型的供应商。 */
+function pairModelIdentity<T extends { modelKey?: unknown; modelVendor?: unknown }>(patch: T): T {
+  if (Object.prototype.hasOwnProperty.call(patch, 'modelKey') && !Object.prototype.hasOwnProperty.call(patch, 'modelVendor')) {
+    return { ...patch, modelVendor: undefined }
+  }
+  return patch
+}
+
+/** 继承上一镜的模型时，两半一起继承（只继承 modelKey 会让新镜落到「同名里排第一的那家」）。 */
+function inheritedModelIdentity(source: PlanShot | undefined): Partial<Pick<PlanShot, 'modelKey' | 'modelVendor'>> {
+  if (!source?.modelKey) return {}
+  return { modelKey: source.modelKey, ...(source.modelVendor ? { modelVendor: source.modelVendor } : {}) }
+}
 
 /** style 默认文本锚（每镜常驻，拼进 prompt）；character/scene/prop 默认视觉锚（生成参考图）。 */
 export function defaultCarrierForKind(kind: PlanAnchorKind): PlanAnchorCarrier {
@@ -59,8 +112,9 @@ export function addAnchor(plan: StoryboardPlan, kind: PlanAnchorKind = 'characte
   return { ...plan, anchors: [...plan.anchors, anchor] }
 }
 
-export function updateAnchor(plan: StoryboardPlan, id: string, patch: Partial<PlanAnchor>): StoryboardPlan {
-  return { ...plan, anchors: plan.anchors.map((anchor) => (anchor.id === id ? { ...anchor, ...patch } : anchor)) }
+export function updateAnchor(plan: StoryboardPlan, id: string, patch: PlanAnchorPatch): StoryboardPlan {
+  const paired = pairModelIdentity(patch)
+  return { ...plan, anchors: plan.anchors.map((anchor) => (anchor.id === id ? { ...anchor, ...paired } : anchor)) }
 }
 
 /** 记录 @ token 对应的 URL，绑定关系仍由镜头的 anchorIds 唯一持有。 */
@@ -92,17 +146,9 @@ export function addExternalReferenceAnchor(
   return { plan: { ...plan, anchors: [...plan.anchors, anchor] }, anchorId }
 }
 
-/** 文本中已有 @ 时，镜头绑定按 URL 重建；没有 @ 的旧纯文本仍保留旧绑定。 */
+/** 改一镜的提示词：只改提示词。@ 的素材住在参考列（referenceBindings），提示词编辑不再顺手改任何关系。 */
 export function updateShotPrompt(plan: StoryboardPlan, pos: number, prompt: string): StoryboardPlan {
-  const shot = plan.shots[pos]
-  if (!shot) return plan
-  const nextUrls = mentionUrlsInOrder(prompt)
-  const previousHadMentions = hasMentions(shot.prompt)
-  if (!previousHadMentions && nextUrls.length === 0) return updateShotAt(plan, pos, { prompt })
-  const idsByUrl = new Map(plan.anchors.flatMap((anchor) => anchor.referenceUrl ? [[anchor.referenceUrl, anchor.id] as const] : []))
-  const mentioned = new Set(nextUrls.flatMap((url) => idsByUrl.get(url) ? [idsByUrl.get(url)!] : []))
-  const textAnchorIds = shot.anchorIds.filter((id) => plan.anchors.find((anchor) => anchor.id === id)?.carrier === 'text')
-  return updateShotAt(plan, pos, { prompt, anchorIds: [...textAnchorIds, ...mentioned] })
+  return plan.shots[pos] ? updateShotAt(plan, pos, { prompt }) : plan
 }
 
 /** 改锚类型：carrier/scope 跟随新类型的默认（风格→仅提示词+常驻）；用户随后仍可手动覆盖 carrier。 */
@@ -131,7 +177,7 @@ export function addShot(plan: StoryboardPlan): StoryboardPlan {
     ...(lastKind ? { shotKind: lastKind } : {}),
     ...(last?.sceneId ? { sceneId: last.sceneId } : {}),
     ...(lastKind === 'video' && lastKeyframeEnabled ? { keyframe: { enabled: true, prompt: '' } } : {}),
-    ...(last?.modelKey ? { modelKey: last.modelKey } : {}),
+    ...inheritedModelIdentity(last),
     ...(last?.modeId ? { modeId: last.modeId } : {}),
     // 画幅继承但不拷整份 params——其余参数（负向词/清晰度…）是那一镜的创作选择，新镜从默认起。
     ...(lastAspect !== undefined ? { params: { aspect_ratio: lastAspect } } : {}),
@@ -139,6 +185,8 @@ export function addShot(plan: StoryboardPlan): StoryboardPlan {
     durationSec: last ? effectiveShotDurationSec(last) || DEFAULT_VIDEO_DURATION_SEC : DEFAULT_VIDEO_DURATION_SEC,
     anchorIds: [],
     prompt: '',
+    imagePrompt: '',
+    videoPrompt: '',
   }
   return { ...plan, shots: [...plan.shots, shot] }
 }
@@ -151,7 +199,7 @@ export function insertShotAt(plan: StoryboardPlan, pos: number): StoryboardPlan 
         index: pos + 1,
         ...(previous.shotKind ? { shotKind: previous.shotKind } : {}),
         ...(previous.sceneId ? { sceneId: previous.sceneId } : {}),
-        ...(previous.modelKey ? { modelKey: previous.modelKey } : {}),
+        ...inheritedModelIdentity(previous),
         ...(previous.modeId ? { modeId: previous.modeId } : {}),
         ...(previous.params?.aspect_ratio !== undefined ? { params: { aspect_ratio: previous.params.aspect_ratio } } : {}),
         durationSec: effectiveShotDurationSec(previous) || DEFAULT_VIDEO_DURATION_SEC,
@@ -174,8 +222,9 @@ export function duplicateShotAt(plan: StoryboardPlan, pos: number): StoryboardPl
   return { ...plan, shots: renumber(shots) }
 }
 
-export function updateShotAt(plan: StoryboardPlan, pos: number, patch: Partial<PlanShot>): StoryboardPlan {
-  return { ...plan, shots: plan.shots.map((shot, i) => (i === pos ? { ...shot, ...patch } : shot)) }
+export function updateShotAt(plan: StoryboardPlan, pos: number, patch: PlanShotPatch): StoryboardPlan {
+  const paired = pairModelIdentity(patch)
+  return { ...plan, shots: plan.shots.map((shot, i) => (i === pos ? { ...shot, ...paired } : shot)) }
 }
 
 export function removeShotAt(plan: StoryboardPlan, pos: number): StoryboardPlan {
@@ -200,15 +249,6 @@ export function moveShot(plan: StoryboardPlan, from: number, to: number): Storyb
       })()
   shots.splice(to, 0, adopted)
   return { ...plan, shots: renumber(shots) }
-}
-
-/** 勾/取消某镜对某锚的引用（参考多选 = 改 shot.anchorIds，从源头杜绝写错名字）。 */
-export function toggleShotAnchor(plan: StoryboardPlan, pos: number, anchorId: string): StoryboardPlan {
-  const shot = plan.shots[pos]
-  if (!shot) return plan
-  const has = shot.anchorIds.includes(anchorId)
-  const anchorIds = has ? shot.anchorIds.filter((id) => id !== anchorId) : [...shot.anchorIds, anchorId]
-  return updateShotAt(plan, pos, { anchorIds })
 }
 
 // ── 场（v5 场分组）：增删改名 + 表层分组 derive（组头/小结/折叠都吃这份）──
@@ -295,14 +335,12 @@ export function totalDurationSec(shots: readonly PlanShot[]): number {
 export type PlanIssue =
   | AnchorModelFitIssue
   | { kind: 'no-shots' }
-  | { kind: 'dangling-ref'; shotIndex: number; anchorId: string }
   | { kind: 'empty-shot-prompt'; shotIndex: number }
   | { kind: 'anchor-no-name'; anchorId: string }
 
 /** 一个方案的全部待处理项；空数组 = 可生成。 */
 export function validatePlan(plan: StoryboardPlan): PlanIssue[] {
   const issues: PlanIssue[] = [...validateAnchorModelFit(plan)]
-  const anchorIds = new Set(plan.anchors.map((anchor) => anchor.id))
 
   // 视觉锚没名字 = 落画布后卡片没标题，且镜头按名引用不到 → 拦。
   for (const anchor of plan.anchors) {
@@ -317,18 +355,9 @@ export function validatePlan(plan: StoryboardPlan): PlanIssue[] {
 
   for (const shot of plan.shots) {
     if (!shot.prompt.trim()) issues.push({ kind: 'empty-shot-prompt', shotIndex: shot.index })
-    for (const id of shot.anchorIds) {
-      if (!anchorIds.has(id)) issues.push({ kind: 'dangling-ref', shotIndex: shot.index, anchorId: id })
-    }
   }
 
   return issues
-}
-
-/** 某镜引用的失效锚 id（镜卡渲染红 chip 用；anchorId 已不在 anchors 里）。 */
-export function danglingAnchorIdsForShot(plan: StoryboardPlan, shot: PlanShot): string[] {
-  const anchorIds = new Set(plan.anchors.map((anchor) => anchor.id))
-  return shot.anchorIds.filter((id) => !anchorIds.has(id))
 }
 
 // ── 镜头类型 + 批量作用域（「全部镜头」批量条与单镜卡共用的唯一真相源）──
@@ -356,8 +385,8 @@ export function shotTypeOf(shot: PlanShot): ShotTypeValue {
  * 切类型清掉模型/模式/参数——两种类的模型目录不通用，留着会张冠李戴（落画布按种类取默认兜底）；
  * 切到视频档时时长兜底 5s；image-video 档置 keyframe.enabled 并保留已写的首帧提示词。
  */
-export function shotKindPatch(shot: PlanShot, next: ShotTypeValue): Partial<PlanShot> {
-  const cleared = { modelKey: undefined, modeId: undefined, params: undefined } as const
+export function shotKindPatch(shot: PlanShot, next: ShotTypeValue): PlanShotPatch {
+  const cleared = planModelSelection(undefined, undefined)
   if (next === 'image') return { shotKind: 'image', keyframe: undefined, ...cleared }
   const durationSec = shot.durationSec > 0 ? shot.durationSec : DEFAULT_VIDEO_DURATION_SEC
   if (next === 'image-video') {
@@ -382,11 +411,16 @@ export function applyShotKindToAll(plan: StoryboardPlan, next: ShotTypeValue): S
 /**
  * 整片改模型。清 modeId/params——模式/参数属于具体模型，换模型后由 buildPlannedNodeMeta
  * 按新模型取默认模式（与镜卡 onShotModelChange 同口径）。空串 = 回「默认模型」。
+ *
+ * **vendor 必须与 modelKey 成对写**：BulkModelPicker 的每一行本来就是「模型 × 具体哪一家」，
+ * 它把 vendor 一起回调出来。以前这里只写 modelKey，于是落画布时 buildPlannedNodeMeta 用
+ * `entryByKey.get(modelKey)` 反查——而 buildAgentModelEntries 按 modelKey 首次出现去重，
+ * 落地厂商 = 目录里第一家，与用户所选无关（「选 A 家发去 B 家」）。同 buildShotRowNodes 的纪律。
  */
-export function applyModelToAll(plan: StoryboardPlan, modelKey: string): StoryboardPlan {
+export function applyModelToAll(plan: StoryboardPlan, modelKey: string, modelVendor?: string): StoryboardPlan {
   return {
     ...plan,
-    shots: plan.shots.map((shot) => ({ ...shot, modelKey: modelKey || undefined, modeId: undefined, params: undefined })),
+    shots: plan.shots.map((shot) => ({ ...shot, ...planModelSelection(modelKey, modelVendor) })),
   }
 }
 
@@ -400,7 +434,7 @@ export function applyDurationToAll(plan: StoryboardPlan, sec: number): Storyboar
 }
 
 // 画幅**不在这一层**（v6 §2.4.1）：它是「整片默认 + 行级覆盖」两段的，读写唯一 owner 是
-// `storyboardAspectScope.ts`。v5 的 applyAspectToAll/deriveBulkAspect/BULK_ASPECT_OPTIONS 三件
+// `storyboardShotScope.ts`。v5 的 applyAspectToAll/deriveBulkAspect/BULK_ASPECT_OPTIONS 三件
 // 已随本次改版删除——它们把"整片改画幅"实现成"把同一个值抄进每一行"，正是那层作用域丢失的成因。
 
 /** 全镜共同值，否则 null（无镜头也是 null）。批量条据此显「混合」。 */

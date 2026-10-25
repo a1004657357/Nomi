@@ -4,7 +4,7 @@
 // 高度三格（① 初始一行 · ② 自动增长 · ③ 封顶滚动）刻意用**同一个组件、只换喂进去的文本**——
 // 高度是 `useComposerHeight(panelHeight, mode)` 从内容 derive 的，不是三套写死的样式。
 // 上限档位（≥800 → 40%、640–800 → 30%、<640 → 6 行）靠喂不同的 panelHeight 走到。
-import React from 'react'
+import React, { type JSX } from 'react'
 import {
   AgentPanelV4Composer,
   V4ModelPopover,
@@ -24,6 +24,7 @@ function ComposerCell({
   panelHeight = 620,
   focused = false,
   skillSelected = false,
+  awaitingAnswer = false,
 }: {
   mode?: ComposerMode
   permission?: PermissionTier
@@ -32,6 +33,7 @@ function ComposerCell({
   panelHeight?: number
   focused?: boolean
   skillSelected?: boolean
+  awaitingAnswer?: boolean
 }): JSX.Element {
   const fx = useV4Fixtures()
   return (
@@ -42,6 +44,7 @@ function ComposerCell({
         permission={permission}
         focused={focused}
         skillSelected={skillSelected || withChips}
+        awaitingAnswer={awaitingAnswer}
         chips={withChips ? [fx.chips.attachment, fx.chips.skill, fx.chips.clip] : undefined}
         value={text ?? ''}
       />
@@ -56,6 +59,13 @@ export const V4_COMPOSER_STATES: readonly LabState[] = [
     source: '2026-09-06-agent-panel-v4.md · Composer 板',
     coverage: 'component-only',
     render: () => <ComposerCell focused />,
+  },
+  {
+    id: 'v4-composer-awaiting-answer',
+    name: 'composer · 上面有问题待答（降一档：淡 + 换占位，仍可用）',
+    source: '2026-09-21 拍板：有问题待答时下方 composer 降一档',
+    coverage: 'component-only',
+    render: () => <ComposerCell awaitingAnswer />,
   },
   {
     id: 'v4-composer-running',

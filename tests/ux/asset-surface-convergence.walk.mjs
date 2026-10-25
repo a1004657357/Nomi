@@ -8,6 +8,7 @@
 // 用法: pnpm build && node tests/ux/asset-surface-convergence.walk.mjs
 // 判据=断言 + 截图（tests/ux/shots/asset-surface-convergence/）人眼过。
 import { launchNomiApp } from './_launchApp.mjs'
+import { expectAbsent, proveProbe } from './_assert.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -96,7 +97,9 @@ try {
   }
 
   // —— ① 唯一门（库页）——
-  check('库页无素材盒按钮', (await win.locator('button[aria-label="打开素材盒"]').count()) === 0)
+  await expectAbsent(win.locator('button[aria-label="打开素材盒"]'), {
+    provenBy: await proveProbe(win.getByText('项目库', { exact: false }), '项目库已渲染'),
+  })
   await snap(win, '01-library-page-no-assetbox')
 
   // —— 进项目（studio 挂载触发迁移器）——
@@ -112,7 +115,9 @@ try {
   check('进入项目', /projectId=/.test(win.url()), win.url().slice(-32))
 
   // —— ① 唯一门（studio 顶栏）——
-  check('顶栏无素材盒按钮', (await win.locator('button[aria-label="打开素材盒"]').count()) === 0)
+  await expectAbsent(win.locator('button[aria-label="打开素材盒"]'), {
+    provenBy: await proveProbe(win.getByRole('button', { name: '创作', exact: true }), '工作台导航已渲染'),
+  })
   await snap(win, '02-studio-topbar-no-assetbox')
 
   // 迁移器启动即跑（IPC 往返），稍候
@@ -187,9 +192,10 @@ try {
   if (overlayWin) {
     await overlayWin.waitForLoadState('domcontentloaded').catch(() => {})
     await overlayWin.waitForTimeout(900)
-    check('托盘无「提示词库」tab', (await overlayWin.getByText('提示词库', { exact: true }).count()) === 0)
-    check('托盘无「上传」按钮', (await overlayWin.locator('button[aria-label*="上传"]').count()) === 0)
-    check('托盘无文件夹瓦片', (await overlayWin.getByText('主角参考', { exact: false }).count()) === 0)
+    const inboxProof = await proveProbe(overlayWin.getByText('捕捞收件箱', { exact: false }), '捕捞收件箱已挂载')
+    await expectAbsent(overlayWin.getByText('提示词库', { exact: true }), { provenBy: inboxProof })
+    await expectAbsent(overlayWin.locator('button[aria-label*="上传"]'), { provenBy: inboxProof })
+    await expectAbsent(overlayWin.getByText('主角参考', { exact: false }), { provenBy: inboxProof })
     check('托盘标注「捕捞收件箱」', (await overlayWin.getByText('捕捞收件箱', { exact: false }).count()) > 0)
     check('托盘可见捕捞素材', (await overlayWin.getByText('捕捞样例一', { exact: false }).count()) > 0)
     await snap(overlayWin, '07-tray-capture-inbox')

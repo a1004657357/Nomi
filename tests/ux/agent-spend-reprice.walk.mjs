@@ -19,11 +19,12 @@ import { DEFAULT_TIMEOUT_MS, clickOrFail, expect, proveProbe } from './_assert.m
 import { FIXTURE_IMAGE_MODEL, FIXTURE_VENDOR, flattenRequestText } from './agent-runtime-fixture.mjs'
 import {
   APPROVAL_CARD, CANVAS_PANEL, INTERVENTION_CONFIRM,
-  createRuntimeWalk, openCanvas, readProject, recorded, sendCanvas,
+  createRuntimeWalk, openCanvas, readProject, recorded, sendCanvas, closeSpendCard,
 } from './agent-runtime-walk-support.mjs'
 
 const ASK = 'S_REPRICE_ASK：帮我生成一张六棱柱的图。'
 const PLAN_CALL = 's-reprice-plan-1'
+const GENERATE_CALL = `${PLAN_CALL}-generate`
 const PRICE_TOTAL = '[data-v4-price="total"]'
 // 夹具目录里这一行的价目：基价 0.3，命中 `size:1536x1024` 再加 0.2（agent-runtime-fixture.mjs）。
 // 两个数都不是走查编的——卡上印什么由那一行说了算。
@@ -49,24 +50,32 @@ try {
   const planner = walk.fixture.expectText({
     label: 'the agent drafts a generation instead of spending on its own',
     match: (body) => flattenRequestText(body).includes('S_REPRICE_ASK'),
-    reply: { type: 'tool', id: PLAN_CALL, name: 'nomi_generation_plan', args: {
-      operation: 'create',
-      taskKind: 'text_to_image',
-      prompt: '一个悬浮的六棱柱，柔和的演播室灯光',
-      moduleId: 'generation.single-shot',
-      providerId: FIXTURE_VENDOR,
-      modelId: FIXTURE_IMAGE_MODEL,
-      parameters: { size: BASE_SIZE },
+    reply: { type: 'tool', id: PLAN_CALL, name: 'draft_shots', args: {
+      // 20 动词：draft_shots 建草稿（落画布、不出卡），generate 才把报价卡摆到用户面前。
+      shots: [{ prompt: '一个悬浮的六棱柱，柔和的演播室灯光', taskKind: 'text_to_image', candidate: { providerId: FIXTURE_VENDOR, modelId: FIXTURE_IMAGE_MODEL }, parameters: { size: BASE_SIZE } }],
     } },
+  })
+  let operationId
+  const plannerDraft = walk.fixture.expectText({
+    label: 'the draft result comes back with the host-generated operationId',
+    match: (body) => {
+      const result = (body.messages ?? []).find((message) => message.role === 'tool' && message.tool_call_id === PLAN_CALL)
+      if (!result) return false
+      operationId = /"operationId":"([^"]+)"/.exec(String(result.content))?.[1]
+      return true
+    },
+    reply: { type: 'hold' },
   })
   const plannerDone = walk.fixture.expectText({
     label: 'the drafting turn completes through the same SDK turn',
-    match: (body) => (body.messages ?? []).some((message) => message.role === 'tool' && message.tool_call_id === PLAN_CALL),
+    match: (body) => (body.messages ?? []).some((message) => message.role === 'tool' && message.tool_call_id === GENERATE_CALL),
     reply: { type: 'text', text: 'S_REPRICE_DONE：草稿已就绪，等你确认。' },
   })
   await sendCanvas(win, ASK)
   await recorded(planner.received, 'generation draft request')
-  await recorded(plannerDone.received, 'generation draft result')
+  await recorded(plannerDraft.received, 'generation draft result')
+  plannerDraft.release({ type: 'tool', id: GENERATE_CALL, name: 'generate', args: { operationId } })
+  // 2026-09-22 裁决 A：`generate` **等**用户答完那张卡才返回——结果要到卡被答掉之后才有（见下）。
 
   await expect.poll(async () => (await readProject(win, projectId)).payload.generationCanvas.nodes.length,
     { timeout: DEFAULT_TIMEOUT_MS }).toBe(1)
@@ -88,7 +97,9 @@ try {
   // 时刻②之一：价格**当场**变了。这是本轮修的那件事——本地按同一条算式重算，不等一个来回。
   await expect(card.locator(PRICE_TOTAL), '改完参数，价格行当场跟着动（基价 + 规格加价）')
     .toContainText(UPGRADED_PRICE, { timeout: DEFAULT_TIMEOUT_MS })
-  // 主按钮上印的是同一个数：两个地方印同一件事，任何一个先漂都是在骗按下去的那个人。
+  // 主按钮上印的是同一个数（设计系统 §1.8 规则 1：带后果时把后果写进标签）。
+  // 页脚左下那一格是**整单合计**、按钮是**这一下花多少**——单镜时两者必须相等，
+  // 任何一个先漂都是在骗按下去的那个人。
   await expect(card.locator(INTERVENTION_CONFIRM)).toContainText(UPGRADED_PRICE)
   await walk.snap('reprice-02-price-follows-the-chip')
 
@@ -119,6 +130,9 @@ try {
   // 顺带暴露的一条（缺口 ⑥ 已记）：渲染层这一侧是**静默**的——`useAgentPanelSpendConfirm` 的
   // `act` 把 `ProductionActionResult` 整个吞掉，成功失败一个样，用户看到的是「按了没反应」。
   expect(walk.fixture.images, '本轮走查零额度：到此为止一次供应商生成都不该发生').toHaveLength(0)
+  // 确认在这个夹具里走不通（见上），卡还在原处等——所以等它的那个回合也还在等。看完就答：关掉它。
+  await closeSpendCard(card)
+  await recorded(plannerDone.received, 'generate returns once the card was closed')
 
   walk.report.verified = ['price-follows-the-chip-immediately', 'canvas-node-untouched-until-generate',
     'candidate-written-back-on-generate']

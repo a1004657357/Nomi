@@ -157,6 +157,37 @@ describe('B4 — 连线视频/音频参考分流（不漏进 referenceImages / �
     expect(refs.referenceImages).toEqual(['https://cdn/a.png'])
     expect(refs.referenceVideos).toEqual([])
   })
+
+  it('全能参考图片带与上传顺序一致的角色、场景和分镜用途', () => {
+    const character = { ...node('c1', 'character', 'https://cdn/c.png'), title: '老板 A' }
+    const scene = { ...node('s1', 'scene', 'https://cdn/s.png'), title: '月饼工作室' }
+    const shot = {
+      ...node('i1', 'image', 'https://cdn/shot.png'),
+      title: '镜头 1 · 图片',
+      shotIndex: 1,
+      meta: { storyboardContainedRole: 'image' },
+    } as GenerationCanvasNode
+    const target = node('v1', 'video')
+    const edges: GenerationCanvasEdge[] = [
+      { id: 'e1', source: 'c1', target: 'v1', mode: 'character_ref', order: 0 },
+      { id: 'e2', source: 's1', target: 'v1', mode: 'style_ref', order: 1 },
+      { id: 'e3', source: 'i1', target: 'v1', mode: 'composition_ref', order: 2 },
+    ]
+
+    const refs = resolveGenerationReferences(target, { nodes: [character, scene, shot, target], edges })
+    expect(refs.referenceImages).toEqual([
+      'https://cdn/c.png',
+      'https://cdn/s.png',
+      'https://cdn/shot.png',
+    ])
+    expect(refs.referenceImageRoles).toEqual([
+      expect.stringContaining('角色「老板 A」'),
+      expect.stringContaining('场景/风格「月饼工作室」'),
+      expect.stringContaining('分镜图「镜头 1 · 图片」'),
+    ])
+    expect(refs.referenceImageRoles[2]).toContain('不作为首帧')
+    expect(refs.referenceImagePurposes).toEqual(['character', 'scene', 'composition'])
+  })
 })
 
 /**

@@ -12,10 +12,10 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 
-import type { FetchTaskResultFn, RunTaskFn } from './core'
+import type { FetchTaskResultFn, RunDirectorFn, RunTaskFn } from './core'
+import { isRendererAvailable, requestRenderer } from './rendererBridge'
 import { RpcError } from './dispatcher'
 import { createDiskGateway, createHybridGateway, createRendererGateway, type ProjectGateway } from './gateway'
-import { isRendererAvailable, requestRenderer } from './rendererBridge'
 import { resolveMcpOrigin, verifyToken } from './security'
 import { getProductionRunService } from '../productionRun/productionRunRuntime'
 import { handleArtifactPreviewHttpRequest, withAssetPreview } from '../productionRun/artifactPreviewHttpServer'
@@ -27,7 +27,6 @@ import { dispatchAndEnrich } from './mcpResultEnrichLive'
 import { makeShotVerifyDeps } from './shotVerifyDeps'
 import { rpcErrorWirePayload } from './mcpRpcError'
 import type { ApprovalReceiptAuthority } from './approvalReceipt'
-import type { McpGenerationPolicy } from './mcpGenerationPolicy'
 import { bindMcpConnectionContext, McpConnectionAuthenticationError } from './mcpConnectionContext'
 import type { ProjectSessionAuthority } from './projectSessionAuthority'
 import { assertLocalBearerProjectSessionRoute } from './localProjectSessionTransportPolicy'
@@ -48,16 +47,26 @@ import { executeMcpDocumentWriteWithReceipt } from './mcpDocumentWriteReceipt'
 import { getDesktopLocale } from '../desktopLocale'
 
 export type RpcServerOptions = {
+  /** Called after an authenticated MCP RPC reaches the desktop boundary. */
+  onRpcActivity?: () => void
   /** 真实生成入口（runtime.runTask）。注入式：headless host 与 app 各自传同一份。 */
   runTask: RunTaskFn
   /** 异步任务轮询入口（runtime.fetchTaskResult）。图/视频异步生成等终态用。 */
   fetchTaskResult?: FetchTaskResultFn
+  /** 受约束的本地 Blender 导演预演，仅桌面 app 进程提供。 */
+  runDirector?: RunDirectorFn
   /** 该 projectId 是否正在某个 app 窗口里打开（命中则拒绝直写图变更）。headless: ()=>false。 */
   isProjectOpen?: (projectId: string) => boolean
   productionRuns?: ReturnType<typeof getProductionRunService>
   /** One project-session authority; each request adds its freshly verified transport connection. */
   projectSessionAuthority?: ProjectSessionAuthority
   approvalReceiptAuthority?: ApprovalReceiptAuthority
+  /**
+   * 用户此刻选的审批档位（设置里持久化的那一份）。宿主只负责把它递进调度上下文；
+   * 判据只有一个 owner（`capabilityApprovalPolicy.spendDecidedByPolicy`），这里不作判断。
+   * 缺席 = 这条路读不到档位 → 下游一律 fail-closed，不许替用户花钱。
+   */
+  approvalPolicy?: import('./dispatcher').DispatchContext['approvalPolicy']
   requestGenerationGate?: import('./dispatcher').DispatchContext['requestGenerationGate']
   authorizeGeneration?: import('./dispatcher').DispatchContext['authorizeGeneration']
   /** Internal client→GUI fallback. The callback must verify the challenge before prompting. */
@@ -69,7 +78,6 @@ export type RpcServerOptions = {
    * `nomi_verify_client_generation_gate`.
    */
   verifyClientGenerationGateInMain?: (input: { challengeToken: string; authenticatedClient: string }) => Promise<unknown>
-  generationPolicy?: McpGenerationPolicy
   generationContext?: (params: Record<string, unknown>) => unknown | Promise<unknown>
   generationPlanning?: import('./dispatcher').DispatchContext['generationPlanning']
   projectRevisionResolver?: (projectId: string) => number | undefined
@@ -156,6 +164,7 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
         if (await handleArtifactPreviewHttpRequest(req, res, previewService)) return
         if (req.method !== 'POST' || req.url !== '/rpc') throw new RpcError('仅支持 POST /rpc', 404)
         if (!verifyToken(bearerToken(req))) throw new RpcError('鉴权失败：token 无效', 401)
+        options.onRpcActivity?.()
         const raw = await readBody(req)
         let parsed: { method?: unknown; params?: unknown; planConfirmed?: unknown; documentConfirmed?: unknown }
         try {
@@ -355,10 +364,22 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
         const result = await dispatchAndEnrich(method, params, {
           runTask: options.runTask,
           fetchTaskResult: options.fetchTaskResult,
+          runDirector: options.runDirector,
+          runGenerationBatch: async (projectId, nodeIds) => {
+            if (!isRendererAvailable()) throw new RpcError('Batch generation requires the Nomi desktop window', 501)
+            if (!isProjectOpen(projectId)) {
+              const activated = await requestRenderer('project.activate', { projectId }, 30_000) as { active?: boolean; projectId?: string } | null
+              if (activated?.active !== true || activated.projectId !== projectId) {
+                throw new RpcError('Batch generation project activation failed', 409)
+              }
+            }
+            // This queues the native confirmation UI; neither caller flags nor
+            // plan approval can authorize spending. Preserve the requested order.
+            return requestRenderer('generation.batch', { projectId, nodeIds }, 30_000)
+          },
           makeGateway,
           productionRuns,
           origin: { host: origin },
-          generationPolicy: options.generationPolicy,
           generationContext: options.generationContext,
           generationPlanning: options.generationPlanning,
           projectRevisionResolver: options.projectRevisionResolver,
@@ -367,6 +388,7 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
             ? { projectSession: { authority: options.projectSessionAuthority, connection: projectSessionConnection } }
             : {}),
           approvalReceiptAuthority: options.approvalReceiptAuthority,
+          approvalPolicy: options.approvalPolicy,
           requestGenerationGate: options.requestGenerationGate,
           authorizeGeneration: options.authorizeGeneration,
           // 审片环（W1）：GUI-开着的 RPC 路复用同一份主进程 deps（judge/抽帧/重试都在主进程跑，与 headless 同实现，
@@ -382,10 +404,17 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
         })
         send(200, { ok: true, result })
       } catch (error) {
-        const status = error instanceof RpcError ? error.httpStatus : 500
         // Keep ordinary errors as legacy strings; policy errors preserve their
         // typed recovery contract for local RPC clients.
-        send(status, { ok: false, error: rpcErrorWirePayload(error) })
+        const payload = rpcErrorWirePayload(error)
+        // 2026-09-21：拒绝不是故障。领域层抛的 `human_approval_required`（「这件事要真人答一次」）
+        // 以前一律落到 500——调用方读到的是「Nomi 崩了」，而真相是「Nomi 在等你点头」。
+        // 只改这一个码：它是授权判定，语义上就是 403。其余非 RpcError 仍按 500 上报，不替它们猜。
+        const code = typeof payload === 'object' && payload ? payload.code : undefined
+        const status = error instanceof RpcError
+          ? error.httpStatus
+          : code === 'human_approval_required' ? 403 : 500
+        send(status, { ok: false, error: payload })
       } finally {
         req.removeListener('aborted', abortRequest)
         res.removeListener('close', abortOnClosedReply)

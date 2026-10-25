@@ -1,0 +1,40 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-24-native-image-model-identity",
+  "problem_type": "Curated mode wire aliases overwrite selected catalog identity on another transport",
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-23",
+  "symptom": "Canvas selection gpt-image-2 submits gpt-image-2-text-to-image to native images/generations and receives HTTP 400.",
+  "direct_cause": "referenceInputParams overlays archetypeInput.model after taskTemplateParams chooses catalog identity; native relay templates consume that projected mode alias.",
+  "class_root": "Transport projection lacks an ownership boundary between catalog model identity, intentional variants and a curated mode alias belonging to another protocol.",
+  "affected_population": ["Canvas JSON image generation", "Canvas multipart reference-image editing", "Persisted stale mode projections", "Other curated image families exposed by native image relays"],
+  "scope_paths": ["electron/catalog/profileHttpRequest.ts", "electron/catalog/multipartOperation.ts", "electron/audioTaskRunner.ts", "electron/tasks/profileTaskExecution.ts"],
+  "entry_points": ["buildCatalogTaskRequest mode projection", "buildProfileHttpRequest JSON rendering", "runMultipartProfileOperation final FormData rendering", "headless/defaulted TaskRequest rendering"],
+  "external_sources": [],
+  "internal_only_reason": "The invariant is an internal ownership violation, reproduced from production canvas assembly and request construction. CLIProxy source was checked read-only to confirm rejected mode aliases; no provider model-name suffix is guessed or stripped.",
+  "invariants": ["Native image transport must retain selected catalog identity when the only override is a recognized curated mode alias.", "Literal custom mappings, other protocols, declared variants and reference bytes remain unchanged.", "Normalization never mutates catalog rows or persisted request intent."],
+  "invariant_owner_layer": {"layer": "electron/catalog", "tests": ["electron/catalog/transportModelIdentity.test.ts"]},
+  "doors": [
+    {"kind": "write", "path": "electron/audioTaskRunner.ts", "symbol": "templateContext"},
+    {"kind": "write", "path": "electron/catalog/multipartOperation.ts", "symbol": "templateContext"},
+    {"kind": "write", "path": "electron/catalog/profileHttpRequest.ts", "symbol": "templateContext"},
+    {"kind": "write", "path": "electron/tasks/profileTaskExecution.ts", "symbol": "templateContext"}
+  ],
+  "door_reduction": {"before": 4, "after": 4, "why_not": "JSON, multipart, process and audio executors remain distinct transport lifecycles, but every caller supplies its operation to the same templateContext owner. Process/audio operations do not meet the native-image shape guard and remain unchanged."},
+  "generality_proof": "Detection derives exact alias membership from curated identity without node/custom metadata, spans image families and saved requests, and gates by native image operation shape rather than vendor name. JSON and actual multipart dispatch converge before rendering.",
+  "shared_boundaries": [{"path": "electron/catalog/profileHttpRequest.ts", "symbol": "templateContext", "responsibility": "Finalize all template parameters, then normalize cross-protocol curated mode identity using the selected operation and catalog row."}],
+  "same_class_entry_points": [
+    {"path": "src/workbench/generationCanvas/runner/catalogTaskActions.ts", "entry_point": "buildCatalogTaskRequest", "disposition": "enforced", "evidence": "Production renderer assembly is the test fixture producer and its extras reach templateContext unchanged."},
+    {"path": "electron/catalog/multipartOperation.ts", "entry_point": "runMultipartProfileOperation", "disposition": "enforced", "evidence": "Final FormData model and actual reference bytes are captured in the regression test."},
+    {"path": "electron/tasks/profileTaskExecution.ts", "entry_point": "executeProfileOperation", "disposition": "enforced", "evidence": "JSON delegates to buildProfileHttpRequest; process passes the same complete operation to templateContext and fails the native-image shape guard."},
+    {"path": "electron/audioTaskRunner.ts", "entry_point": "templateContext", "disposition": "not-affected", "evidence": "Audio operations retain their distinct endpoint/fields and therefore do not satisfy the image-only normalization guard."}
+  ],
+  "recurrence": {"classification": "recurring", "reason": "Global curated identity matching can project another protocol's mode IDs for any relay and matching image family.", "same_class_scan": ["node scripts/door-map.mjs templateContext", "node scripts/door-map.mjs templateContext buildProfileHttpRequest", "rg modelEnum electron/shared/modelArchetypes", "Inspected taskTemplateParams, referenceInputParams, canvas builder and actual multipart renderer independently"]},
+  "prevention": {"kind": "centralized-boundary", "enforcement_path": "electron/catalog/profileHttpRequest.ts", "invariant": "Transport-aware final model projection follows catalog identity instead of an unrelated curated mode ID.", "failure_mode": "Unsupported actual catalog identities remain visible provider errors; no speculative aliases, automatic retry or provider fallback is introduced.", "exception_policy": "none", "strategy": "Exact curated-mode membership plus structural native endpoint/template detection; preserve all other existing mappings and variants.", "artifacts": ["electron/catalog/profileHttpRequest.ts", "electron/catalog/multipartOperation.ts", "electron/audioTaskRunner.ts", "electron/tasks/profileTaskExecution.ts"]},
+  "regression_tests": ["electron/catalog/transportModelIdentity.test.ts"],
+  "class_regression_tests": ["electron/catalog/transportModelIdentity.test.ts"],
+  "legacy_paths": {"status": "removed", "removed_paths": ["electron/catalog/profileHttpRequest.ts", "electron/catalog/multipartOperation.ts"], "rationale": "Replace unconditional cross-protocol model projection at the shared renderer; existing saved projections are normalized in-memory, not rewritten on disk."},
+  "dependency_lifecycle": {"decision": "not-applicable", "rationale": "No dependency chooses these application-owned aliases; installed runtime and provider transport are retained unchanged.", "exit_criteria": []},
+  "migration": "No project migration. Existing catalog key/alias and stored canvas intent are preserved; stale generated aliases are recognized at render time, even when a new custom capability contract now exists.",
+  "residual_risks": ["Provider-native exact pixel sizing remains provider behavior and is not repaired by model identity normalization.", "Real generation and zh/en runtime acceptance remain required after implementation.", "Generic DALL-E quality controls must not be silently reinterpreted as GPT Image pricing tiers."]
+}

@@ -12,22 +12,32 @@ const deps = vi.hoisted(() => ({
 }))
 vi.mock('./agentLoopMode', () => ({ runSingleShotAgent: deps.send }))
 vi.mock('../windowUrlParam', () => ({ readWindowUrlParam: () => deps.project }))
-vi.mock('../project/workbenchProjectSession', () => ({ getActiveWorkbenchProjectId: () => deps.project }))
 vi.mock('../../desktop/bridge', () => ({ getDesktopBridge: () => ({
   video: { extractFrame: deps.frame },
   assets: { list: deps.assets },
 }) }))
 vi.mock('../generationCanvas/agent/runStoryboardPlanner', () => ({ runStoryboardPlanner: deps.planner }))
 vi.mock('../capability/multiShotCanvasLanding', () => ({ handleMultiShotCanvasLandingOp: deps.landing }))
-vi.mock('../project/projectCanvasReadSurface', () => ({
-  captureCurrentProjectCanvasReadSurfaceBinding: deps.captureSurface,
-  sealCurrentProjectCanvasReadSnapshot: deps.sealSurfaceSnapshot,
-}))
+vi.mock('../project/projectCanvasReadSurface', () => {
+  // 签发点替身：deps.project 就是此刻窗口里打开的项目；上下文在它变化后失效。
+  const issue = () => {
+    const projectId = deps.project
+    return { binding: { projectId, immutableProjectUuid: `uuid-${projectId}`, projectGeneration: 1 }, signal: new AbortController().signal,
+      assertCurrent: () => { if (deps.project !== projectId) throw Object.assign(new Error('project_binding_stale'), { code: 'project_binding_stale' }) } }
+  }
+  return {
+    captureCurrentProjectCanvasReadSurfaceBinding: deps.captureSurface,
+    sealCurrentProjectCanvasReadSnapshot: deps.sealSurfaceSnapshot,
+    withProjectAction: <R>(run: (project: ReturnType<typeof issue>) => R, unavailable?: () => R) => deps.project ? run(issue()) : unavailable?.(),
+    isProjectExecutionContextCurrent: (context?: ReturnType<typeof issue>) => { try { context?.assertCurrent(); return Boolean(context) } catch { return false } },
+  }
+})
 import { runDirectionPlanner } from '../generationCanvas/agent/runDirectionPlanner'
 import { makeShotVerifyDeps } from '../generationCanvas/agent/shotVerifyJudge'
 import { handleCapabilityApply } from '../capability/capabilityApplyHandler'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
 import { useWorkbenchStore } from '../workbenchStore'
+import { withProjectAction } from '../project/projectCanvasReadSurface'
 
 const plan = { title: 'this operation', anchors: [], shots: [{ index: 1, shotId: 'shot-1', shotKind: 'video' as const, durationSec: 3, anchorIds: [], prompt: 'rain' }] }
 const candidates = [{ key: 'a', title: 'first', oneLiner: 'one' }, { key: 'b', title: 'second', oneLiner: 'two' }]
@@ -82,12 +92,12 @@ describe('remaining production callers use the explicit shared Agent profile', (
     let release!: (value: { url: string }) => void
     deps.frame.mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
     deps.assets.mockResolvedValueOnce({ items: [{ id: 'asset-frame-A', projectId: 'A', data: { url: 'nomi-local://frame-A' } }], cursor: null })
-    const judge = makeShotVerifyDeps()
+    const project = withProjectAction(project => project)!
+    const judge = makeShotVerifyDeps(project)
     const extracting = judge.extractFrame('nomi-local://video')
-    deps.project = 'B'
     release({ url: 'nomi-local://frame-A' })
     await judge.judge('check A', await extracting)
-    expect(deps.frame).toHaveBeenCalledWith({ videoUrl: 'nomi-local://video', which: 'first', projectId: 'A' })
+    expect(deps.frame).toHaveBeenCalledWith({ videoUrl: 'nomi-local://video', which: 'first', projectId: 'A', projectBinding: project.binding })
     expect(deps.send).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'A', featureKey: 'nomi:shot-verify:A',
       attachments: [
         { url: 'nomi-local://frame-A', contentType: 'image/png', fileName: 'shot-frame.png', kind: 'image' },
@@ -96,11 +106,14 @@ describe('remaining production callers use the explicit shared Agent profile', (
     }))
     expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillKey')
     expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillName')
+    deps.project = 'B'
+    await expect(judge.judge('check A', 'nomi-local://frame-A')).rejects.toThrow('project_binding_stale')
+    expect(deps.send).toHaveBeenCalledOnce()
   })
 
   it('refuses a local frame that has no main-owned asset identity', async () => {
     deps.assets.mockResolvedValueOnce({ items: [], cursor: null })
-    await expect(makeShotVerifyDeps('A').judge('check', 'nomi-local://missing-frame'))
+    await expect(makeShotVerifyDeps(withProjectAction(project => project)!).judge('check', 'nomi-local://missing-frame'))
       .rejects.toThrow('shot_verify_frame_asset_unresolved')
     expect(deps.send).not.toHaveBeenCalled()
   })

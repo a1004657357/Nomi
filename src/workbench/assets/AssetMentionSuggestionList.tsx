@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../electron/shared/contracts/mediaImportPolicy';
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPlugConnected } from '@tabler/icons-react'
@@ -16,6 +17,8 @@ export type MentionSuggestionItem = {
   url: string
   label: string
   kind?: 'image' | 'video' | 'audio'
+  /** 落盘边界派生的预览（图片缩略 / 视频封面）；列表画它，不为一个 28px 的格子解码原图或抽帧。 */
+  thumbnailUrl?: string
   group: 'current' | 'canvas' | 'library' | 'upload'
   index?: number
   /** 分镜候选可把 canvas owner 的结果单独标成「某镜结果」，不复制 group 语义。 */
@@ -24,15 +27,16 @@ export type MentionSuggestionItem = {
 
 export type MentionSuggestionListRef = { onKeyDown: (args: { event: KeyboardEvent }) => boolean }
 
-export type MentionUploadControls = { openFilePicker: () => void; inputRef: React.RefObject<HTMLInputElement>; onInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void; isDragging: boolean }
+export type MentionUploadControls = { openFilePicker: () => void; inputRef: React.RefObject<HTMLInputElement | null>; onInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void; isDragging: boolean }
 type Props = { items: MentionSuggestionItem[]; command: (item: MentionSuggestionItem) => void; upload?: MentionUploadControls }
 
-function displayAsset(url: string, kind: AssetKind, name: string): AssetRef {
+function displayAsset(url: string, kind: AssetKind, name: string, thumbnailUrl?: string): AssetRef {
   return {
     id: url,
     kind,
     name,
     renderUrl: url,
+    ...(thumbnailUrl ? { thumbUrl: thumbnailUrl } : {}),
     source: 'project',
     origin: { source: 'project', projectId: '', relativePath: '' },
   }
@@ -100,7 +104,7 @@ const AssetMentionSuggestionList = React.forwardRef<MentionSuggestionListRef, Pr
               )}
             >
               <span className={cn('relative size-[26px] shrink-0 select-none overflow-hidden rounded-nomi-sm bg-nomi-ink-05 flex items-center justify-center')} aria-hidden>
-                <AssetThumb asset={displayAsset(item.url, item.kind ?? 'image', item.label)} playSize={12} />
+                <AssetThumb asset={displayAsset(item.url, item.kind ?? 'image', item.label, item.thumbnailUrl)} playSize={12} />
               </span>
               <span className={cn('min-w-0 flex-1 truncate text-micro leading-none text-nomi-ink-80')}>{item.label}</span>
               {item.group === 'current' ? (
@@ -130,7 +134,7 @@ const AssetMentionSuggestionList = React.forwardRef<MentionSuggestionListRef, Pr
           >
             {upload.isDragging ? t('assetLibrary.mentionDropUpload') : t('assetLibrary.mentionUpload')}
           </button>
-          <input ref={upload.inputRef} type="file" accept="image/*,video/*,audio/*" onChange={upload.onInputChange} className="sr-only" />
+          <input ref={upload.inputRef} type="file" accept={acceptAttrForSurface('media-reference')} onChange={upload.onInputChange} className="sr-only" />
         </div>
       ) : null}
     </div>

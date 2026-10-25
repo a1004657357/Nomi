@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collectUngeneratedReferenceAncestors } from './referenceAncestors'
+import { collectUngeneratedReferenceAncestors, expandNodeIdsWithUngeneratedReferenceAncestors } from './referenceAncestors'
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 
 function node(id: string, url?: string): GenerationCanvasNode {
@@ -53,5 +53,25 @@ describe('collectUngeneratedReferenceAncestors（单节点生成自动备齐参�
     const nodes = [node('a'), node('b')]
     const edges = [edge('a', 'b'), edge('b', 'a')]
     expect(() => collectUngeneratedReferenceAncestors('a', { nodes, edges })).not.toThrow()
+  })
+
+  it('批量选择下游时自动纳入未生成上游，已生成上游不重复纳入', () => {
+    const nodes = [
+      node('character'),
+      node('generated-style', 'nomi-local://style.png'),
+      node('keyframe'),
+      node('shot'),
+    ]
+    const edges = [
+      edge('character', 'keyframe'),
+      edge('generated-style', 'keyframe'),
+      edge('keyframe', 'shot'),
+    ]
+
+    expect(expandNodeIdsWithUngeneratedReferenceAncestors(['shot'], { nodes, edges })).toEqual([
+      'keyframe',
+      'character',
+      'shot',
+    ])
   })
 })

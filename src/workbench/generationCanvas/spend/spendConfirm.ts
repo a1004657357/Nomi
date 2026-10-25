@@ -1,14 +1,14 @@
+import { declareStoreLifetime } from '../../project/storeLifetime'
 import { toast } from '../../../ui/toast'
 import { DEFAULT_CANVAS_BATCH_CONCURRENCY } from '../components/canvasProductionScope'
-import type { SpendQuote } from '../../../../electron/shared/contracts/spendQuote'
 import { isComfyuiVendorKey } from '../model/comfyuiVendor'
 import { create } from 'zustand'
 import { mintSpendGrant } from '../../api/taskApi'
 import type { ProductionContractView } from './productionContractView'
 import type { AnchorCheckpointCardModel } from './anchorCheckpointView'
 import i18n from '../../../i18n'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import { getDesktopBridge } from '../../../desktop/bridge'
+import { classifyGenerationError } from '../../observability/classifyError'
 
 type GenerationEtaBucket = {
   key: string
@@ -20,10 +20,13 @@ type GenerationEtaBucket = {
   p90Seconds: number
 }
 
-export function generationCostContextForNode(node: { meta?: Record<string, unknown> | null } | undefined): GenerationCostContext {
+export function generationCostContextForNode(
+  node: { meta?: Record<string, unknown> | null } | undefined,
+  /** 发起确认那一刻签发的项目（它的历史耗时统计）；null = 不属于任何项目，只给冷启动估计。 */
+  projectId: string | null,
+): GenerationCostContext {
   const meta = node?.meta || {}
   const read = (key: string): string => typeof meta[key] === 'string' ? String(meta[key]).trim() : ''
-  const projectId = getDesktopActiveProjectId()
   return {
     vendorKey: read('modelVendor') || read('vendor') || read('imageModelVendor') || read('videoModelVendor') || undefined,
     // generationEtaStats indexes the recipe identity from provenance, where modelAlias wins.
@@ -33,8 +36,11 @@ export function generationCostContextForNode(node: { meta?: Record<string, unkno
   }
 }
 
-export function generationCostContextForNodes(nodes: readonly ({ meta?: Record<string, unknown> | null } | undefined)[]): GenerationCostContext {
-  const contexts = nodes.map(generationCostContextForNode)
+export function generationCostContextForNodes(
+  nodes: readonly ({ meta?: Record<string, unknown> | null } | undefined)[],
+  projectId: string | null,
+): GenerationCostContext {
+  const contexts = nodes.map((node) => generationCostContextForNode(node, projectId))
   const vendorKeys = new Set(contexts.map((context) => context.vendorKey).filter(Boolean))
   const modelKeys = new Set(contexts.map((context) => context.modelKey).filter(Boolean))
   return vendorKeys.size === 1 && modelKeys.size === 1
@@ -51,8 +57,9 @@ export type HostingDisclosure = {
 // 付费生成确认 + 铸令牌（渲染层单一收口）。
 // 方案：docs/plan/2026-06-21-spend-confirmation-gate.md（所有付费入口使用本次报价确认）。
 //
-// 铸令牌只发生在「真人点击确认」的 onClick → resolve(true) → mintSpendGrant 这条链上。
-// AI 只能发 tool-call / 文本，够不到这里；agent 受理走同一确认（不可 light 抑制）。
+// 铸令牌只发生在真人动作之后：要么是这张卡上的「确认」，要么是用户自己按下的 ↑（单个、不贵、非 Agent，
+// 见 spendConfirmationRequirement——2026-09-25 用户拍板单个节点生成不弹窗）。两条都先向主进程要报价、
+// 凭报价铸令牌。Agent 发起的一律走这张卡（initiator: 'agent' 必问）。
 
 export type SpendConfirmRequest = {
   title: string
@@ -107,6 +114,20 @@ export type SpendConfirmRequest = {
   hostingDisclosure?: HostingDisclosure
 }
 
+const BATCH_GRANT_MIN_TTL_MS = 30 * 60_000
+const BATCH_GRANT_MAX_TTL_MS = 4 * 60 * 60_000
+const BATCH_GRANT_PER_NODE_MS = 11 * 60_000
+const BATCH_GRANT_BUFFER_MS = 15 * 60_000
+
+/** 批量授权覆盖串行 Codex 最坏 10 分钟/张，同时仍限制在 4 小时内。 */
+export function batchSpendGrantTtlMs(nodeCount: number): number {
+  const count = Math.max(1, Math.floor(Number.isFinite(nodeCount) ? nodeCount : 1))
+  return Math.min(
+    BATCH_GRANT_MAX_TTL_MS,
+    Math.max(BATCH_GRANT_MIN_TTL_MS, count * BATCH_GRANT_PER_NODE_MS + BATCH_GRANT_BUFFER_MS),
+  )
+}
+
 type Pending = SpendConfirmRequest & { resolve: (ok: boolean) => void }
 
 export type SpendConfirmState = {
@@ -118,7 +139,7 @@ export type SpendConfirmState = {
    * FIFO：先到先显。
    */
   queue: Pending[]
-  /** 弹确认；resolve true/false。每次付费都需确认。已有在显 → 入队等候（不覆盖）。 */
+  /** 弹确认；resolve true/false。要不要弹由调用方先过 spendConfirmationRequirement。已有在显 → 入队等候（不覆盖）。 */
   requestConfirm: (req: SpendConfirmRequest) => Promise<boolean>
   /** 对话框按钮回调：ok=确认。决议队首后自动晋升下一个。 */
   resolvePending: (ok: boolean, rememberHosting?: boolean) => void
@@ -155,25 +176,29 @@ export const useSpendConfirmStore = create<SpendConfirmState>()((set, get) => ({
  * @param nodeIds 本次要生成的节点 id（grant 绑定它们，主进程按 nodeId 核验消费）。
  */
 export async function confirmAndMintGrant(opts: {
+  assertCurrent?: () => Promise<void>
   nodeIds: string[]
   title: string
   message: string
   confirmLabel?: string
   maxAttemptsPerNode?: number
-  /** 本次要跑的节点（用来判「花不花额度」——本地 ComfyUI 不花就不弹卡）。 */
-  nodes?: Array<{ meta?: Record<string, unknown> | null } | undefined>
+  /** 本次要跑的每一份（报价按它逐份报；份数也是「一下跑几个」的判据，见 spendConfirmationRequirement）。 */
+  nodes: Array<{ meta?: Record<string, unknown> | null } | undefined>
   hostingDisclosure?: HostingDisclosure
+  /** 必填：见 GenerationConfirmationGuards.initiator（缺省即 fail-open）。 */
+  initiator: SpendInitiator
 }): Promise<string | null> {
-  // nodes 传进来才判得出花不花钱；没传就照旧弹卡（保守：宁可多问一次）。
   let quoteId: string | undefined
-  const ok = await confirmGenerationSpend(opts.nodes ?? [undefined], {
+  const ok = await confirmGenerationSpend(opts.nodes, {
     title: opts.title,
+    initiator: opts.initiator,
     message: opts.message,
     onQuoteConfirmed: (id) => { quoteId = id },
     ...(opts.confirmLabel ? { confirmLabel: opts.confirmLabel } : {}),
     ...(opts.hostingDisclosure ? { hostingDisclosure: opts.hostingDisclosure } : {}),
   })
   if (!ok) return null
+  await opts.assertCurrent?.()
   return mintSpendGrant(opts.nodeIds, opts.maxAttemptsPerNode, quoteId)
 }
 
@@ -197,14 +222,56 @@ export function generationSpendsCredits(nodes: Array<{ meta?: Record<string, unk
   return !vendors.every((v) => isComfyuiVendorKey(v))
 }
 
-/** 付费确认（不花额度就直接放行，不弹卡）。返回 false = 用户取消。 */
+/** 谁发起的这一下生成：用户自己在画布 / 分镜表上点的，还是 Agent（含外部 MCP）替他发起的。 */
+export type SpendInitiator = 'user' | 'agent'
+
+/**
+ * 「这一下要不要弹付费确认」的**唯一判据**（2026-09-25 用户拍板：单个节点生成不弹窗）。
+ *
+ * 为什么是这几条、别的都不问：确认卡的存在意义是「别让人意外花钱」。用户自己点一个节点的 ↑ / 分镜表的
+ * 「生成镜 N」，就是他本人要这一张，再弹一张卡让他再点一次，是每天几十次的白摩擦。剩下的都是「意外」的来源：
+ *   - Agent / 外部 MCP 发起：人不一定在看，钱这一步必须人点头；
+ *   - 一下跑 ≥2 个（×N、多选、批量、先补参考再生成）：点一次花好几份，数目要人看一眼；
+ *   - 第一次走匿名托管：告知只能在这张卡里给。
+ * **不看金额**（2026-09-26 用户拍板「先把价格这个维度隐藏掉，等后续官方上线再说」）：现在所有模型都走中转、
+ * 各家价格不一，Nomi 不计算价格，内置目录里的生成模型一条价都没有——拿金额当判据只会是永远不生效的死判据，
+ * 「拿不到报价就问」也会变成每次都问。等有了官方模型供应、价格可算时再重新设计。
+ *
+ * 纯函数、调用方只报事实（谁发起、跑几个、要不要告知），不在入口上各判各的——
+ * Ctrl+Enter 单选、重试、分镜行生成、结果卡重新生成走的是不同函数，但都落到这一个判据上。
+ */
+export function spendConfirmationRequirement(input: {
+  initiator: SpendInitiator
+  runCount: number
+  hostingDisclosure: boolean
+  submissionUnknown?: boolean
+}): boolean {
+  return input.submissionUnknown === true || input.initiator === 'agent' || input.runCount > 1 || input.hostingDisclosure
+}
+
+/**
+ * 付费确认（不花额度就直接放行，不弹卡；判据见 `spendConfirmationRequirement`）。返回 false = 用户取消。
+ *
+ * 不弹卡时**照样**先向主进程要报价、把 quoteId 交给调用方去铸令牌：主进程的花钱闸认的是「这一笔有一张
+ * 被确认过的报价」（`electron/spendGrant.ts` `assertAndConsumeQuotedSpend`），不带报价的令牌会被它拦下、
+ * 改弹一张「经 AI 助手驱动」的卡——那等于把一个弹窗换成另一个更吓人的弹窗。这里的「确认」由用户按 ↑
+ * 那一下承担。报价只拿来铸令牌，不参与「问不问」。
+ */
 export async function confirmGenerationSpend(
-  nodes: Array<{ meta?: Record<string, unknown> | null } | undefined>,
-  opts: { title: string; message: string; confirmLabel?: string; hostingDisclosure?: HostingDisclosure; onQuoteConfirmed?: (quoteId: string) => void },
+  nodes: Array<{ meta?: Record<string, unknown> | null; error?: string; runs?: readonly { status?: string; error?: string }[] } | undefined>,
+  opts: { title: string; message: string; confirmLabel?: string; hostingDisclosure?: HostingDisclosure; onQuoteConfirmed?: (quoteId: string) => void; initiator: SpendInitiator },
 ): Promise<boolean> {
-  if (!generationSpendsCredits(nodes)) return true
+  const submissionUnknown = nodes.some((node) => {
+    const latest = node?.runs?.[0]
+    const error = node?.error || (latest?.status === 'error' ? latest.error : undefined)
+    return error && classifyGenerationError(error).kind === 'submission-unknown'
+  })
+  const message = submissionUnknown
+    ? `${i18n.t('generationCommon.observability.error.submissionUnknown.hint')}\n\n${opts.message}`
+    : opts.message
+  if (!generationSpendsCredits(nodes) && !submissionUnknown) return true
   const inputs = nodes.map((node) => {
-    const context = generationCostContextForNode(node)
+    const context = generationCostContextForNode(node, null)
     return { vendorKey: context.vendorKey ?? '', modelKey: context.modelKey ?? '', parameters: node?.meta ?? {} }
   })
   let quote
@@ -213,11 +280,22 @@ export async function confirmGenerationSpend(
     toast(error instanceof Error ? error.message : i18n.t('generationCommon.batchPlan.authorizationFailed'), 'error')
     return false
   }
+  const required = spendConfirmationRequirement({
+    initiator: opts.initiator,
+    runCount: nodes.length,
+    hostingDisclosure: Boolean(opts.hostingDisclosure),
+    submissionUnknown,
+  })
+  if (!required) {
+    if (quote) opts.onQuoteConfirmed?.(quote.quoteId)
+    return true
+  }
+  // 卡上不印金额（2026-09-26 用户拍板：官方额度上线前隐藏价格维度）；报价照样拿，只用来铸令牌。
   const confirmed = await useSpendConfirmStore.getState().requestConfirm({
-    details: [spendQuoteDetail(quote ?? { amount: null })],
     title: opts.title,
-    message: opts.message,
+    message,
     ...(opts.confirmLabel ? { confirmLabel: opts.confirmLabel } : {}),
+
     ...(opts.hostingDisclosure ? { hostingDisclosure: opts.hostingDisclosure } : {}),
   })
   if (confirmed && quote) opts.onQuoteConfirmed?.(quote.quoteId)
@@ -245,7 +323,7 @@ const COLD_START_SECONDS: Record<Exclude<GenerationCostKind, 'text' | 'mixed'>, 
 
 function historicalEta(context: GenerationCostContext | undefined, kind: GenerationCostKind): GenerationEtaBucket | undefined {
   if (!context?.vendorKey || !context.modelKey || kind === 'text' || kind === 'mixed') return undefined
-  const projectId = context.projectId || getDesktopActiveProjectId()
+  const projectId = context.projectId
   let stats = context.etaStats
   if (!stats && projectId) {
     const cached = etaStatsCache.get(projectId)
@@ -284,11 +362,20 @@ export function describeGenerationCost(count: number, kind: GenerationCostKind =
 }
 
 
-export function spendQuoteDetail(quote: Pick<SpendQuote, 'amount'>): { label: string; value: string } {
-  return {
-    label: i18n.t('generationCommon.spend.estimatedAmount'),
-    value: quote.amount === null
-      ? i18n.t('generationCommon.spend.catalogUnpriced')
-      : i18n.t('generationCommon.spend.catalogCredits', { amount: quote.amount }),
-  }
-}
+/**
+ * C1 寿命声明：付费待确认队列（审计 §9 点名「最值得先做真机的一条，涉钱」）。
+ *
+ * **释放不能只是置空**：`pending`/`queue` 里挂着还没 resolve 的 Promise 回调——
+ * 直接 `setState({ pending: null })` 会让等它的那次生成**永远等下去**（一个不会返回的
+ * await，任务卡就此停在「等待确认」）。所以这里逐个 `resolve(false)`：
+ * 离开项目 = 没有人会去答这张卡了，那就是「不确认」。
+ */
+export const spendConfirmStoreLifetime = declareStoreLifetime({
+  store: 'useSpendConfirmStore',
+  fields: { pending: 'project', queue: 'project' },
+  releaseProject: () => {
+    const { pending, queue } = useSpendConfirmStore.getState()
+    useSpendConfirmStore.setState({ pending: null, queue: [] })
+    for (const entry of [pending, ...queue]) entry?.resolve(false)
+  },
+})

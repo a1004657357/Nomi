@@ -1,0 +1,184 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-tsx-diagnostics-lint",
+  "problem_type": "Caught renderer failures bypass diagnostic ownership",
+  "symptom": "Three direct console calls fail lint and omit failure details from packaged diagnostic logs; two unused values and one stable-ref dependency produce avoidable warnings.",
+  "direct_cause": "Three resource boundaries write directly to console instead of the existing rendererLog owner.",
+  "class_root": "Equivalent caught asset failures do not consistently converge on the renderer failure-evidence boundary.",
+  "affected_population": [
+    "Scene3D environment, mannequin and generated-model loading failures"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+    "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+    "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+    "scripts/tsx-diagnostics-lint.node-test.mjs",
+    "src/desktop/rendererLog.ts"
+  ],
+  "entry_points": [
+    "EnvironmentResourceBoundary.componentDidCatch",
+    "MannequinAssetBoundary.componentDidCatch",
+    "GeneratedModelBoundary.componentDidCatch"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "Existing repository logging API and current source prove both DevTools visibility and forwarding to the diagnostic bridge; no external or dependency behavior changes.",
+  "invariants": [
+    "Warning/error severity, original Error, code and stack survive reporting",
+    "Fallback and environment reset behavior remain unchanged",
+    "No ESLint rule, warning budget, display text, callback, model/task parameter or stored data is changed",
+    "Remove only unused pure computation/subscriptions; memo ref dependency is stable by its useRef owner"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "initialEditorCameraRef"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts",
+      "symbol": "console"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DEditorSession.ts",
+      "symbol": "initialEditorCameraRef"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "symbol": "React"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "symbol": "React"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "React"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "React"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "symbol": "React"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "symbol": "useWorkbenchStore"
+    }
+  ],
+  "door_reduction": {
+    "before": 11,
+    "after": 11,
+    "why_not": "Three distinct resource boundaries must retain their own fallback/reset lifecycles; they converge only at the existing rendererLog diagnostic owner. Unrelated scanned doors remain unchanged."
+  },
+  "generality_proof": "All three resource-failure consumers use the existing shared reporting API. Source-driven class tests invoke each real catch and fallback path with the real rendererLog owner and an isolated transport sink, validating local visibility, severity and serialized error evidence.",
+  "shared_boundaries": [
+    {
+      "path": "src/desktop/rendererLog.ts",
+      "symbol": "logRendererError",
+      "responsibility": "Existing unchanged owner preserves local visibility and forwards structured error evidence to the main diagnostic log"
+    },
+    {
+      "path": "scripts/tsx-diagnostics-lint.node-test.mjs",
+      "symbol": "cases",
+      "responsibility": "Enforce all three source boundary reporters and preserved fallbacks"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "entry_point": "EnvironmentResourceBoundary",
+      "disposition": "enforced",
+      "evidence": "Actual source catch/render methods are executed through the existing diagnostic owner in focused tests"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "entry_point": "MannequinAssetBoundary and GeneratedModelBoundary",
+      "disposition": "enforced",
+      "evidence": "Actual source catch/render methods are executed through the existing diagnostic owner in focused tests"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "The same evidence-loss pattern exists in three resource loaders and can recur for any invalid/offline model or environment resource.",
+    "same_class_scan": [
+      "Three direct console.warn/error calls in the two scoped TSX files",
+      "Generated door-map.mjs scan for console/logRendererError/logRendererWarn/initialEditorCameraRef plus scoped actual React/store reads",
+      "Read rendererLog.ts and existing rendererLog.test.ts; no replacement reporter or fallback added"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "scripts/tsx-diagnostics-lint.node-test.mjs",
+    "invariant": "All three caught resource failures keep their local severity and fallback while reaching the structured diagnostic bridge",
+    "failure_mode": "Source-driven tests fail on missing bridge evidence, lost error code, wrong severity or missing fallback/reset",
+    "exception_policy": "none",
+    "strategy": "Replace console-only exits with the existing reporter at every scoped resource boundary; preserve distinct fallback owners",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "scripts/tsx-diagnostics-lint.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "scripts/tsx-diagnostics-lint.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/tsx-diagnostics-lint.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx"
+    ],
+    "rationale": "Console-only failure exits are replaced in place; rendererLog still emits to DevTools as well as diagnostics"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency changes; reuse current React refs and the existing reporting API",
+    "exit_criteria": []
+  },
+  "migration": "No persisted-data or prompt migration; no geometry/layout or task-route changes",
+  "residual_risks": [
+    "No App, live resource/GPU or packaged diagnostic export acceptance in this focused slice",
+    "Six existing Fast Refresh warnings in the prior i18n scope require ownership moves and are not suppressed",
+    "Main owns locomotion/capabilityLegacyActions TS and its newer handlers; retain them while integrating"
+  ],
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/tsx-diagnostics-lint.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/tsx-diagnostics-lint.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

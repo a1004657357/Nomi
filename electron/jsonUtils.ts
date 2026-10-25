@@ -112,6 +112,22 @@ export function pickUpstreamMessage(record: JsonRecord, sanitize: (message: stri
 }
 
 /**
+ * 从上游失败响应体里挑出**它自己给的错误码**（不是那句人话）：`{ error: { code: "model_not_found" } }` /
+ * `{ code: "model_not_found" }`。与 `pickUpstreamMessage` 同住一处、同一个「全仓唯一键优先级表」的纪律——
+ * 谁要把上游失败的原因带过 IPC（vendorHttp 的媒体请求、aiSdkVendorError 的文本请求）都读这一份。
+ *
+ * 为什么要带码：状态码（400/422）只说「请求有问题」，从不说**为什么**——把它当成「参数不被接受」就是猜
+ * （2026-09-29：供应商说模型已下线，界面却叫用户去改比例）。上游的错误码才是它自己说的原因。
+ *
+ * 只收**字符串形的标识码**（`[A-Za-z0-9_.:-]`，≤64）；纯数字的业务码走 `logicalCode`，
+ * 自由文本走 `pickUpstreamMessage`。挑不出返回 ""。
+ */
+export function pickUpstreamCode(record: JsonRecord): string {
+  const candidate = firstString(readNestedRecord(record, ["error", "code"]), readNestedRecord(record, ["errors", "code"]), record.code);
+  return /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(candidate) ? candidate : "";
+}
+
+/**
  * 找出字符串里第一个无法安全放进 HTTP 头/凭证的字符，返回 null 表示安全。
  * 治本于一个真坑（kie createTask 报「Cannot convert argument to a ByteString
  * because the character at index 7 has a value of 34915」）：API 密钥里混进中文/
@@ -180,4 +196,15 @@ export function readNestedRecord(input: unknown, pathParts: string[]): unknown {
     current = (current as JsonRecord)[part];
   }
   return current;
+}
+
+/**
+ * 就地深冻结一棵纯数据树并原样返回（已冻结的子树跳过）。调用方负责先拷贝，
+ * 冻结的是「交出去之后谁都不许改」的那一份：改了在严格模式下当场抛，而不是静默污染共享状态。
+ */
+export function deepFreeze<T>(value: T): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  return value;
 }

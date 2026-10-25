@@ -23,9 +23,20 @@ describe('approved model access architecture', () => {
     expect(page).toContain("value={saved ? 'saved-key' : apiKey}")
     expect(page).toContain('disabled={busy || saved}')
     expect(page.indexOf('data-platform-key-only')).toBeLessThan(page.indexOf('data-key-only-success'))
-    expect(page).not.toContain('baseUrl')
-    expect(page).not.toContain('ModelChipGroups')
+    // 2026-09-29 用户拍板「一开始配置就该能改地址」（主域被墙的人得先换线路，key 才验得出去）：
+    // 地址行用已接入卡片同一个组件、同一个保存入口，不在这页另写一份地址编辑。
+    expect(page).toContain('<VendorBaseUrlField')
+    expect(page).not.toContain('upsertVendor(')
     expect(page).not.toContain('文档')
+
+    // 「已有预置地址、模型和请求适配」必须真的有清单：页面拿到的是模型数组本身，
+    // 不是一个数字，并且用的是全站同一个 chip 列表组件（不另写第二份列表）。
+    expect(page).toContain('models: readonly ChipModel[]')
+    expect(page).toContain('<ModelChipGroups')
+    expect(drawer).toContain('models={card.vendorModels}')
+    expect(drawer).not.toContain('modelCount={')
+    // 未接入的供应商也要带着真实清单进投影——曾经在这里被硬写成空数组。
+    expect(connections).not.toMatch(/kind: 'api',\s*\n\s*models: \[\],/)
 
     // Routing must be derived from the vendor archive field, not a hardcoded allowlist.
     expect(connections).not.toMatch(/\['apimart',\s*'kie'\]\.includes/)
@@ -51,7 +62,8 @@ describe('approved model access architecture', () => {
     expect(available.indexOf('vendorKey: DREAMINA_CONNECTION_KEY')).toBeLessThan(available.indexOf('vendorKey: CODEX_LOCAL_VENDOR_KEY'))
   })
 
-  it('keeps MCP out of Models and places its management before trusted hosts', () => {
+  // 2026-09-14：「可信发起方」并进每张客户端卡（用户拍板），设置页不再有独立一栏。
+  it('keeps MCP out of Models and folds trusted hosts into the client cards', () => {
     const drawer = read('src/ui/onboarding/OnboardingDrawer.tsx')
     const catalog = read('src/ui/onboarding/useOnboardingDrawerCatalog.ts')
     const automation = read('src/workbench/settings/AutomationPermissionsSection.tsx')
@@ -60,6 +72,7 @@ describe('approved model access architecture', () => {
     expect(drawer).not.toContain('<ConnectAssistantCard')
     expect(catalog).not.toContain('mcpInfo')
     expect(automation).toContain('data-settings-action="manage-mcp-connections"')
-    expect(automation.indexOf('settings-mcp-title')).toBeLessThan(automation.indexOf('settings-hosts-title'))
+    expect(automation).not.toContain('settings-hosts-title')
+    expect(automation).toContain('onTrustChange={toggleHost}')
   })
 })

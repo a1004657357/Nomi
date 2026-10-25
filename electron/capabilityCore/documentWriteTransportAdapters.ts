@@ -1,3 +1,5 @@
+import { safeTransportFailure } from "./transportFailure";
+import { CAPABILITY_TRANSPORT_PUBLIC_ERROR_CODES } from "../shared/surfacePortBinding";
 import type { RuntimeToolCall, RuntimeToolDecision } from "../shared/agentCapabilities/transportContracts";
 import {
   documentWriteOperationForAlias,
@@ -5,7 +7,7 @@ import {
 } from "../shared/agentCapabilities/documentWrite";
 import type { DocumentAnchorRef, PreconditionSet, TargetRef } from "../shared/capabilityTargeting";
 import type { CapabilityExecutorRegistry } from "./capabilityExecutorRegistry";
-import type { CanvasReadSurfaceRegistry, CapturedCanvasReadPort } from "./canvasReadSurfaceRegistry";
+import type { CanvasReadSurfaceRegistry, ProjectSurfaceSession } from "./canvasReadSurfaceRegistry";
 import {
   createRendererDocumentWriteVerifiedInvocationFactory,
   type VerifiedCapabilityInvocation,
@@ -29,33 +31,31 @@ export type PiDocumentWriteTransportAdapter = Readonly<{
   dispose(): void;
 }>;
 
+// C4：放行清单从 owner 派生，不再手抄。这一份以前少了 `capability_target_stale`
+// 与 `project_identity_unavailable`（documentRead 那份连 receipt_unresolved 也少——同一张表抄两遍抄出两个数）。
 function safeFailure(error: unknown): Extract<RuntimeToolDecision, { ok: false }> {
-  const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
-    ? (error as { code: string }).code
-    : "capability_execution_failed";
-  const publicCodes = new Set([
-    "capability_invocation_unverified", "capability_authority_invalid", "capability_input_invalid",
-    "capability_policy_stale", "capability_output_invalid", "capability_timeout", "capability_cancelled",
-    "capability_execution_failed", "capability_unsupported", "project_binding_stale", "surface_port_suspended",
-    "surface_port_unavailable", "surface_port_stale", "surface_owner_mismatch", "document_target_stale",
-  ]);
-  const published = publicCodes.has(code) ? code : "capability_execution_failed";
-  return { ok: false, code: published, message: published };
+  return safeTransportFailure(error, { allowedCodes: CAPABILITY_TRANSPORT_PUBLIC_ERROR_CODES, fallbackCode: "capability_execution_failed" });
 }
 
-function documentTarget(target: TargetRef): Extract<TargetRef, { kind: "document" }> | null {
-  return target.kind === "document" ? target : null;
+/**
+ * 把回合里的 target 变成文稿写的地址：用户站在创作页时 target 就是带锚的文稿；站在画布/预览时
+ * target 是那个面自己的（节点/片段），文稿写就落到整篇（whole-document）。两种都是当下真实的前提。
+ */
+function documentTarget(target: TargetRef, documentId: string): Extract<TargetRef, { kind: "document" }> {
+  if (target.kind !== "document") return { kind: "document", documentId, anchor: { kind: "whole-document" } };
+  if (target.documentId !== documentId) throw new Error("capability_input_invalid");
+  return target;
 }
 
 export function createPiDocumentWriteTransportAdapter(input: Readonly<{
   registry: CanvasReadSurfaceRegistry;
-  capturedPort: CapturedCanvasReadPort;
+  session: ProjectSurfaceSession;
   requestId: string;
   executor: Pick<CapabilityExecutorRegistry, "execute">;
 }>): PiDocumentWriteTransportAdapter {
   const factory = createRendererDocumentWriteVerifiedInvocationFactory({
     registry: input.registry,
-    capturedPort: input.capturedPort,
+    session: input.session,
     requestId: input.requestId,
   });
   let disposed = false;
@@ -68,8 +68,7 @@ export function createPiDocumentWriteTransportAdapter(input: Readonly<{
       if (!operation) return null;
       if (disposed) throw new Error("surface_port_unavailable");
       signal.throwIfAborted();
-      const target = documentTarget(context.target);
-      if (!target || target.documentId !== context.documentId) throw new Error("document_target_stale");
+      const target = documentTarget(context.target, context.documentId);
       const content = typeof args.content === "string" ? args.content : "";
       const invocation = await factory.mint({
         toolCallId: call.toolCallId,

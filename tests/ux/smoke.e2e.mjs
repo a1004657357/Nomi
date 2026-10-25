@@ -4,8 +4,10 @@
 //
 // 用法：pnpm run build && pnpm run test:e2e
 import { launchNomiApp } from "./_launchApp.mjs";
+import { expect, screenshotSettled, waitForVisualQuiescence } from "./_assert.mjs";
 import { checkComposerFixedFooter } from "./_composerFixedFooter.mjs";
 import { addCanvasNodeFromRail } from "./_canvasRail.mjs";
+import { panCanvasUntilInside } from "./_canvasHit.mjs";
 import { stationTimeout } from "./_station-budget.mjs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -14,9 +16,10 @@ import path from "node:path";
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), "nomi-smoke-e2e-"));
 const userDataDir = path.join(tempRoot, "user-data");
 const projectsDir = path.join(tempRoot, "projects");
-const evidenceDir = path.resolve("outputs/canvas-smoke");
+const evidenceDir = path.resolve("outputs/canvas-smoke", path.basename(tempRoot));
 mkdirSync(projectsDir, { recursive: true });
 mkdirSync(evidenceDir, { recursive: true });
+console.log(`SMOKE EVIDENCE: ${evidenceDir}`);
 
 let passed = 0;
 function assert(cond, label) {
@@ -32,6 +35,7 @@ const { app, win } = await launchNomiApp({
   projectsDir: projectsDir,
   env: { NOMI_E2E_SMOKE: "1" },
 });
+const electronProcess = app.process();
 const rendererDiagnostics = [];
 win.on("console", (message) => {
   if (["error", "warning"].includes(message.type())) {
@@ -43,6 +47,11 @@ win.on("pageerror", (error) => {
 });
 
 try {
+  const splashSkip = win.locator('[data-splash-skip="true"]');
+  if (await splashSkip.count()) {
+    await splashSkip.click();
+    await splashSkip.waitFor({ state: "detached", timeout: stationTimeout() });
+  }
 
   // 1) 主进程启动 + 渲染层加载（runtime.ts 拆分后的回归底线）
   assert((await win.title()).toLowerCase().includes("nomi"), "窗口标题含 Nomi");
@@ -65,9 +74,11 @@ try {
 
   // 2) 项目库渲染（渲染 → IPC listProjects → projects/repository 真实数据）
   // 空库与有项目走同一套布局：主入口动作卡片「新建空白项目」恒在（hero 介绍首屏已删）。
-  await win.getByText("项目库", { exact: false }).first().waitFor({ timeout: 8000 });
+  await win.getByText("项目库", { exact: false }).first().waitFor({ timeout: stationTimeout() });
   const primaryCard = win.locator('[data-variant="primary"]', { hasText: "新建空白项目" });
-  assert((await primaryCard.count()) > 0, "项目库主入口动作卡片「新建空白项目」可见");
+  await expect(primaryCard).toBeVisible();
+  assert(await primaryCard.isVisible(), "项目库主入口动作卡片「新建空白项目」可见");
+  if (evidenceDir) await screenshotSettled(win, { path: path.join(evidenceDir, "library.png") });
 
   // 3) 开项目 → 工作台画布（开项目 → readProject/资产 → 画布挂载）
   // 优先打开已有项目卡（不污染库）；空库时走「新建空白项目」。
@@ -77,9 +88,15 @@ try {
   } else {
     await win.getByText("新建空白项目", { exact: false }).first().click();
   }
-  await win.waitForTimeout(2500);
+  const workbenchToolbarNames = ["创作", "生成", "预览", "去出片"];
+  // A partial toolbar can precede the route's Suspense fallback. Require the whole surface.
+  await expect.poll(async () => {
+    const visible = await Promise.all(workbenchToolbarNames.map((name) =>
+      win.getByRole("button", { name, exact: false }).first().isVisible()));
+    return visible.every(Boolean);
+  }, { message: "工作台工具栏等待路由完成" }).toBe(true);
   // 「导出」在控件层级梳理（U 系列）里拆成诚实的「去出片」跳转钮（预览页隐藏，真导出=预览页「导出 MP4」）
-  for (const name of ["创作", "生成", "预览", "去出片"]) {
+  for (const name of workbenchToolbarNames) {
     assert(await win.getByRole("button", { name, exact: false }).first().isVisible(), `工作台工具栏「${name}」可见`);
   }
   assert(/projectId=/.test(win.url()), "工作台 URL 含 projectId");
@@ -87,11 +104,11 @@ try {
   // 4) 生成画布 composer：超长提示词必须在编辑区内部滚动、底栏生成钮永远可点
   //（回归 2026-07-15：滚动容器无高度上限 → 长 prompt 溢出盖住底栏，提交钮点不到）。
   await win.getByRole("button", { name: "生成", exact: false }).first().click();
-  await win.waitForTimeout(800);
+  await expect(win.locator('button[aria-label="添加图片节点"]').first()).toBeVisible();
   const flowNodeCountBeforeAdd = await win.locator('.react-flow__node[data-id]').count();
   await win.locator('button[aria-label="添加图片节点"]').first().click();
   const flowNode = win.locator('.react-flow__node[data-id]').last();
-  await flowNode.waitFor({ timeout: 5000 });
+  await flowNode.waitFor({ timeout: stationTimeout() });
   const flowNodeCountAfterAdd = await win.locator('.react-flow__node[data-id]').count();
   assert(
     flowNodeCountAfterAdd === flowNodeCountBeforeAdd + 1,
@@ -122,30 +139,16 @@ try {
     "React Flow 节点弹入结束后只定位一次（业务卡片与外层左上角对齐）",
   );
   const composer = win.locator(".generation-canvas-v2-node__composer-card").first();
-  await composer.waitFor({ timeout: 5000 });
+  await composer.waitFor({ timeout: stationTimeout() });
   const longPrompt = Array.from({ length: 14 }, (_, i) => `第${i + 1}段：超长提示词溢出回归压测，逐行填满编辑区直到超过卡片高度上限，验证底栏不被盖住。`).join("\n");
   const promptInput = composer.locator(".generation-canvas-v2-node__prompt-input").first();
   await promptInput.click();
   await promptInput.fill(longPrompt);
-  await win.waitForTimeout(500);
-  // 画布平移：把 composer 拉进「AppBar 之下、窗口底之上」的可视带（节点落点随机，卡可能伸出窗口
-  // → elementFromPoint 打在视口外恒 null，误报被挡）。wheel 落在远离卡片的空白区。
-  for (let i = 0; i < 6; i++) {
-    const box = await composer.boundingBox();
-    if (!box) break;
-    const vp = await win.evaluate(() => ({
-      w: window.innerWidth,
-      h: window.innerHeight,
-      appbarBottom: document.querySelector(".nomi-appbar")?.getBoundingClientRect().bottom ?? 0,
-    }));
-    let dy = 0;
-    if (box.y < vp.appbarBottom + 8) dy = box.y - (vp.appbarBottom + 8);
-    else if (box.y + box.height > vp.h - 16) dy = Math.min(box.y + box.height - (vp.h - 16), box.y - (vp.appbarBottom + 8));
-    if (Math.abs(dy) < 4) break;
-    await win.mouse.move(vp.w - 80, Math.max(vp.appbarBottom + 40, 200));
-    await win.mouse.wheel(0, dy);
-    await win.waitForTimeout(250);
-  }
+  await waitForVisualQuiescence(win);
+  // 浮框钉在节点正下方、被挡就挡（09-25，不再自己躲进视口），伸出窗口那截 elementFromPoint 恒 null。
+  // 像用户一样在画布真空白处按住拖，把它整张拉进舞台、停在底部停靠栏之上（共用 panCanvasUntilInside）。
+  const composerPan = await panCanvasUntilInside(win, composer);
+  assert(composerPan.ok, `把浮框整张拖进舞台：${JSON.stringify(composerPan)}`);
   const composerCheck = await composer.evaluate((card) => {
     const editorEl = card.querySelector(".generation-canvas-v2-node__prompt-input");
     let scroller = editorEl;
@@ -159,6 +162,11 @@ try {
   assert(!composerCheck.outerScrolls && composerCheck.promptHeight >= 72, "外卡不滚且输入区至少 72px");
   assert(composerCheck.scrolls, "超长提示词在编辑区内部滚动（不撑爆卡片）");
   assert(composerCheck.btnClickable, "超长提示词下生成钮 hit-test 可点（底栏未被溢出文字盖住）");
+  const savedPrompt = await promptInput.evaluate((el) => 'value' in el ? el.value
+    : Array.from(el.children).map((paragraph) => paragraph.textContent || '').join('\n'));
+  expect(savedPrompt, '富文本段落按换行还原后须保留完整提示词').toBe(longPrompt);
+  assert(savedPrompt === longPrompt, "平移画布后长提示词完整保留");
+  if (evidenceDir) await screenshotSettled(win, { path: path.join(evidenceDir, "canvas.png") });
 
   await checkComposerFixedFooter(win, { composer, promptInput, flowNode, longPrompt, evidenceDir });
 
@@ -168,7 +176,7 @@ try {
   // 面板永远停在「请选择一条轨迹」，用户被迫再去时间轴点一次「轨迹1」行）。
   // 导演台自 2026-09-06「第三档」起住在左缘的「更多」里；点法收口在 _canvasRail，找不到当场抛。
   await addCanvasNodeFromRail(win, "director");
-  await win.waitForTimeout(1200);
+  await expect(win.locator('[data-testid="director-node-open"]').first()).toBeVisible();
   // 新节点落点不定（画布已被上一段平移过），Playwright actionability 可能够不着 → DOM click 兜底
   await win.locator('[data-testid="director-node-open"]').first().click({ timeout: 3000 })
     .catch(() => win.evaluate(() => document.querySelector('[data-testid="director-node-open"]')?.click()));
@@ -177,10 +185,33 @@ try {
   await directorShell.waitFor({ state: "visible", timeout: stationTimeout({ operations: 2 }) });
   assert(await directorShell.count() > 0, "导演台节点「进入导演台」后全屏壳挂出（data-testid=director-editor）");
 
+  const sceneCanvas = directorShell.getByTestId('director-viewport').locator('canvas').first();
+  await expect(sceneCanvas).toBeVisible({ timeout: stationTimeout() });
+  const viewportPng = await sceneCanvas.screenshot();
+  const viewportPixels = await win.evaluate(async (base64) => {
+    const source = new Image();
+    source.src = `data:image/png;base64,${base64}`;
+    await source.decode();
+    const sampled = document.createElement('canvas');
+    sampled.width = source.width;
+    sampled.height = source.height;
+    const context = sampled.getContext('2d');
+    context.drawImage(source, 0, 0);
+    const { data } = context.getImageData(0, 0, sampled.width, sampled.height);
+    const colors = new Set();
+    for (let i = 0; i < data.length; i += 64) {
+      colors.add(`${data[i] >> 4},${data[i + 1] >> 4},${data[i + 2] >> 4}`);
+    }
+    return { width: source.width, height: source.height, colors: colors.size };
+  }, viewportPng.toString('base64'));
+  assert(viewportPixels.width > 300 && viewportPixels.height > 200 && viewportPixels.colors > 8,
+    `3D 视口实际渲染而非空白占位（${viewportPixels.colors} 种采样色）`);
+  if (evidenceDir) await screenshotSettled(win, { path: path.join(evidenceDir, "director.png") });
   console.log(`\nSMOKE PASS: ${passed} assertions`);
-  await finishAndExit(0);
+  process.exitCode = 0;
 } catch (error) {
   const diagnostic = {
+    evidenceDir,
     error: error?.stack || error?.message || String(error),
     url: win.url(),
     rendererDiagnostics,
@@ -200,13 +231,13 @@ try {
   writeFileSync(path.join(evidenceDir, "failure.json"), JSON.stringify(diagnostic, null, 2));
   await win.screenshot({ path: path.join(evidenceDir, "failure.png") }).catch(() => undefined);
   console.error(`\n${error?.message || error}`);
-  await finishAndExit(1);
+  process.exitCode = 1;
+} finally {
+  const closed = await Promise.race([
+    app.close().then(() => true, () => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
+  ]);
+  if (!closed && electronProcess.exitCode == null) electronProcess.kill("SIGKILL");
 }
 
-// 断言已判定即成败——但 electron teardown 在部分环境会 hang（app.close() 永不 resolve）或让 node 带非零码
-// 收尾，两者都会让串跑（test:system release）误判本 stage：hang → 整条卡死，非零 → 挡掉后续 stage。
-// 故给 close 3s 超时兜底、随后强制退出确定的码：既尽量清干净 electron，又保证进程一定退、退出码可信。
-async function finishAndExit(code) {
-  await Promise.race([app.close().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 3000))]);
-  process.exit(code);
-}
+process.exit(process.exitCode ?? 0);

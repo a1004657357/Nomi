@@ -1,7 +1,10 @@
+import { desktopT } from "../../desktopStrings";
 import { BrowserWindow } from "electron";
 import type { Rectangle, WebContents } from "electron";
 import { browserViews, browserViewsByWindow } from "./browserViewState";
 import type { BrowserViewIdPayload, BrowserViewRecord } from "./browserViewTypes";
+import { isAllowedBrowserTarget } from "./browserAllowlist";
+import { logWarn } from '../../logging/logger';
 
 export function clampNumber(value: number, min: number, max: number): number {
   if (max < min) return min;
@@ -56,6 +59,20 @@ export function normalizeBrowserUrl(url: unknown): string {
   const parsed = new URL(value);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only http(s) browser URLs are supported");
+  }
+  // Gate 7 P1（§22.3 browser bridge allowlist）：检查目标站点是否在 allowlist。
+  // 渐进落地：默认只**记录**违规（enforce 仅在 NOMI_BROWSER_ALLOWLIST_ENFORCE=1 时拒），
+  // 避免破坏既有合法导航（用户可能打开新 Provider 站点）。记录的违规供安全审计追踪；
+  // 稳定后可翻转默认为 enforce。allowlist 内容见 browserAllowlist.ts，可经
+  // addBrowserAllowlistEntry 扩展（加新 Provider web 桥时）。
+  const allowlistResult = isAllowedBrowserTarget(parsed.toString());
+  if (!allowlistResult.allowed) {
+    const enforce = process.env.NOMI_BROWSER_ALLOWLIST_ENFORCE === "1";
+    // 记录违规（不论是否 enforce，供审计）；enforce 时抛错
+    logWarn('browser', 'allowlist-target-unlisted', { enforced: enforce, reason: allowlistResult.reason });
+    if (enforce) {
+      throw new Error(desktopT("custom.browser.core.browserViewUtils.text1", { value0: `${allowlistResult.reason}` }));
+    }
   }
   return parsed.toString();
 }

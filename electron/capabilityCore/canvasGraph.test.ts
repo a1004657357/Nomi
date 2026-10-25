@@ -62,6 +62,22 @@ describe('capabilityCore/canvasGraph', () => {
     expect(snapshot.nodes[0].position).toEqual({ x: 4321, y: 8765 })
   })
 
+  it('headless sequential and batch adds preserve owner numbering and ignore reference counters', () => {
+    const before = emptyCanvasSnapshot()
+    before.nodes = [
+      { id: 'owner', kind: 'video', title: '', position: { x: 0, y: 0 }, shotIndex: 7 },
+      { id: 'reference', kind: 'image', title: '', position: { x: 500, y: 0 }, shotIndex: 100, meta: { referenceSheet: true } },
+      { id: 'frame', kind: 'image', title: '', position: { x: 1000, y: 0 }, shotIndex: 101, meta: { excludeFromShotNumbering: true } },
+      { id: 'scene', kind: 'image', title: '', position: { x: 1500, y: 0 }, shotIndex: 102, categoryId: 'scene' },
+    ]
+    const first = addNodes(before, [{ kind: 'image' }])
+    const second = addNodes(first.snapshot, [{ kind: 'video' }])
+    const batch = addNodes(second.snapshot, [{ kind: 'image' }, { kind: 'video' }])
+    expect(batch.snapshot.nodes.filter(node => ['owner', ...first.ids, ...second.ids, ...batch.ids].includes(node.id))
+      .map(node => node.shotIndex)).toEqual([7, 8, 9, 10, 11])
+    expect(before.nodes.map(node => node.shotIndex)).toEqual([7, 100, 101, 102])
+  })
+
   // 生产 addNodes 路径的注入接线守恒：resolveSize 必须真的走 nodeKindDefaultSize(kind)，不是烘死常量。
   // 钉多个「尺寸不同」的 kind——若接线漂成常量，至少一个会对不上（防 review 说的「miswired 也不红」）。
   it('addNodes 省略 size → 生产接线给到 nodeKindDefaultSize(kind)（逐 kind 真尺寸，非常量）', () => {
@@ -158,4 +174,18 @@ describe('capabilityCore/canvasGraph', () => {
   it('does not own a second canvas.read field projector', () => {
     expect('readCanvas' in canvasGraph).toBe(false)
   })
+})
+
+
+it('headless recovery uses the same unique shot owners before adding or reading nodes', () => {
+  const nodes = [
+    { id: 'v1', title: '', kind: 'video', position: { x: 0, y: 0 }, shotIndex: 1 },
+    { id: 'v2', title: '', kind: 'video', position: { x: 400, y: 0 }, shotIndex: 1 },
+    { id: 'frame', title: '', kind: 'image', position: { x: 0, y: 400 }, shotIndex: 1, meta: { storyboardKeyframe: true } },
+  ]
+  const restored = normalizeSnapshot({ nodes, edges: [] })
+  expect(restored.nodes.map(n => n.shotIndex)).toEqual([1, 2, undefined])
+  expect(addNodes(restored, [{ kind: 'video' }]).snapshot.nodes.map(n => n.shotIndex)).toEqual([1, 2, undefined, 3])
+  expect(normalizeSnapshot(restored)).toEqual(restored)
+  expect(nodes.map(n => n.shotIndex)).toEqual([1, 1, 1])
 })

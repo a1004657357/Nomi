@@ -1,23 +1,31 @@
 import type { ExportJobEvent, ExportJobSnapshot, ExportJobVerification } from '../../electron/export/exportJobManager'
+import type { BlenderDirectorStagePreset } from '../../electron/shared/blenderDirectorContract'
 import type { WorkspaceFileListResult } from '../../electron/workspace/workspaceFileIndex'
 import type { WorkspaceSyncInspection } from '../../electron/shared/workspaceSyncContracts'
 import type { ProviderKind } from './providerKind'
-import type { DesktopMediaBridge, DesktopVideoDepthBridge, DesktopAssetDto, DesktopAssetFoldersState } from './bridgeMedia'
+import type { DesktopMediaBridge, DesktopVideoDepthBridge } from './bridgeMedia'
 import type { DesktopConnectorBridge } from './bridgeConnector'
-import type { McpClientProfile, McpInfo, McpVerifyResult } from './mcpBridgeTypes'
+import type { McpClientProfile, McpInfo, McpInstallResult, McpUninstallResult, McpVerifyResult } from './mcpBridgeTypes'
 import type { DesktopSettingsBridge } from './settingsBridge'
 import type { DesktopOnboardingBridge } from './onboardingBridgeTypes'
 import type { DesktopProductionRunBridge } from './productionRunBridgeTypes'
-import type { CustomCallBridge } from './modelCatalogBridgeTypes'
-import type { ComfyCandidateTestPayload, ComfyCandidateTestResult, ComfyWorkflowMutationResult } from './comfyCandidateContracts'
+import type { ComfyCandidateTestPayload, ComfyCandidateTestResult } from './comfyCandidateContracts'
 import type { CanvasReadSurfaceBridge } from '../../electron/shared/surfacePortBinding'
+import type { ProjectBinding } from '../../electron/shared/projectBinding'
 import type { LaneBridge } from '../workbench/ai/lane/laneClient'
 import type { GenerationResolvePlanEnvelope, GenerationResolvePlanRequest } from '../../electron/shared/videoCapabilities/planResolutionContracts'
+export type { AssetLocalizationEvent } from '../../electron/shared/assets/assetLocalizationEvent'
 export type { ProviderKind }
 export type { DesktopAdapterModeResult, DesktopProviderAdapterRun, DesktopProviderRegistration } from './onboardingBridgeTypes'
 export type { ScreenshotHotkeyStatus, DesktopAssetDto, DesktopAssetFolder, DesktopAssetFoldersState } from './bridgeMedia'
 export type { DesktopDirectorBridge, DesktopDirectorMobileEvent, DesktopDirectorMobileStatus } from './directorBridgeTypes'
 import type { DesktopDirectorBridge } from './directorBridgeTypes'
+import type { DesktopVibingDirectorBridge } from './vibingDirectorBridgeTypes'
+import type { DesktopWebBridge } from './webBridgeTypes'
+import type { CustomCallBridge } from './modelCatalogBridgeTypes'
+import type { DesktopProxyMode, DesktopProxyStatus, DesktopProxyProbe } from './proxyBridgeTypes'
+export type { DesktopProxyMode, DesktopProxyStatus, DesktopProxyProbeAttempt, DesktopProxyProbe } from './proxyBridgeTypes'
+export type { DesktopModel3dValidation, DesktopVideoQualityInspection } from './assetInspectionBridgeTypes'
 
 /** 落盘的对话消息(conversation 域;draft/附件是 session 域不落盘)。 */
 export type PersistedAiMessage = {
@@ -46,9 +54,6 @@ export type PersistedConversationsV2 = {
   committedProposal?: unknown
 }
 
-/** 代理三态：跟随系统探测 / 只对 Nomi 生效的自定义地址 / 强制直连。 */
-
-export type DesktopProxyMode = 'system' | 'custom' | 'off'
 
 /** 一种媒体类型现在实际走的上传通道（main 侧 describeAssetTransportChannels 的产物）。 */
 export type AssetTransportChannelView = {
@@ -61,30 +66,7 @@ export type AssetTransportChannelView = {
   ttlSeconds: number | null
 }
 
-/** 用户选了什么 × 实际生效什么。两者不一致时正是用户最需要看见的（如探到 SOCKS 但用不了）。 */
-export type DesktopProxyStatus = {
-  mode: DesktopProxyMode
-  customUrl: string
-  /** 实际生效的代理地址；直连时空串。 */
-  activeUrl: string
-  /** 探到但本版用不了（SOCKS 等）的人话详情；否则空串。 */
-  unsupported: string
-  source: 'env' | 'system' | 'custom' | ''
-  /** 检测到本机跑着 fake-ip 本地代理（TUN 模式下 mode/activeUrl 会显示「直连」，但流量其实走代理）。 */
-  localProxyDetected?: boolean
-  /** 检测到的合成地址样本（如 `198.18.x.x`）；空串 = 未检测到。 */
-  localProxySample?: string
-}
 
-export type DesktopProxyProbeAttempt = { target: string; ok: boolean; ms: number; error: string }
-/** ok = 上传链里**任一** host 可达（那就送得出图）；tried 逐项留痕，用来看「是不是已经断了一半」。 */
-export type DesktopProxyProbe = {
-  ok: boolean
-  ms: number
-  target: string
-  error: string
-  tried: DesktopProxyProbeAttempt[]
-}
 
 export type DesktopMp4ExportResult = {
   absolutePath: string
@@ -129,152 +111,29 @@ export type DesktopAppInfo = {
   canCheckUpdates: boolean
 }
 
-export type DesktopBrowserViewBounds = {
-  x: number
-  y: number
-  width: number
-  height: number
-}
+// 浏览器一族的类型住在 ./bridgeBrowserTypes（R9：bridge.ts 是组装层）；原样 re-export，既有 import 面不变。
+export type {
+  DesktopBrowserViewBounds,
+  DesktopBrowserAssetOverlayDockMode,
+  DesktopBrowserChromeMenuItem,
+  DesktopBrowserChromeMenuResult,
+  DesktopBrowserAssetOverlayRect,
+  DesktopBrowserAssetOverlayCaptureRequest,
+  DesktopBrowserAssetOverlayConfig,
+  DesktopBrowserAssetOverlayState,
+  DesktopBrowserViewState,
+  DesktopBrowserResourceCaptureRect,
+  DesktopBrowserResourceCaptureEvent,
+  DesktopBrowserPromptCaptureEvent,
+  DesktopBrowserTextPromptSaveEvent,
+  DesktopBrowserPromptReferenceResult,
+} from './bridgeBrowserTypes'
+import type { DesktopBrowserSurface } from './bridgeBrowserTypes'
+import type { DesktopAssetsSurface } from './bridgeAssetsSurface'
+import type { DesktopModelCatalogSurface } from './bridgeModelCatalogSurface'
 
-export type DesktopBrowserAssetOverlayDockMode = 'left' | 'right' | null
-
-export type DesktopBrowserChromeMenuItem = {
-  id?: string
-  label?: string
-  description?: string
-  type?: 'normal' | 'separator'
-  enabled?: boolean
-}
-
-export type DesktopBrowserChromeMenuResult = {
-  id: string | null
-}
-
-export type DesktopBrowserAssetOverlayRect = {
-  left: number
-  top: number
-  right: number
-  bottom: number
-  width: number
-  height: number
-}
-
-export type DesktopBrowserAssetOverlayCaptureRequest = {
-  requestId: string
-  url: string
-  mediaType?: 'image' | 'video'
-  title?: string
-  fileName?: string
-  sourceRect?: DesktopBrowserAssetOverlayRect
-}
-
-export type DesktopBrowserAssetOverlayConfig = {
-  opened: boolean
-  viewId: number | null
-  bounds: DesktopBrowserViewBounds | null
-  captureEnabled?: boolean
-  captureRequest?: DesktopBrowserAssetOverlayCaptureRequest | null
-}
-
-export type DesktopBrowserAssetOverlayState = {
-  opened: boolean
-  dockMode?: DesktopBrowserAssetOverlayDockMode
-  popoverRect?: DesktopBrowserAssetOverlayRect | null
-  captureEnabled?: boolean
-}
-
-export type DesktopBrowserViewState = {
-  viewId: number
-  tabId: string
-  url: string
-  title: string
-  favicon?: string
-  canGoBack: boolean
-  canGoForward: boolean
-  loading: boolean
-}
-
-export type DesktopBrowserResourceCaptureRect = {
-  left: number
-  top: number
-  right: number
-  bottom: number
-  width: number
-  height: number
-}
-
-export type DesktopBrowserResourceCaptureEvent =
-  | {
-      ok: true
-      viewId: number
-      tabId: string
-      url: string
-      mediaType: 'image' | 'video'
-      title?: string
-      fileName?: string
-      pageUrl?: string
-      pageTitle?: string
-      sourceRect?: DesktopBrowserResourceCaptureRect
-    }
-  | {
-      ok: false
-      viewId: number
-      tabId: string
-      reason: 'empty' | 'error'
-      message?: string
-    }
-
-export type DesktopBrowserPromptCaptureEvent =
-  | {
-      ok: true
-      viewId: number
-      tabId: string
-      url: string
-      title?: string
-      fileName?: string
-      pageUrl?: string
-      pageTitle?: string
-      extractionMode?: 'replicate' | 'style'
-      sourceRect?: DesktopBrowserResourceCaptureRect
-    }
-  | {
-      ok: false
-      viewId: number
-      tabId: string
-      reason: 'empty' | 'error'
-      message?: string
-    }
-
-export type DesktopBrowserTextPromptSaveEvent =
-  | {
-      ok: true
-      viewId: number
-      tabId: string
-      prompt: string
-      promptType: string
-      pageUrl?: string
-      pageTitle?: string
-    }
-  | {
-      ok: false
-      viewId: number
-      tabId: string
-      reason: 'error'
-      message?: string
-    }
-
-export type DesktopBrowserPromptReferenceResult = {
-  dataUrl: string
-  referenceUrl: string
-  fileName: string
-  title?: string
-  sourceUrl?: string
-  pageUrl?: string
-  pageTitle?: string
-  asset?: DesktopAssetDto
-  sourceRect?: DesktopBrowserResourceCaptureRect
-}
-
+// DesktopBrowserPromptScreenshotSelection **故意**不跟着搬走：它的 `reason` 字面量联合是
+// check:vocabularies 在册的 debt site，而 debt 的身份含文件路径——搬家会被读成「新开一处 debt」。
 export type DesktopBrowserPromptScreenshotSelection =
   | {
       ok: true
@@ -305,8 +164,11 @@ export type DesktopBridge = DesktopMediaBridge &
   platform: string
   i18n?: {
     setLocale: (locale: 'zh-CN' | 'en') => void
-    /** OS 原生 locale（如 'en-US' / 'zh-CN'）；仅真 Electron 有，jsdom/测试无 → 首启回落默认语言。老 preload 可能无此口。 */
     getSystemLocale?: () => string
+  }
+  runtime?: {
+    /** True only when Electron was launched from a source checkout or isolated source E2E. */
+    sourceRun: boolean
   }
   /** 窗口控制（Windows 自绘标题栏用；mac 原生 chrome 时不调用）。老 preload 可能无此口。 */
   window?: {
@@ -333,6 +195,20 @@ export type DesktopBridge = DesktopMediaBridge &
   telemetry?: {
     track: (payload: unknown) => Promise<{ queued: boolean }>
   }
+  /** 渲染层 → 主进程日志的唯一通道。只许 `src/desktop/rendererLog.ts` 调用（见那里的头注释）。 */
+  log?: {
+    report: (entry: import('../../electron/shared/contracts/rendererLog').RendererLogEntry) => void
+  }
+  /**
+   * 一键反馈。**不受「帮 Nomi 变好」开关管**（用户主动点的那一条）。
+   * `preview` 只算清单不发东西；`send` 立刻返回，失败已在主进程入队重试。
+   */
+  feedback?: {
+    preview: (payload: import('../../electron/shared/contracts/feedback').FeedbackReportRequest)
+      => Promise<import('../../electron/shared/contracts/feedback').FeedbackReportPreview | null>
+    send: (payload: import('../../electron/shared/contracts/feedback').FeedbackReportRequest)
+      => Promise<import('../../electron/shared/contracts/feedback').FeedbackSendResult>
+  }
   productionRuns?: DesktopProductionRunBridge
   startupProbe?: {
     enabled: boolean
@@ -352,7 +228,10 @@ export type DesktopBridge = DesktopMediaBridge &
     syncReveal?: (projectId: string) => Promise<{ ok: boolean }>
     syncCopyConflict?: (payload: { projectId: string; source?: 'local' | 'remote' }) => Promise<{ path: string }>
   }
-  /** 系统通知（任务中心：跑完且窗口失焦才发）。声音与系统通知偏好由主进程统一判定。 */
+  files: {
+    extractText: (payload: { fileName: string; contentType: string; bytes: ArrayBuffer }) => Promise<{ text: string }>
+  }
+  /** 系统通知（任务中心：跑完且窗口失焦才发）。可选 —— 老 preload / 测试环境没有时调用端降级到自制提示音。 */
   notifications?: {
     show: (payload: { title: string; body?: string; event?: import("../../electron/shared/contracts/attentionSound").AttentionSoundEvent }) => Promise<{ ok: boolean; reason?: string }>
   }
@@ -367,140 +246,14 @@ export type DesktopBridge = DesktopMediaBridge &
     save: (projectId: string, record: unknown) => Promise<unknown>
     delete: (projectId: string) => { id: string; deleted: boolean }
   }
-  assets: {
-    list: (payload: {
-      projectId: string
-      cursor?: string | null
-      limit?: number
-      kind?: string
-    }) => Promise<{ items: DesktopAssetDto[]; cursor: string | null }>
-    /** 素材文件夹（素材面收敛 2026-07-22 转正）：per-project 落盘 .nomi/folders.json,归属键=renderUrl。 */
-    foldersGet?: (payload: { projectId: string }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
-    foldersSave?: (payload: { projectId: string; state: DesktopAssetFoldersState }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
-    /** 写入层落盘广播（nomi:assets:updated）——素材库面板/素材盒徽章的统一回流信号。 */
-    onUpdated?: (cb: (payload: { projectId: string }) => void) => () => void
-    onLocalizationStarted?: (cb: (payload: { projectId: string; nodeId: string }) => void) => () => void
-    importRemoteUrl: (payload: {
-      projectId: string
-      url: string
-      kind?: string
-      fileName?: string
-      ownerNodeId?: string | null
-    }) => Promise<DesktopAssetDto>
-    importFile: (payload: {
-      projectId: string
-      fileName: string
-      contentType?: string
-      bytes: ArrayBuffer
-      kind?: string
-    }) => Promise<DesktopAssetDto>
-    /** Electron 原生 File 直传 preload；路径只在隔离桥内解析，大文件不复制进 renderer 内存。 */
-    importNativeFile?: (file: File, payload: {
-      projectId: string
-      fileName: string
-      contentType?: string
-      kind?: string
-    }) => Promise<DesktopAssetDto | null>
-    copyFiles?: (payload: { projectId: string; paths: string[] }) => Promise<{ created: DesktopAssetDto[]; skippedUnsupportedCount: number; failedCount: number }>
-    copyProjectAsset?: (payload: { sourceProjectId: string; targetProjectId: string; relativePath: string }) => Promise<DesktopAssetDto>
-    /** 播放懒自愈：nomi-local 视频解不了（HEVC 存量/供应商 HEVC 产物）→ 转码出新 MP4 资产；不适用 → null。 */
-    ensurePlayable?: (payload: { url: string }) => Promise<DesktopAssetDto | null>
-    /**
-     * 引导示例项目的预置成图 → 项目资产，回 clientId → nomi-local URL。
-     * 必须走主进程：渲染侧只有构建产物 URL（dev 是 dev-server 地址、打包版是带哈希的 file://），
-     * 那种易变值一旦被 addNodeResult 写进项目文件，换环境/重新构建就裂图（2026-07-30 根因修复）。
-     */
-    seedOnboardingDemo?: (payload: { projectId: string }) => Promise<Record<string, string>>
-    download: (payload: {
-      url: string
-      suggestedName?: string
-    }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>
-    /** 自动另存（集中设置页开启时，生成完成即调；best-effort）+ 设置读写/选目录。 */
-    autoSave?: (payload: { url: string; suggestedName?: string }) => Promise<{ ok: boolean; path?: string }>
-    getAutoSavePrefs?: () => Promise<{ enabled: boolean; dir: string }>
-    setAutoSavePrefs?: (payload: { enabled: boolean; dir: string }) => Promise<{ enabled: boolean; dir: string }>
-    pickSaveDir?: () => Promise<{ dir: string }>
-  }
-  browser?: {
-    createView: (payload: { tabId: string; partition?: string }) => Promise<{ viewId: number }>
-    destroyView: (payload: { viewId: number }) => void
-    navigate: (payload: { viewId: number; url: string }) => void
-    back: (payload: { viewId: number }) => void
-    forward: (payload: { viewId: number }) => void
-    reload: (payload: { viewId: number }) => void
-    resize: (payload: { viewId: number; bounds: DesktopBrowserViewBounds }) => void
-    show: (payload: { viewId: number }) => void
-    hide: (payload: { viewId: number }) => void
-    importMedia: (payload: {
-      viewId: number
-      projectId: string
-      url: string
-      fileName?: string
-      title?: string
-      mediaType?: 'image' | 'video'
-    }) => Promise<DesktopAssetDto>
-    capturePromptImage?: (payload: {
-      viewId: number
-      projectId?: string
-      url: string
-      fileName?: string
-      title?: string
-    }) => Promise<DesktopBrowserPromptReferenceResult>
-    capturePromptScreenshot?: (payload: {
-      viewId: number
-      projectId?: string
-      fileName?: string
-      title?: string
-      sourceRect?: {
-        left: number
-        top: number
-        width: number
-        height: number
-      }
-    }) => Promise<DesktopBrowserPromptReferenceResult>
-    readPromptExtractionSettings?: (payload: {
-      projectId: string
-    }) => Promise<{ ok: boolean; settings: unknown | null; error?: string }>
-    writePromptExtractionSettings?: (payload: {
-      projectId: string
-      settings: unknown
-    }) => Promise<{ ok: boolean; settings?: unknown; error?: string }>
-    selectPromptScreenshot?: (payload: { viewId: number }) => Promise<DesktopBrowserPromptScreenshotSelection>
-    setResourceCapture?: (payload: { viewId: number; enabled: boolean }) => void
-    captureResource?: (payload: { viewId: number }) => void
-    showChromeMenu?: (payload: {
-      x: number
-      y: number
-      width?: number
-      items: DesktopBrowserChromeMenuItem[]
-    }) => Promise<DesktopBrowserChromeMenuResult>
-    assetOverlay?: {
-      open: (payload: {
-        viewId: number | null
-        bounds: DesktopBrowserViewBounds
-        captureRequest?: DesktopBrowserAssetOverlayCaptureRequest
-      }) => void
-      updateHost: (payload: { viewId?: number | null; bounds: DesktopBrowserViewBounds }) => void
-      close: () => void
-      captureRequest: (payload: DesktopBrowserAssetOverlayCaptureRequest) => void
-      ready?: () => void
-      setInteractive: (payload: { interactive: boolean }) => void
-      finishDrag?: () => void
-      setState: (payload: {
-        dockMode?: DesktopBrowserAssetOverlayDockMode
-        popoverRect?: DesktopBrowserAssetOverlayRect | null
-        captureEnabled?: boolean
-      }) => void
-      importToCanvas?: (payload: { assets: unknown[] }) => void
-      canvasImportAvailable?: () => Promise<boolean>
-      onConfig: (callback: (config: DesktopBrowserAssetOverlayConfig) => void) => () => void
-      onState: (callback: (state: DesktopBrowserAssetOverlayState) => void) => () => void
-      onImportToCanvas?: (callback: (payload: { assets?: unknown[] }) => void) => () => void
-    }
-    onPromptCapture?: (callback: (event: DesktopBrowserPromptCaptureEvent) => void) => () => void
-    onTextPromptSave?: (callback: (event: DesktopBrowserTextPromptSaveEvent) => void) => () => void
-    onResourceCapture?: (callback: (event: DesktopBrowserResourceCaptureEvent) => void) => () => void
-    onState: (callback: (event: DesktopBrowserViewState) => void) => () => void
+  assets: DesktopAssetsSurface
+  browser?: DesktopBrowserSurface
+  /** 导演台出片 + 手机虚拟相机。开发页 / 老 preload 没有这座桥 → 对话框明说需要桌面运行时。 */
+  director?: DesktopDirectorBridge
+  /** Generation strategy resolver GUI 窄 IPC：planning seam 在 main（候选/决策与 agent/MCP 同源），
+    渲染层不自构候选。可选（`?`）：旧 preload 没有此口，调用方须兜住 undefined。 */
+  generationStrategy?: {
+    resolvePlan: (payload: GenerationResolvePlanRequest) => Promise<GenerationResolvePlanEnvelope>
   }
   image: {
     /** 元素拆解：一张图 → Replicate qwen-image-layered → N 张落地 RGBA 图层 URL（对标 Lovart Edit Elements）。
@@ -513,13 +266,51 @@ export type DesktopBridge = DesktopMediaBridge &
       projectId?: string
     }) => Promise<{ layers: string[] }>
   }
-  /** 导演台出片 + 手机虚拟相机。开发页 / 老 preload 没有这座桥 → 对话框明说需要桌面运行时。 */
-  director?: DesktopDirectorBridge
-  /** Generation strategy resolver GUI 窄 IPC：planning seam 在 main（候选/决策与 agent/MCP 同源），
-    渲染层不自构候选。可选（`?`）：旧 preload 没有此口，调用方须兜住 undefined。 */
-  generationStrategy?: {
-    resolvePlan: (payload: GenerationResolvePlanRequest) => Promise<GenerationResolvePlanEnvelope>
+  scene3d: {
+    /** N 帧 PNG dataURL（沿相机轨迹采样）→ ffmpeg 拼 H.264 mp4 → 项目素材。
+     *  AI 运镜工具的「轨迹→视频文件」桥，见 electron/video/framesToVideo.ts。 */
+    framesToVideo: (payload: {
+      projectId: string
+      projectBinding: ProjectBinding
+      ownerNodeId?: string | null
+      fileName?: string
+      fps: number
+      frames: string[]
+    }) => Promise<{ url: string; assetId?: string }>
+    /** 结构化导演台场景 → Blender 后台渲染 → PNG、BLEND 与 GLB 项目素材。 */
+    renderWithBlender: (payload: {
+      jobId: string
+      projectId: string
+      ownerNodeId?: string | null
+      blenderPath?: string
+      scene: unknown
+      timeoutMs?: number
+    }) => Promise<{
+      jobId: string
+      blenderVersion?: string
+      preview: { url: string; assetId?: string }
+      blend: { url: string; assetId?: string }
+      model: { url: string; assetId?: string }
+    }>
+    /** 受约束的导演 manifest → 本地 Blender 预演 → PNG、BLEND 与 GLB 项目素材。 */
+    renderDirectorWithBlender: (payload: {
+      jobId: string
+      projectId: string
+      ownerNodeId?: string | null
+      title?: string
+      stagePreset?: BlenderDirectorStagePreset
+      scene: unknown
+      timeoutMs?: number
+    }) => Promise<{
+      jobId: string
+      blenderVersion?: string
+      preview: { url: string; assetId?: string }
+      blend: { url: string; assetId?: string }
+      model: { url: string; assetId?: string }
+    }>
+    cancelBlender: (jobId: string) => Promise<{ cancelled: boolean }>
   }
+  vibingDirector: DesktopVibingDirectorBridge
   exports: {
     startJob: (payload: DesktopExportJobStartPayload) => Promise<DesktopExportJobStartResult>
     list: () => Promise<ExportJobSnapshot[]>
@@ -532,18 +323,30 @@ export type DesktopBridge = DesktopMediaBridge &
     showInFolder: (payload: { projectId: string; relativePath: string }) => Promise<{ ok: boolean }>
   }
   tasks: {
-    cancel?: (taskId: string) => Promise<{ ok: boolean }>
     run: (payload: unknown) => Promise<unknown>
     result: (payload: unknown) => Promise<unknown>
+    cancel: {
+      (taskId: string): Promise<{ ok: boolean }>
+      (payload: { runId: string; taskId?: string; nodeId?: string; vendor?: string }): Promise<{
+        cancelled: boolean; remoteCancelled: boolean
+      }>
+    }
     runComfyCandidateTest?: (payload: ComfyCandidateTestPayload) => Promise<ComfyCandidateTestResult>
     cancelComfyCandidateTest?: (payload: { revisionId: string; modelKey: string; taskKind: string }) => Promise<{ ok: boolean }>
     quoteSpend: (inputs: import("../../electron/shared/contracts/spendQuote").SpendQuoteInput[]) => Promise<import("../../electron/shared/contracts/spendQuote").PreparedSpendQuote>
-    grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number; quoteId?: string }) => Promise<{ grantId: string }>
+    grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number; quoteId?: string; ttlMs?: number }) => Promise<{ grantId: string }>
     runTextStream: (payload: unknown) => Promise<{ streamId: string }>
     cancelTextStream: (streamId: string) => Promise<unknown>
     onTextEvent: (streamId: string, callback: (event: unknown) => void) => () => void
     /** ComfyUI ws 进度桥（P 轨）。旧 preload 可能没有 → 全部可选。 */
-    comfyuiWatch?: (payload: { promptId: string; nodeId: string; projectId?: string; taskKind?: string; modelKey?: string | null; vendorKey?: string }) => Promise<{ ok: boolean }>
+    comfyuiWatch?: (payload: {
+      promptId: string
+      nodeId: string
+      projectId?: string
+      taskKind?: string
+      modelKey?: string | null
+      vendorKey?: string
+    }) => Promise<{ ok: boolean }>
     comfyuiUnwatch?: (promptId: string) => Promise<void>
     comfyuiInterrupt?: (promptId: string) => Promise<{ ok: boolean; mode: 'targeted' | 'queue-only' | 'failed' }>
     onComfyuiProgress?: (callback: (event: unknown) => void) => () => void
@@ -606,7 +409,10 @@ export type DesktopBridge = DesktopMediaBridge &
    */
   proxy?: {
     get: () => Promise<{ ok: boolean; status: DesktopProxyStatus }>
-    set: (payload: { mode: DesktopProxyMode; customUrl: string }) => Promise<{ ok: boolean; status: DesktopProxyStatus }>
+    set: (payload: {
+      mode: DesktopProxyMode
+      customUrl: string
+    }) => Promise<{ ok: boolean; status: DesktopProxyStatus }>
     test: () => Promise<{ ok: boolean; result: DesktopProxyProbe; status: DesktopProxyStatus }>
   }
   /** 本机素材上传通道的现状描述。优先级规则只住 main（electron/catalog/assetTransportDescribe.ts），
@@ -614,106 +420,11 @@ export type DesktopBridge = DesktopMediaBridge &
   assetTransport?: {
     describeChannels: () => AssetTransportChannelView[]
   }
-  modelCatalog: CustomCallBridge & {
-    onChanged?: (cb: () => void) => () => void
-    listVendors: () => unknown[]
-    listModels: (params?: unknown) => unknown[]
-    listMappings: (params?: unknown) => unknown[]
-    health: () => unknown
-    upsertVendor: (payload: unknown) => unknown
-    deleteVendor: (key: string) => void
-    upsertVendorApiKey: (vendorKey: string, payload: unknown) => Promise<unknown>
-    clearVendorApiKey: (vendorKey: string) => unknown
-    upsertModel: (payload: unknown) => unknown
-    /**
-     * 改类型 = 改 kind + 按新 kind 重建调用通道（单事务，见 electron/catalog/modelRetype.ts）。
-     * 刻意不复用 upsertModel：只改 kind 不重建通道等于把「类型错」换成「没有通道」，仍然跑不了。
-     * 可选（`?`）：旧 preload 没有这个方法，调用方须自己兜住 undefined。
-     */
-    retypeModel?: (payload: { vendorKey: string; modelKey: string; kind: string }) => unknown
-    deleteModel: (vendorKey: string, modelKey: string) => void
-    deleteModels: (targets: { vendorKey: string; modelKey: string }[]) => void
-    upsertMapping: (payload: unknown) => unknown
-    deleteMapping: (id: string) => void
-    exportPackage: (params?: unknown) => unknown
-    importPackage: (payload: unknown) => unknown
-    testMapping: (id: string, payload: unknown) => Promise<unknown>
-    fetchDocs: (payload: unknown) => Promise<unknown>
-    probeComfyui: (baseUrl?: string) => Promise<
-      { ok: true; summary: string; version?: string; protocol?: 'enhanced' | 'compatibility' } | { ok: false; error: string }
-    >
-    /** 本地文本端口探测（Ollama 11434 / LM Studio 1234 / LocalAI 8080）+ 能力预检（判「支持 Agent / 仅对话 / 探不出」）。旧 preload 可能没有 → 可选。 */
-    probeLocalTextEndpoints?: () => Promise<{ hits: Array<{ id: 'ollama' | 'lmstudio' | 'localai'; label: string; baseUrl: string; models: string[] }> }>
-    probeLocalTextCapability?: (payload: { baseUrl: string; modelId: string }) => Promise<{ verdict: 'agent' | 'chat-only' | 'unknown'; detail?: string }>
-    /** 校验 + 识别 workflow_api.json 可绑定节点（同步）。analysis 结构见 comfyuiWorkflowImport.WorkflowAnalysis。 */
-    analyzeComfyWorkflow: (text: string) => { ok: true; analysis: unknown } | { ok: false; error: string }
-    /** 缺件对账（异步问本机 /object_info）：缺节点类 + 引用了本机没有的模型文件 + combo 可选值。旧 preload 可能没有 → 可选。 */
-    reconcileComfyWorkflow?: (text: string, vendorKey?: string) => Promise<
-      | {
-          ok: true
-          serverReachable: boolean
-          unknownNodeTypes: string[]
-          missingEnumValues: Array<{ nodeId: string; classType: string; title?: string; inputKey: string; value: string }>
-          enumOptions?: Array<{ classType: string; inputKey: string; options: string[] }>
-        }
-      | { ok: false; error: string }
-    >
-    /** 设置页批量缺件对账：整台实例共享一次 /object_info，结果按 id 回传。 */
-    reconcileComfyWorkflows?: (items: Array<{ id: string; text: string }>, vendorKey?: string) => Promise<
-      | {
-          ok: true
-          results: Array<{
-            id: string
-            result:
-              | {
-                  ok: true
-                  serverReachable: boolean
-                  unknownNodeTypes: string[]
-                  missingEnumValues: Array<{ nodeId: string; classType: string; title?: string; inputKey: string; value: string }>
-                  enumOptions?: Array<{ classType: string; inputKey: string; options: string[] }>
-                }
-              | { ok: false; error: string }
-          }>
-        }
-      | { ok: false; error: string }
-    >
-    /** T1：贴什么格式都吃——界面格式借 ComfyUI 自己的前端转成 API 再分析。旧 preload 可能没有 → 可选。 */
-    analyzeComfyWorkflowSmart?: (text: string, vendorKey?: string) => Promise<
-      | { ok: true; analysis: unknown; convertedText?: string; sourceWorkflowText?: string }
-      | { ok: false; error: string }
-    >
-    /** T2：读用户自己 ComfyUI 里的官方模板库（几百个）。null = 没连上/这台没有模板包。 */
-    listComfyuiTemplates?: (vendorKey?: string) => Promise<Array<{
-      name: string; title: string; description: string; group: string; groupType: string
-      tags: string[]; tutorialUrl: string; thumbnailUrl: string
-    }> | null>
-    /** T2：取一个模板并备好导入所需（已转 API 格式 + 缺件对账 + combo 选项）。 */
-    getComfyuiTemplateDetail?: (name: string, vendorKey?: string) => Promise<
-      | {
-          apiText: string
-          uiWorkflowText: string
-          unknownNodeTypes: string[]
-          missingEnumValues: Array<{ nodeId: string; classType: string; title?: string; inputKey: string; value: string }>
-          enumOptions: Array<{ classType: string; inputKey: string; options: string[] }>
-          serverReachable: boolean
-        }
-      | { error: string }
-    >
-    /** ComfyUI 预置模板清单（S5）：静态数据，启用前走 reconcile 缺件闸。旧 preload 可能没有 → 可选。 */
-    listComfyuiPresets?: () => Array<{
-      key: string; labelZh: string; descZh: string; workflowText: string; binding: unknown
-      models: Array<{ file: string; dir: string; url: string }>
-    }>
-    /** 按绑定落库为用户自有 model+mapping（同步）。enumOptions 可选 = combo 参数烤成真实文件下拉。 */
-    importComfyWorkflow: (payload: { text: string; binding: unknown; labelZh: string; enumOptions?: unknown; vendorKey?: string; uiWorkflowText?: string }) =>
-      ComfyWorkflowMutationResult
-    /** 用同一 modelKey 更新已导入 workflow（同步）。 */
-    updateComfyWorkflow?: (payload: { modelKey: string; text: string; binding: unknown; labelZh: string; enumOptions?: unknown; vendorKey?: string; uiWorkflowText?: string }) =>
-      ComfyWorkflowMutationResult
-  }
+  modelCatalog: DesktopModelCatalogSurface & CustomCallBridge
   skill: {
-    list: () => unknown[]
-    exportPackage: (dirName: string) => unknown
+    /** 目录由 pi 的加载器给（async）：列表与导出是 Promise，导入与删除仍是同步回执。 */
+    list: () => Promise<unknown[]>
+    exportPackage: (dirName: string) => Promise<unknown>
     importPackage: (payload: unknown) => unknown
     deleteByDir: (dirName: string) => unknown
     /** 技能盘变了（导入/删除/Agent 的 author_skill 写完落盘）。可选：老 preload 无此口。 */
@@ -723,6 +434,7 @@ export type DesktopBridge = DesktopMediaBridge &
   dreamina?: {
     status: () => Promise<{
       installed: boolean
+      stale: boolean
       loggedIn: boolean
       totalCredit: number | null
       vipLevel: string
@@ -733,15 +445,18 @@ export type DesktopBridge = DesktopMediaBridge &
     logout: () => Promise<{ ok: boolean }>
     install: () => Promise<{ ok: boolean; message: string }>
   }
+  /** 网页自动化桥：即梦与 Pavo 共用同一桌面契约，各自保留独立会话。 */
+  jimengWeb?: DesktopWebBridge
+  pavoWeb?: DesktopWebBridge
   /** 能力核：上报当前打开项目，供外部调用的 A/B 守卫（可选——老 preload 无此口）。 */
   capability?: {
     setActiveProject: (projectId: string) => void
     /** 「接入 AI 编程助手」卡：读接入状态 + 各客户端配置片段（类型见 mcpBridgeTypes）。 */
     mcpInfo: () => McpInfo
     /** 一键写入指定客户端配置的 nomi 条目（合并 + 备份）。默认 Claude Code。 */
-    installMcp: (client?: string) => { ok: boolean; client: string; configPath: string; backupPath: string | null }
+    installMcp: (client?: string) => McpInstallResult
     /** 撤销接入指定客户端：删 nomi 条目。默认 Claude Code。 */
-    uninstallMcp: (client?: string) => { ok: boolean; client: string }
+    uninstallMcp: (client?: string) => McpUninstallResult
     listCustomMcpProfiles?: () => Promise<McpClientProfile[]>
     registerCustomMcpProfile?: (profile: unknown) => Promise<McpClientProfile | null>
     removeCustomMcpProfile?: (key: string) => Promise<boolean>
@@ -770,4 +485,21 @@ export function getDesktopBridge(): DesktopBridge | null {
 
 export function isDesktopRuntime(): boolean {
   return Boolean(getDesktopBridge())
+}
+
+/**
+ * 整窗重载：桌面端走主进程的硬重载（连渲染进程一起换新），浏览器里退回 location.reload。
+ * 根错误边界与分包错误边界共用这一份——从前两边各抄一份、各自 cast window 绕过这里的类型（2026-09-24 结构评审）。
+ */
+export function reloadRendererWindow(): void {
+  try {
+    const hardReloadWindow = getDesktopBridge()?.app?.hardReloadWindow
+    if (hardReloadWindow) {
+      hardReloadWindow()
+      return
+    }
+  } catch {
+    /* fall back to browser reload */
+  }
+  window.location.reload()
 }

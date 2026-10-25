@@ -5,6 +5,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({
   protocol: { handle: vi.fn() },
+  nativeImage: {
+    createFromPath: vi.fn(() => ({
+      isEmpty: () => false,
+      getSize: () => ({ width: 400, height: 200 }),
+      resize: ({ width, height }: { width: number; height: number }) => ({
+        toPNG: () => Buffer.from(`thumbnail:${width}x${height}`),
+      }),
+    })),
+  },
   net: {
     fetch: vi.fn(async (url: string) => {
       const filePath = new URL(url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
@@ -144,6 +153,17 @@ describe("handleNomiLocalRequest", () => {
     expect(await response.text()).toBe("0123456789");
   });
 
+  it("serves bounded local image thumbnails without weakening query validation", async () => {
+    const response = await handleNomiLocalRequest(new Request(`${assetUrl()}?nomi-thumbnail=160x160`));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(await response.text()).toBe("thumbnail:160x80");
+
+    const unknownQuery = await handleNomiLocalRequest(new Request(`${assetUrl()}?download=1`));
+    expect(unknownQuery.status).toBe(404);
+  });
+
   it("requires a valid scoped preview token when a preview query is present", async () => {
     const projection = createArtifactProjection({
       projectRoot,
@@ -180,9 +200,11 @@ describe("handleNomiLocalRequest", () => {
 describe("curated media protocol", () => {
   it("streams the actual declared media bytes independently of the renderer base URL", async () => {
     const store = await import("../skills/skillStore");
-    const records = store.discoverSkillRecordsFromRoots([{ path: path.resolve(__dirname, "../../skills"), origin: "builtin" }]).records;
+    const { discoverSkillRecords } = await import("../agentLane/laneSkillCatalog.mjs");
+    const records = (await discoverSkillRecords([{ path: path.resolve(__dirname, "../../skills"), origin: "builtin" }])).records;
     const record = records.find((item) => item.directoryName === "curated-multi-view")!;
-    const spy = vi.spyOn(store, "readSkillRecords").mockReturnValue(records);
+    // 协议层每次请求都 `await readSkillRecords()`（目录 async）；这里把桥换成真目录。
+    const spy = vi.spyOn(store, "readSkillRecords").mockResolvedValue(records);
     try {
       const response = await handleNomiLocalRequest(new Request("nomi-local://skill-preview/curated-multi-view"));
       expect(response.status).toBe(200);

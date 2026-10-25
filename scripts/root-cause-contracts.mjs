@@ -58,7 +58,6 @@ const HIGH_RISK_EXACT = new Set([
   "scripts/claude-hooks/pre-push-check.sh",   // R11 push 闸：五门戳的判定方
   "scripts/claude-hooks/secret-guard.sh",     // R25 提交前敏感数据扫描
   "scripts/stamp-gates-ok.mjs",               // 五门戳的签发方（凭据怎么盖、绑什么身份）
-  "scripts/ponytail-review-hook.mjs",         // R25 提交/推送前只读评审适配器
   "scripts/install-claude-hooks.cjs",         // 装配器：坏了 = 上面这些根本没装上
   "scripts/install-git-hooks.cjs",
 ]);
@@ -380,6 +379,246 @@ function validateInvariantOwnerLayer(contract, existingFiles, label) {
   return errors;
 }
 
+/**
+ * 「补 / 重写 / 删」的选择（R21.2，2026-10-02 起与症状聚类合并）：同一层被反复修时，合同要写明选了哪条路，
+ * 并给出特征测试路径——不再交一份评审文档。字段可选；一旦写了就必须成立：
+ * 测试文件存在且是测试；选 `rewrite` 时那份特征测试必须出现在本次 diff 里（先钉住旧行为，再重写）。
+ */
+export const REWRITE_DECISIONS = ["patch", "rewrite", "delete"];
+function validateRewriteDecision(contract, changed, existingFiles, label) {
+  const errors = [];
+  const decision = contract?.rewrite_decision;
+  if (decision === undefined) return errors;
+  if (!record(decision) || !REWRITE_DECISIONS.includes(decision.decision)) {
+    errors.push(`${label}: rewrite_decision.decision must be one of ${REWRITE_DECISIONS.join(", ")}`);
+    return errors;
+  }
+  const test = decision.characterization_test;
+  if (!nonEmptyText(test) || !isTestFile(normalized(test))) {
+    errors.push(`${label}: rewrite_decision.characterization_test must be a test file path (the test that pins the old behaviour)`);
+  } else if (!fileExists(test, existingFiles)) {
+    errors.push(`${label}: rewrite_decision.characterization_test does not exist: ${test}`);
+  } else if (decision.decision === "rewrite" && !changed.has(normalized(test))) {
+    errors.push(`${label}: a rewrite must add or change its characterization test in this diff: ${test}`);
+  }
+  return errors;
+}
+
+/**
+ * 「这条不变量碰到的状态，一共有几扇门」——动生产代码之前必须先数的那一问（R21，2026-09-11）。
+ *
+ * 为什么加它：合同已经逼你写清 class_root 和 same_class_entry_points，但那两项都是**叙述**——
+ * 作者说他扫过了，门岗只能核对格式。2026-09-11 一天里连着三簇 bug 是同一个形状：
+ * **不变量只在一扇门上实现，另一个入口绕过去**（画布落地的 6 条写入路径、付费收据的两个装配点、
+ * `SkillRecord` 的 8 条投影）。三次都被当成独立的一处 bug 单独修了一遍，因为修的人被任务书框在
+ * 一个文件里：他看得见症状那扇门，看不见另外几扇——而「去数一遍」这件事在高负载下没有人做。
+ *
+ * `doors` 把它变成机器能核对的东西：每条 `{kind, path, symbol}` 都要 path 存在、
+ * 该文件真的还提到该 symbol（**不钉行号**，理由见 sourceMentionsSymbol）。门表用
+ * `node scripts/door-map.mjs <mutator 符号或文件>` 生成，
+ * 不是手写——手写的门表和「我扫过了」是同一种东西。
+ *
+ * `door_reduction` 问的是第二件事：**数完之后你把门合并了没有**。≥2 扇而一扇没减，
+ * 必须写 `why_not`——允许不减（有时确实不该减），但不允许无声地不减。
+ */
+export const DOOR_MAP_SINCE = "2026-09-11";
+
+/**
+ * 复发检查字段（2026-10-02）：`detected_by` 记这个问题是谁先发现的，`recurrence_check_on` 记哪天回头查
+ * 「同类还有没有回来」（默认合并日 + 30 天，由 scripts/eng-metrics.mjs 补默认）。
+ * 新合同属于 recurring、高风险、或逃逸 bug（detected_by 为 user / post-release）时两项必填；
+ * 老合同按文件名日期前缀豁免，追溯只会把几百份历史合同一次性打红。
+ */
+export const RECURRENCE_FIELDS_SINCE = "2026-10-02";
+export const DETECTED_BY = ["user", "post-release", "walkthrough", "ci", "review"];
+
+function validateDetectionFields(contract, changed, label) {
+  const errors = [];
+  const detected = contract?.detected_by;
+  const checkOn = contract?.recurrence_check_on;
+  if (detected !== undefined && !DETECTED_BY.includes(detected)) {
+    errors.push(`${label}: detected_by must be one of ${DETECTED_BY.join(" / ")}`);
+  }
+  if (checkOn !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(checkOn))) {
+    errors.push(`${label}: recurrence_check_on must be a YYYY-MM-DD date`);
+  }
+  const scopes = Array.isArray(contract?.scope_paths) ? contract.scope_paths : [];
+  const escaped = detected === "user" || detected === "post-release";
+  const recurring = contract?.recurrence?.classification === "recurring";
+  const highRisk = [...changed].some((file) => isHighRiskProductionFile(file) && scopes.some((scope) => scopeCovers(scope, file)));
+  if (recurring || highRisk || escaped) {
+    if (detected === undefined) errors.push(`${label}: detected_by is required for recurring / high-risk / escaped-bug contracts`);
+    if (checkOn === undefined) errors.push(`${label}: recurrence_check_on is required for recurring / high-risk / escaped-bug contracts`);
+  }
+  return errors;
+}
+
+/**
+ * 门岗只对 schema 不合法阻断（2026-10-02，合同检查降为警告档）：其余发现（高风险文件没带合同、门表没数全、
+ * 归属层、重写决定……）照样打印，但不再拦 PR——合同在两种情况下强制要，由合并前扫描查：
+ * 修的是逃逸 bug，或第二次修同一类问题。
+ */
+const BLOCKING_PATTERNS = [
+  /schema_version must be/,
+  /: id is required/,
+  /change_kind must be/,
+  /: (?:problem_type|symptom|direct_cause|class_root|migration) is required/,
+  /must be a non-empty string array/,
+  /recurrence requires/,
+  /detected_by|recurrence_check_on/,
+  /legacy/,
+];
+export function classifyFindings(errors) {
+  const blocking = [];
+  const warnings = [];
+  for (const error of errors) (BLOCKING_PATTERNS.some((pattern) => pattern.test(error)) ? blocking : warnings).push(error);
+  return { blocking, warnings };
+}
+
+const DOOR_KINDS = new Set(["write", "read"]);
+/**
+ * 门只存在于 App 自己的状态代码里。门岗脚本、文档、测试改了不必进门表——
+ * 它们不是「这个状态的入口」，把它们也收进来只会让作者为了过闸往门表里塞无关文件，
+ * 而一张塞满无关文件的门表等于没有门表。
+ */
+const DOOR_ROOTS = ["src/", "electron/"];
+
+/**
+ * `@generated` 纯数据文件的 catch-22（2026-09-18，Higgsfield lane 挖出）。
+ *
+ * 一份机器生成的纯数据表（码表快照、词典、夹具清单）是 `.ts`、住在 door root 下、又在
+ * `scope_paths` 里，于是它两头不是人：**不在 scope 里**算「scope 画小了」，**在 scope 里**又被
+ * 当成「改了门表之外的文件」——而纯数据文件**不可能有门**：它没有写入口也没有读入口，
+ * 它就是被读的那份数据本身。
+ *
+ * 过去只能靠手写一条假门（随便指一行 + 编个 symbol）糊过去，那比没门岗更糟：门表从此
+ * 不可信，而门表正是 R21 用来替代「我扫过了」这句话的东西。
+ *
+ * 判据要两条同时成立，**不能只看标记**——否则在任何文件顶上写一行 `@generated` 就能免门：
+ *   ① 文件头有 `@generated` 标记（生成器写的，人不该改这个文件）；
+ *   ② 文件里没有可执行声明（function / class / 箭头函数 / 控制流）——它真的只是数据。
+ * 只满足①的（生成出来的**代码**）照常要门表：它有行为，就有入口。
+ */
+const EXECUTABLE_DECLARATION = /\bfunction\b|\bclass\s+[A-Za-z_$]|=>|\bif\s*\(|\bfor\s*\(|\bwhile\s*\(|\bswitch\s*\(/;
+
+function isGeneratedDataFile(file, fileContents) {
+  const source = fileContent(normalized(file), fileContents);
+  if (typeof source !== "string") return false;
+  const header = source.split("\n").slice(0, 10).join("\n");
+  if (!/@generated\b/.test(header)) return false;
+  return !EXECUTABLE_DECLARATION.test(source);
+}
+
+function isDoorGovernedFile(file) {
+  const name = normalized(file);
+  if (isTestFile(name) || name.endsWith(".md") || name.endsWith(".json")) return false;
+  return DOOR_ROOTS.some((root) => name.startsWith(root));
+}
+
+/**
+ * 门的身份 =「哪个文件里的哪个符号」，**不含行号**（2026-09-18）。
+ *
+ * 此前身份里钉着行号（`path:line` 那一行必须提到 symbol）。行号不是这份状态的性质，
+ * 是这份状态**在某一刻的排版**：门一扇没增没减，只要有人在同一个文件上面插了两行注释，
+ * 门表就报「door does not resolve」。于是 2026-09-11 起长出一整族没有信息量的提交——
+ * 「门表的行号跟上 xxx 的瘦身」——批次 3 一次集成就修了 16 处漂移，
+ * 而这些提交一次都没有发现过真正的门增删。门岗于是在教人「红了就重跑一下工具」，
+ * 这正是 R17 说的把防线建错层：判据要落在**不变量**上，不落在排版上。
+ *
+ * 改成整文件的**整词**匹配后：门被删掉（那个文件不再提到这个符号）照样红，
+ * 门被挪行、被格式化、被别人在上面插几行 —— 不红。
+ *
+ * 为什么是整词而不是 `includes`：`includes` 让 `applyCanvas` 被 `applyCanvasToolCall` 顶着算数，
+ * 于是删掉真正那扇门也不会红——一条永远绿的判据比没有判据更糟。
+ */
+function sourceMentionsSymbol(source, symbol) {
+  const text = String(source);
+  const escaped = symbol.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // JS 标识符可以含 $ 与 _，`\b` 认不出它们的边界，所以自己写两侧的前后瞻。
+  return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`).test(text);
+}
+
+/** 同一个 {kind, path, symbol} 只可能是同一扇门；出现两条 = 门表是手写/手改的。 */
+function doorIdentity(door) {
+  return `${door.kind}|${normalized(door.path)}|${String(door.symbol).trim()}`;
+}
+
+function validateDoorMap(contract, changed, existingFiles, label, fileContents) {
+  const errors = [];
+  const scopePaths = Array.isArray(contract?.scope_paths) ? contract.scope_paths : [];
+  const doors = contract?.doors;
+  const doorPaths = new Set();
+  const doorIdentities = new Set();
+
+  if (!Array.isArray(doors) || doors.length === 0) {
+    errors.push(`${label}: doors is required — 列出这条不变量碰到的状态的全部写入口与读入口`
+      + `，每条 {kind:"write"|"read", path, symbol}；用 \`node scripts/door-map.mjs <mutator 符号或文件>\` 生成，别手写`);
+  } else {
+    for (const door of doors) {
+      if (!record(door) || !DOOR_KINDS.has(door.kind) || !nonEmptyText(door.path) || !nonEmptyText(door.symbol)) {
+        errors.push(`${label}: every doors entry requires kind "write" or "read", path, and symbol`);
+        continue;
+      }
+      // 行号不是门的身份（见 sourceMentionsSymbol 抬头）。留着一份旧形状的门表 = 两套身份并存，
+      // 而这正是「行号跟上」那族提交的来源，所以这里硬红，不静默忽略。
+      if (door.line !== undefined) {
+        errors.push(`${label}: doors entry must not carry a line number — 门的身份是 path + symbol`
+          + `，行号只是某一刻的排版；重跑 \`node scripts/door-map.mjs <mutator 符号或文件>\` 取当前门表`);
+        continue;
+      }
+      const identity = doorIdentity(door);
+      if (doorIdentities.has(identity)) {
+        errors.push(`${label}: duplicate door ${identity} —— 同一个符号在同一个文件里只算一扇门`
+          + `（门表用 node scripts/door-map.mjs 生成，别手写）`);
+        continue;
+      }
+      doorIdentities.add(identity);
+      const clean = normalized(door.path);
+      doorPaths.add(clean);
+      if (!fileExists(clean, existingFiles)) {
+        errors.push(`${label}: door path does not exist: ${door.path}`);
+        continue;
+      }
+      const source = fileContent(clean, fileContents);
+      if (typeof source !== "string") {
+        errors.push(`${label}: door cannot be verified because file contents are unavailable: ${door.path}`);
+      } else if (!sourceMentionsSymbol(source, door.symbol.trim())) {
+        errors.push(`${label}: door does not resolve — ${door.path} does not mention ${door.symbol}`
+          + `（这扇门没了或改了名：重跑 node scripts/door-map.mjs 取当前门表）`);
+      }
+    }
+  }
+
+  const reduction = contract?.door_reduction;
+  if (!record(reduction) || !Number.isInteger(reduction.before) || reduction.before < 0
+    || !Number.isInteger(reduction.after) || reduction.after < 0) {
+    errors.push(`${label}: door_reduction requires integer before/after (修之前几扇门、修之后还剩几扇)`);
+  } else {
+    if (Array.isArray(doors) && doors.length > 0 && reduction.after !== doors.length) {
+      errors.push(`${label}: door_reduction.after (${reduction.after}) must equal doors.length (${doors.length})`
+        + ` —— doors 记的是修完之后还剩下的门`);
+    }
+    if (reduction.before >= 2 && reduction.after >= reduction.before && !nonEmptyText(reduction.why_not)) {
+      errors.push(`${label}: door_reduction.why_not is required — ${reduction.before} 扇门一扇没减`
+        + `，允许不减但不允许无声地不减（说清为什么这些入口必须各自存在）`);
+    }
+  }
+
+  // 本次删掉的文件不可能再有门（门的 path 必须存在）；它只有在 legacy_paths.removed_paths 里明确声明
+  // 「这是删掉的旧路径」才不算漏数。没声明的删除照样当门没数全。
+  const declaredRemoved = new Set((Array.isArray(contract?.legacy_paths?.removed_paths) ? contract.legacy_paths.removed_paths : []).map(normalized));
+  const strays = [...changed]
+    .filter((file) => isDoorGovernedFile(file) && !isGeneratedDataFile(file, fileContents)
+      && pathIsInScope(file, scopePaths) && !doorPaths.has(normalized(file)))
+    .filter((file) => existingFiles.has(normalized(file)) || !declaredRemoved.has(normalized(file)))
+    .sort();
+  for (const file of strays) {
+    errors.push(`${label}: changed production file is not in the door map: ${file}`
+      + `（改了门表之外的文件 = 门没数全，或者这份合同的 scope_paths 画大了）`);
+  }
+  return errors;
+}
+
 function validateContract(contract, changed, existingFiles, index, fileContents) {
   const label = nonEmptyText(contract?.id) ? contract.id : `contract #${index + 1}`;
   const errors = [];
@@ -414,6 +653,13 @@ function validateContract(contract, changed, existingFiles, index, fileContents)
   if (fileDate && fileDate >= INVARIANT_OWNER_LAYER_SINCE) {
     errors.push(...validateInvariantOwnerLayer(contract, existingFiles, label));
   }
+  if (fileDate && fileDate >= DOOR_MAP_SINCE) {
+    errors.push(...validateDoorMap(contract, changed, existingFiles, label, fileContents));
+  }
+  if (fileDate && fileDate >= RECURRENCE_FIELDS_SINCE) {
+    errors.push(...validateDetectionFields(contract, changed, label));
+  }
+  errors.push(...validateRewriteDecision(contract, changed, existingFiles, label));
   for (const field of ["affected_population", "scope_paths", "entry_points", "invariants", "regression_tests", "residual_risks"]) {
     if (!nonEmptyTextArray(contract?.[field])) errors.push(`${label}: ${field} must be a non-empty string array`);
   }

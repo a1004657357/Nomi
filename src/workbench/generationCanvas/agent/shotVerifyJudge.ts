@@ -7,7 +7,7 @@
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { shotVerifySessionKey } from '../../ai/agentSessionKey'
 import { runSingleShotAgent } from '../../ai/agentLoopMode'
-import { readWindowUrlParam } from '../../windowUrlParam'
+import type { ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { ShotVerifyDeps } from './shotVerifyRunner'
 
 /**
@@ -17,11 +17,14 @@ import type { ShotVerifyDeps } from './shotVerifyRunner'
  * process rehydrate the canonical bytes. Keeping this lookup here also covers
  * extracted video frames, which are written to the same asset index.
  */
-async function resolveFrameAssetClaim(projectId: string, frameImageUrl: string): Promise<{ assetId: string } | undefined> {
+async function resolveFrameAssetClaim(project: ProjectExecutionContext, frameImageUrl: string): Promise<{ assetId: string } | undefined> {
+  project.assertCurrent()
+  const projectId = project.binding.projectId
   if (!frameImageUrl.startsWith('nomi-local://') || !projectId) return undefined
   const list = getDesktopBridge()?.assets?.list
   if (!list) return undefined
   const result = await list({ projectId, limit: 500 })
+  project.assertCurrent()
   const asset = result?.items?.find((candidate) => {
     const data = candidate && typeof candidate === 'object' && candidate.data && typeof candidate.data === 'object'
       ? candidate.data as Record<string, unknown>
@@ -35,17 +38,17 @@ async function resolveFrameAssetClaim(projectId: string, frameImageUrl: string):
 }
 
 /** 真实 deps 工厂(渲染层环境)。无桌面桥(非 Electron)→ extractFrame 抛错,被 runner 逐镜 catch 跳过。
- * 调用方在校验开始时传入项目 id，保证异步审片期间切项目也不会把旧镜头写进新会话；
- * 无显式参数仅为旧调用/独立预览保留 URL 兜底。 */
-export function makeShotVerifyDeps(projectIdInput?: string): ShotVerifyDeps {
-  const projectId = typeof projectIdInput === 'string'
-    ? projectIdInput.trim()
-    : (readWindowUrlParam('projectId') || '')
+ * 调用方传入动作起点签发的上下文，项目切换后禁止继续抽帧或提交审片。 */
+export function makeShotVerifyDeps(project: ProjectExecutionContext): ShotVerifyDeps {
+  project.assertCurrent()
+  const projectId = project.binding.projectId
   return {
     extractFrame: async (videoUrl: string): Promise<string> => {
+      project.assertCurrent()
       const extract = getDesktopBridge()?.video?.extractFrame
       if (!extract) throw new Error('当前环境不支持抽帧(需桌面端)')
-      const result = await extract({ videoUrl, which: 'first', projectId })
+      const result = await extract({ videoUrl, which: 'first', projectId, projectBinding: project.binding })
+      project.assertCurrent()
       const url = result?.url
       if (!url) throw new Error('抽帧未返回 URL')
       return url
@@ -53,16 +56,29 @@ export function makeShotVerifyDeps(projectIdInput?: string): ShotVerifyDeps {
     judge: async (prompt: string, frameImageUrl: string): Promise<string> => {
       // 每镜判断独立：ephemeral 纯多模态请求不会读写任何会话历史，
       // 避免上一镜的图/判决污染本镜上下文(偏判)。
-      const attachmentClaim = await resolveFrameAssetClaim(projectId, frameImageUrl)
+      project.assertCurrent()
+      const attachmentClaim = await resolveFrameAssetClaim(project, frameImageUrl)
+      project.assertCurrent()
+      let disposeCancellation = () => {}
+      try {
       const response = await runSingleShotAgent({
         featureKey: shotVerifySessionKey(projectId),
         prompt,
         displayPrompt: prompt.slice(0, 40),
-        ...(projectId ? { projectId } : {}),
+        projectId,
+        onCancelReady: cancel => {
+          if (project.signal.aborted) { cancel(); return }
+          project.signal.addEventListener('abort', cancel, { once: true })
+          disposeCancellation = () => project.signal.removeEventListener('abort', cancel)
+        },
         attachments: [{ url: frameImageUrl, contentType: 'image/png', fileName: 'shot-frame.png', kind: 'image' }],
         ...(attachmentClaim ? { attachmentClaims: [{ ...attachmentClaim, version: 1 }] } : {}),
       })
+      project.assertCurrent()
       return response.text ?? ''
+      } finally {
+        disposeCancellation()
+      }
     },
     // 默认视觉开;非多模态模型 → judge 返回非 JSON,runner 逐镜 catch 跳过(降级仅结构校验)。
     visionAvailable: () => true,

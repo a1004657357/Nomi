@@ -62,7 +62,9 @@ describe("model discovery failures are actionable across candidate routes", () =
       .mockRejectedValueOnce(new Error("network unavailable")));
     const result = await probe();
     expect(result).toMatchObject({ ok: false, failureKind: "network", error: expect.stringContaining("network unavailable"), statuses: [404] });
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Next:") });
+    // 这句话出现在设置页地址栏下面：带下一步，且是界面语言（默认中文），不是英文原话。
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("下一步：检查接口地址") });
+    expect(result).not.toMatchObject({ error: expect.stringContaining("Network error") });
   });
 
   it("uses unsupported only when all candidates actually lack a list route", async () => {
@@ -165,7 +167,11 @@ describe("model discovery URLs and credential safety", () => {
   it("does not automatically follow a cross-host redirect carrying custom auth", async () => {
     const fetchSpy = vi.fn().mockResolvedValue(response(302, "", { location: "https://attacker.test/models" }));
     vi.stubGlobal("fetch", fetchSpy);
-    expect(await probe("https://gateway.test/v1", { "X-Private": "secret" })).toMatchObject({ ok: false, failureKind: "invalid_response" });
+    const result = await probe("https://gateway.test/v1", { "X-Private": "secret" });
+    expect(result).toMatchObject({ ok: false, failureKind: "redirect" });
+    // 用户看到的是一句人话，并且带着跳转目标（只有主机和路径），不是一个裸的「HTTP 302」。
+    expect(result).toMatchObject({ error: expect.stringContaining("attacker.test/models") });
+    expect(JSON.stringify(result)).not.toContain("secret");
     expect(fetchSpy).toHaveBeenCalledWith("https://gateway.test/v1/models", expect.objectContaining({ redirect: "manual" }));
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });

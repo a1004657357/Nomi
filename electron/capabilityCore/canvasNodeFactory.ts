@@ -31,6 +31,14 @@ export type CanvasNodeFactorySpec = {
   modelKey?: string
 }
 
+/** Numbering needs owner identity, not an unqualified counter projection. */
+type ShotNumberingCandidate = {
+  kind: string
+  categoryId?: string
+  meta?: Record<string, unknown>
+  shotIndex?: number
+}
+
 /** 工厂注入依赖：把「与 registry/i18n 绑定」的一切外置，本函数只做组装。 */
 export type NodeFactoryDeps = {
   /** 生成稳定唯一 id（渲染层 createNodeId / electron crypto）。 */
@@ -48,7 +56,16 @@ export type NodeFactoryDeps = {
   /** 该节点是否占镜号（isShotNumberedNode：仅 shots 分类里的 image/video/shot/keyframe，排除参考/首帧标记）。 */
   isShotNumbered: (node: { kind: string; categoryId?: string; meta?: Record<string, unknown> }) => boolean
   /** 下一个可用镜号（max+1）。传入「本次落地前的既有节点集」。 */
-  nextShotIndex: (existing: readonly { shotIndex?: number }[]) => number
+  nextShotIndex: (existing: readonly ShotNumberingCandidate[]) => number
+  /**
+   * 校验调用方给的模型身份（`spec.vendor` / `spec.modelKey`），不合法就**抛**。
+   *
+   * 为什么是注入而不是本文件自己判：本文件零 import（可在纯 Node 单测），目录在 electron 那边；
+   * 而「校验留在 UI」那句旧注释对 MCP 这条路根本不成立——UI 路压根不传 vendor/modelKey
+   * （它传已组装好的 meta），所以那层校验对这条路等于不存在。
+   * 缺省不传 = 不校验（渲染层那条路没有外来身份可校）。
+   */
+  assertModelIdentity?: (identity: { vendor?: string; modelKey?: string; kind: string }) => void
 }
 
 /** 工厂产出的规范节点记录（= generationCanvasNodeSchema 的可写子集，渲染层载入照 zod 归一）。 */
@@ -69,17 +86,25 @@ export type CanvasNodeRecord = {
 
 /**
  * 把外部给的 vendor/modelKey 绑成解析器可见的**身份四件**（runner/catalogTaskResolve 读
- * meta.modelVendor||meta.vendor + meta.modelKey||meta.modelAlias）。非法/未知值原样存——校验留在
- * UI 校验处（P4：不建第二个校验器）。二者都缺 → 返回原 meta（保持空 → 触发渲染层 auto-select）。
+ * meta.modelVendor||meta.vendor + meta.modelKey||meta.modelAlias）。二者都缺 → 返回原 meta
+ * （保持空 → 触发渲染层 auto-select）。
+ *
+ * 2026-09-21：给了就**校验**（`deps.assertModelIdentity`）。旧注释说「非法/未知值原样存——校验留在
+ * UI」，但走这条路的是 MCP，UI 那层校验在这条路上根本不存在：外部宿主写错一个 modelKey，
+ * 节点照样建出来、看起来一切正常，直到点生成才发现这个模型不存在；而 `canvasRead` 又不返回
+ * 模型字段，连读都读不回来，错误因此完全不可观测。
  */
 function bindModelIdentity(
   meta: Record<string, unknown>,
+  kind: string,
+  deps: NodeFactoryDeps,
   vendor?: string,
   modelKey?: string,
 ): Record<string, unknown> {
   const v = typeof vendor === 'string' ? vendor.trim() : ''
   const k = typeof modelKey === 'string' ? modelKey.trim() : ''
   if (!v && !k) return meta
+  deps.assertModelIdentity?.({ ...(v ? { vendor: v } : {}), ...(k ? { modelKey: k } : {}), kind })
   return {
     ...meta,
     ...(k ? { modelKey: k, modelAlias: k } : {}),
@@ -97,7 +122,7 @@ function bindModelIdentity(
  */
 export function buildCanvasNode(
   spec: CanvasNodeFactorySpec,
-  existing: readonly { shotIndex?: number }[],
+  existing: readonly ShotNumberingCandidate[],
   deps: NodeFactoryDeps,
 ): CanvasNodeRecord {
   const kind = (spec.kind && spec.kind.trim()) || 'text'
@@ -105,7 +130,7 @@ export function buildCanvasNode(
   const title = (spec.title && spec.title.trim()) || deps.resolveDefaultTitle(kind)
   const size = spec.size ? { ...spec.size } : deps.resolveSize(kind)
   const baseMeta = spec.meta ? { ...spec.meta } : {}
-  const meta = bindModelIdentity(baseMeta, spec.vendor, spec.modelKey)
+  const meta = bindModelIdentity(baseMeta, kind, deps, spec.vendor, spec.modelKey)
 
   const record: CanvasNodeRecord = {
     id: deps.createId(kind),
@@ -139,10 +164,10 @@ export function buildCanvasNode(
 export function buildCanvasNodes(
   specs: readonly CanvasNodeFactorySpec[],
   positions: ReadonlyArray<{ x: number; y: number }>,
-  existing: readonly { shotIndex?: number }[],
+  existing: readonly ShotNumberingCandidate[],
   deps: NodeFactoryDeps,
 ): CanvasNodeRecord[] {
-  const running: Array<{ shotIndex?: number }> = [...existing]
+  const running: ShotNumberingCandidate[] = [...existing]
   const built: CanvasNodeRecord[] = []
   specs.forEach((spec, index) => {
     const pos = positions[index]

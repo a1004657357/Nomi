@@ -1,0 +1,410 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-main-style-content-flow",
+  "problem_type": "Secondary UI information distributed to row edges instead of the approved content flow",
+  "symptom": "check:tokens at d34454b reports 17 edge occurrences across 12 files; narrow rows can separate related labels and controls or crowd hit areas.",
+  "direct_cause": "Consumers use auto margins or space-between for metadata, counts and close controls rather than the existing V4Row content-flow shape.",
+  "class_root": "The shared design rule was not applied at all existing presentation consumers. The prior pixel-identical constraint prevented correction and is now explicitly superseded by coordination approval.",
+  "affected_population": [
+    "Existing onboarding, batch/review settings, status headers, comparison controls, keyframes, camera capture and storyboard rows"
+  ],
+  "scope_paths": [
+    "src/ui/onboarding/CodexImagegenManage.tsx",
+    "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+    "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+    "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+    "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+    "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+    "scripts/main-style-content-flow.node-test.mjs",
+    "scripts/lib/mainStyleContentFlowCases.mjs",
+    "tests/ux/main-style-content-flow.walk.mjs",
+    "tests/ux/fixtures/content-flow.tsconfig.json"
+  ],
+  "entry_points": [
+    "Seventeen actual JSX row cases from twelve existing feature components",
+    "Normal/long text in narrow/wide presentation contexts"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is a repository-owned presentation invariant. Existing flex, wrapping, spacing and button/select primitives are sufficient; no external runtime behavior or dependency upgrade is involved.",
+  "invariants": [
+    "All seventeen occurrences follow content instead of distributing secondary information to the far edge",
+    "Every original label, JSX condition, control, callback, input value and disabled state is preserved",
+    "Existing button and check hit sizes remain; narrow content can wrap without overlap",
+    "No feature imports Agent V4 solely to obtain row layout, no inline aliases or stretched labels hide edge alignment",
+    "Functional-line files and validation baselines remain unchanged"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/ui/browser/popover/browserAssetPopoverUtils.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/popover/useBrowserAssetActions.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/prompt/browserPromptExtractionRunner.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/onboarding/CodexImagegenManage.tsx",
+      "symbol": "IconTerminal2"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/onboarding/ConnectAssistantCard.tsx",
+      "symbol": "IconTerminal2"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/api/promptLibraryApi.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/assetImportRejection.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/assetLibraryLocalImport.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/assetSurfaceMigration.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/deleteAssetResult.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/assets/importAudioToLibrary.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/adapters/assetImportAdapter.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/adapters/clipboardImagePaste.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "symbol": "runnableCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/canvasStageDrop.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "symbol": "CapabilityVisionReviewSelection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityVisionReviewSelection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "moodRequestSummary"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityAutoVisionReviewControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityRecipeInspector"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/model/storyboardTableSizing.ts",
+      "symbol": "STORYBOARD_TABLE_MIN_CONTENT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "symbol": "reviewLabel"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "qualityTone"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "CapabilityQualityReportPopover"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "CapabilityHumanReviewControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "PortraitComparisonControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "CapabilityResultCollection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "ImageComparisonNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "Model3DCameraNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "symbol": "captureSettings"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeVideoFrameToolbar.tsx",
+      "symbol": "VideoKeyframeInspectorDialog"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeVideoPlaybackGuard.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "symbol": "ComparisonSurface"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "symbol": "STORYBOARD_TABLE_MIN_CONTENT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "STORYBOARD_TABLE_MIN_CONTENT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "StoryboardTableNodeImpl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/useNodeMediaMeasurement.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "symbol": "FRAME_COUNTS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/plugins/canvasWorkflowTemplates.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/resultMediaBackfillBridge.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeRetryAction.ts",
+      "symbol": "failedCount"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationReferenceResolver.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/videoDepth/startVideoDepthDerivation.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/videoDepth/videoDepthClient.ts",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/library/WorkflowLibraryContent.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/promptLibrary/PromptPreviewOverlay.tsx",
+      "symbol": "sourceUrl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/skillGallery.ts",
+      "symbol": "sourceUrl"
+    }
+  ],
+  "door_reduction": {
+    "before": 52,
+    "after": 52,
+    "why_not": "Existing presentation/read doors remain for the same independent features. Name-based enumeration conservatively includes unrelated sourceUrl, failedCount and IconTerminal2 occurrences. There is no state ownership duplication to consolidate; only local class attributes change."
+  },
+  "generality_proof": "The unchanged token gate scans all production paths. The focused case inventory locates the actual seventeen JSX rows, verifies wrapping, owner spacing and absence of hidden edge aliases, and checks hit sizes. A class-stripped AST comparison to d34454b verifies preservation of labels, controls, conditions and handlers; a separate real Chromium walk checks actual source-row projections with long text at narrow/wide widths.",
+  "shared_boundaries": [
+    {
+      "path": "scripts/main-style-content-flow.node-test.mjs",
+      "symbol": "contentFlowCases",
+      "responsibility": "Changed focused static gate checks all affected real source rows without exemptions"
+    },
+    {
+      "path": "scripts/lib/mainStyleContentFlowCases.mjs",
+      "symbol": "findContentFlowRow",
+      "responsibility": "Shared test inventory locates the exact JSX rows for both static regressions and isolated browser rendering"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/ui/onboarding/CodexImagegenManage.tsx",
+      "entry_point": "CodexImagegenManage heading and badge",
+      "disposition": "enforced",
+      "evidence": "The connection badge joins its title in a wrapping gap-1.5 content flow without changing text or status"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "entry_point": "VideoKeyframeInspectorDialog header, count and frame footer",
+      "disposition": "enforced",
+      "evidence": "Three independent entry rows retain close/selection controls and values while removing edge distribution"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "entry_point": "StoryboardTableNode header",
+      "disposition": "enforced",
+      "evidence": "Existing table commands and row count follow the heading; the same minimum header height allows narrow wrapping and no data/command handler changes"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "The same layout-policy violation exists in twelve independent features and conditional states.",
+    "same_class_scan": [
+      "rg of ml-auto and justify-between in all twelve reported files: seventeen source occurrences",
+      "Seventeen actual source-row inventory entries include reviewed/unreviewed alternatives, matrix axes and selected candidate state",
+      "node scripts/door-map.mjs with the twelve consumer symbols and their local presentation/read identifiers --roots=src"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "scripts/main-style-content-flow.node-test.mjs",
+    "invariant": "Actual affected source rows wrap in owner content flow and keep original hit dimensions without edge alignment aliases.",
+    "failure_mode": "The focused gate fails if any edge class, hidden auto-margin/distribution alias, stretched label, missing wrap/gap or reduced explicit hit size returns.",
+    "exception_policy": "none",
+    "strategy": "Correct the class attributes at all affected consumers using the existing owner layout tokens, while one shared test inventory drives class-level and Chromium evidence.",
+    "artifacts": [
+      "scripts/main-style-content-flow.node-test.mjs",
+      "scripts/lib/mainStyleContentFlowCases.mjs",
+      "src/ui/onboarding/CodexImagegenManage.tsx",
+      "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx"
+    ]
+  },
+  "regression_tests": [
+    "scripts/main-style-content-flow.node-test.mjs",
+    "tests/ux/main-style-content-flow.walk.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/main-style-content-flow.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No parallel component, fallback or persisted format is introduced. Existing edge layout declarations are replaced in place."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency behavior changes; use current layout utilities, components and cached Chromium for isolated evidence.",
+    "exit_criteria": []
+  },
+  "migration": "No data migration. Only JSX class attributes change. Same numeric minimum heights are retained where fixed heights must grow for wrapping; major widths, columns and media sizes remain.",
+  "residual_risks": [
+    "Real App state, both locales, real media/project workflows, 3D interactions, packaged/Windows behavior and final CI acceptance remain for the integration line",
+    "Source-row Chromium projections exercise presentation with fixture values, not business providers or full feature hooks",
+    "Remote preflight remains environmental non-execution from the existing proxy failure; proxy unchanged"
+  ],
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/main-style-content-flow.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/main-style-content-flow.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

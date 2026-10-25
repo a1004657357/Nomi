@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import path from 'node:path'
 import test from 'node:test'
-import { scanRepository } from './check-vocabularies.mjs'
-import { cleanup, makeFixture, runChecker, vocabularyEntry } from './check-vocabularies-test-helpers.mjs'
+import { resolveReferenceBaselines, scanRepository } from './check-vocabularies.mjs'
+import { cleanup, git, makeFixture, runChecker, vocabularyEntry } from './check-vocabularies-test-helpers.mjs'
 
 test('AST scan finds multiline unions, z.enum, as const arrays, and Set vocabularies', () => {
   const fixture = makeFixture({
@@ -30,6 +31,108 @@ test('AST scan finds multiline unions, z.enum, as const arrays, and Set vocabula
     assert.match(result.stderr, /src\/schema\.tsx::variable:StatusSchema\/z\.enum/)
     assert.match(result.stderr, /src\/options\.mts::variable:OPTIONS\/as-const/)
     assert.match(result.stderr, /electron\/status\.cts::variable:states\/set/)
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('historical ratchet uses origin/main only when it is an ancestor of HEAD', () => {
+  const fixture = makeFixture({ 'src/status.ts': `type Status = 'queued' | 'failed'` })
+  try {
+    git(fixture.root, 'init', '-q')
+    git(fixture.root, 'config', 'user.email', 'test@example.com')
+    git(fixture.root, 'config', 'user.name', 'Test')
+    fs.writeFileSync(fixture.baselinePath, `${JSON.stringify({ debtCap: 1, registered: [], debt: [{ site: 'src/status.ts::type:Status/type-union', members: ['failed', 'queued'], reason: 'Release branch historical owner.' }] })}\n`)
+    git(fixture.root, 'add', '.')
+    git(fixture.root, 'commit', '-qm', 'base')
+    git(fixture.root, 'branch', '-M', 'main')
+    git(fixture.root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(fixture.root, 'branch', 'release')
+    git(fixture.root, 'switch', '-q', 'release')
+    git(fixture.root, 'switch', '-q', 'main')
+    fs.writeFileSync(fixture.baselinePath, `${JSON.stringify({ debtCap: 0, registered: [], debt: [] })}\n`)
+    git(fixture.root, 'add', 'baseline.json')
+    git(fixture.root, 'commit', '-qm', 'main shrinks debt')
+    git(fixture.root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(fixture.root, 'switch', '-q', 'release')
+    const resolution = resolveReferenceBaselines({
+      repoRoot: fixture.root,
+      baselinePath: fixture.baselinePath,
+      environment: {},
+    })
+    assert.equal(resolution.references.length, 1)
+    assert.match(resolution.references[0].label, /merge-base|HEAD\^1/)
+    assert.doesNotMatch(resolution.references[0].label, /origin\/main/)
+    const result = runChecker(fixture)
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('historical ratchet prefers origin/main when HEAD contains it', () => {
+  const fixture = makeFixture({ 'src/status.ts': `type Status = 'queued' | 'failed'` })
+  try {
+    git(fixture.root, 'init', '-q')
+    git(fixture.root, 'config', 'user.email', 'test@example.com')
+    git(fixture.root, 'config', 'user.name', 'Test')
+    git(fixture.root, 'add', '.')
+    git(fixture.root, 'commit', '-qm', 'base')
+    git(fixture.root, 'branch', '-M', 'main')
+    fs.writeFileSync(path.join(fixture.root, 'main.txt'), 'main\n')
+    git(fixture.root, 'add', 'main.txt')
+    git(fixture.root, 'commit', '-qm', 'main advances')
+    git(fixture.root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(fixture.root, 'switch', '-c', 'task', '-q')
+    fs.writeFileSync(path.join(fixture.root, 'task.txt'), 'task\n')
+    git(fixture.root, 'add', 'task.txt')
+    git(fixture.root, 'commit', '-qm', 'task advances')
+    fs.writeFileSync(fixture.baselinePath, `${JSON.stringify({ debtCap: 0, registered: [], debt: [] })}\n`)
+    git(fixture.root, 'add', 'baseline.json')
+    git(fixture.root, 'commit', '-qm', 'task')
+    const resolution = resolveReferenceBaselines({ repoRoot: fixture.root, baselinePath: fixture.baselinePath, environment: {} })
+    assert.ok(resolution.references.some(({ label }) => /origin\/main/.test(label)))
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('divergent release branches still reject debt introduced on the branch', () => {
+  const fixture = makeFixture({ 'src/status.ts': `type Status = 'queued' | 'failed'` }, {
+    debtCap: 1,
+    registered: [],
+    debt: [{ site: 'src/status.ts::type:Status/type-union', members: ['failed', 'queued'], reason: 'Release branch historical owner.' }],
+  })
+  try {
+    git(fixture.root, 'init', '-q')
+    git(fixture.root, 'config', 'user.email', 'test@example.com')
+    git(fixture.root, 'config', 'user.name', 'Test')
+    git(fixture.root, 'add', '.')
+    git(fixture.root, 'commit', '-qm', 'base')
+    git(fixture.root, 'branch', '-M', 'main')
+    git(fixture.root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(fixture.root, 'branch', 'release')
+    git(fixture.root, 'switch', '-q', 'release')
+    fs.writeFileSync(path.join(fixture.root, 'src', 'new.ts'), `type NewStatus = 'active' | 'waiting'`)
+    fs.writeFileSync(fixture.baselinePath, `${JSON.stringify({
+      debtCap: 2,
+      registered: [],
+      debt: [
+        { site: 'src/status.ts::type:Status/type-union', members: ['failed', 'queued'], reason: 'Release branch historical owner.' },
+        { site: 'src/new.ts::type:NewStatus/type-union', members: ['active', 'waiting'], reason: 'Branch introduced owner.' },
+      ],
+    })}\n`)
+    git(fixture.root, 'add', '.')
+    git(fixture.root, 'commit', '-qm', 'release adds debt')
+    git(fixture.root, 'switch', '-q', 'main')
+    fs.writeFileSync(fixture.baselinePath, `${JSON.stringify({ debtCap: 0, registered: [], debt: [] })}\n`)
+    git(fixture.root, 'add', 'baseline.json')
+    git(fixture.root, 'commit', '-qm', 'main shrinks debt')
+    git(fixture.root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(fixture.root, 'switch', '-q', 'release')
+    const result = runChecker(fixture)
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`)
+    assert.match(result.stderr, /historical new debt site.*src\/new\.ts/s)
   } finally {
     cleanup(fixture)
   }
@@ -555,6 +658,44 @@ test('the generic authoritative-owner template cannot make the gate green', () =
     const result = runChecker(fixture)
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`)
     assert.match(result.stderr, /reason is missing or not substantive/)
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('基线自动收缩：已消失 owner 的条目与松掉的 debtCap 由门岗自己收，不再红灯逼人手改', () => {
+  const fixture = makeFixture(
+    {},
+    {
+      debtCap: 1,
+      registered: [
+        { site: 'src/deleted.ts::type:DeletedStatus/type-union', members: ['queued', 'running'], reason: 'This reason must not hide a deleted owner.' },
+      ],
+      debt: [],
+    },
+  )
+  try {
+    const result = runChecker(fixture, { autoShrink: true })
+    assert.equal(result.status, 0, `${result.stdout}
+${result.stderr}`)
+    assert.match(result.stdout, /基线自动收缩/)
+    const next = JSON.parse(fs.readFileSync(fixture.baselinePath, 'utf8'))
+    assert.deepEqual(next.registered, [])
+    assert.equal(next.debtCap, 0)
+  } finally {
+    cleanup(fixture)
+  }
+})
+
+test('基线自动收缩只减不增：新增 owner 仍然红，也不会被自动登记', () => {
+  const fixture = makeFixture({ 'src/new.ts': 'type Fresh = "queued" | "running" | "success"' }, { debtCap: 0, registered: [], debt: [] })
+  try {
+    const result = runChecker(fixture, { autoShrink: true })
+    assert.equal(result.status, 1, `${result.stdout}
+${result.stderr}`)
+    const next = JSON.parse(fs.readFileSync(fixture.baselinePath, 'utf8'))
+    assert.deepEqual(next.registered, [])
+    assert.deepEqual(next.debt, [])
   } finally {
     cleanup(fixture)
   }

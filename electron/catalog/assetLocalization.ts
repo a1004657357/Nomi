@@ -22,14 +22,18 @@ import {
   parseInlineDataAsset,
   unreachableAssetValueError,
 } from "./assetValueScheme";
-import { contentTypeFromMagicBytes } from "../assets/mediaTypes";
+import { contentTypeFromMagicBytes, isMarkupMasquerade, mediaKindFromContentType } from "../assets/mediaTypes";
 import { tagNomiError } from "../shared/nomiErrorCodes";
+import { desktopT } from "../desktopStrings";
 import {
   ingestionAccepts,
   resolveAssetIngestionForKind,
   ANON_UPLOAD_CHAIN,
+  AGNES_UPLOAD_CHAIN,
 } from "./assetIngestionRegistry";
 import { readAssetRelayRuntimeConfig, readDefaultAssetRelayRuntimeConfig } from "./assetRelayRuntimeConfig";
+import { isVendorOfBuiltin } from "../shared/builtinVendorIdentity";
+import { APIMART_VENDOR_SEED } from "./apimartVendor";
 
 export {
   ingestionAccepts,
@@ -38,6 +42,8 @@ export {
   LITTERBOX_INGESTION,
   TMPFILES_INGESTION,
   ANON_UPLOAD_CHAIN,
+  UGUU_INGESTION,
+  AGNES_UPLOAD_CHAIN,
 } from "./assetIngestionRegistry";
 
 export type LocalAsset = {
@@ -51,7 +57,7 @@ export type LocalAsset = {
 
 export class AnonymousAssetConsentRequiredError extends Error {
   constructor() {
-    super("参考素材需要上传到公共临时托管。KIE 视频文件上传免费，配置 KIE 后可优先使用；继续前请确认公共链接和有效期风险。");
+    super("参考素材需要上传到公共临时托管：素材会离开本机，链接短期有效，并存在隐私风险。可以在设置里换上传通道；继续前请确认。");
     this.name = "AnonymousAssetConsentRequiredError";
   }
 }
@@ -110,12 +116,17 @@ export function isLocalAssetUrl(value: unknown): value is string {
   return isLocalizableAssetValue(value);
 }
 
-/** contentType → 媒体类型(image/video/audio)。未知一律按 image(今天的通道都面向图片)。 */
-export function mediaKindFromContentType(contentType: string | undefined): AssetMediaKind {
-  const ct = (contentType || "").toLowerCase();
-  if (ct.startsWith("video/")) return "video";
-  if (ct.startsWith("audio/")) return "audio";
-  return "image";
+/**
+ * contentType → **上传通道**的媒体类型。认不出一律按 image(今天的通道都面向图片)。
+ *
+ * kind 判定本身不在这里——那是 mediaTypes 那张表的事(认不出返回 null)。本函数只做本层那件事:
+ * 把 MediaKind 收窄成上传通道认识的三种,并把「认不出」翻成默认通道。
+ * 改名是因为它和 owner 那个同名却语义相反(一个兜底成 image、一个返回 null),
+ * 同名不同义正是 check:media-import-owner 要拦的漂移。
+ */
+export function assetUploadChannelKind(contentType: string | undefined): AssetMediaKind {
+  const kind = mediaKindFromContentType(contentType ?? "");
+  return kind === "video" || kind === "audio" ? kind : "image";
 }
 
 /** 递归收集任意 JSON 结构里所有待本地化素材值(nomi-local:// / data:,去重)。标量/数组元素/对象值都认。 */
@@ -149,7 +160,7 @@ function readLocalizableAsset(url: string, read: LocalAssetReader): LocalAsset |
 }
 
 /** 上传前按全局媒体表核对本地图片字节；SVG 单独验证文本结构，其余格式必须命中对应魔数。 */
-export function assertLocalAssetMediaBytes(asset: LocalAsset, mediaKind = mediaKindFromContentType(asset.contentType)): void {
+export function assertLocalAssetMediaBytes(asset: LocalAsset, mediaKind = assetUploadChannelKind(asset.contentType)): void {
   if (mediaKind !== "image") return;
   const declared = asset.contentType.toLowerCase().split(";")[0].trim();
   const sniffed = contentTypeFromMagicBytes(asset.bytes);
@@ -170,9 +181,8 @@ export function assertLocalAssetMediaBytes(asset: LocalAsset, mediaKind = mediaK
       throw new Error(`图片素材「${asset.fileName}」声明为 SVG，但内容不是完整且安全的 SVG 文档。`);
     }
   }
-  const prefix = asset.bytes.subarray(0, 2048).toString("utf8");
-  if (/<!doctype\s+html|<html\b|<\?xml\b|<svg\b/i.test(prefix)) {
-    throw new Error(`图片素材「${asset.fileName}」的内容实际是 HTML/XML/SVG 文本，不是可用于视频生成的栅格图片。请重新导入原图。`);
+  if (!sniffed && isMarkupMasquerade(asset.bytes)) {
+    throw new Error(tagNomiError("asset-invalid", `图片素材「${asset.fileName}」的内容实际是 HTML/XML/SVG 文本，不是可用的图片素材。请换一张或重新导入原图。`));
   }
   const knownRasterTypes = new Set([
     "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif",
@@ -212,13 +222,13 @@ export function assertLocalAssetTransportReady(
   assertNoUnreachableAssetValues(effectiveValue);
   for (const url of collectLocalAssetUrls(effectiveValue)) {
     const asset = readLocalizableAsset(url, read);
-    if (!asset) throw new Error(`参考素材的本地文件读取失败（可能已被删除或随项目迁移）：${describeAssetValue(url)}。请重新生成该节点或重新导入这张素材。`);
+    if (!asset) throw new Error(tagNomiError("asset-invalid", `参考素材的本地文件读取失败（可能已被删除或随项目迁移）：${describeAssetValue(url)}。请换一张或重新导入这张素材。`));
     if (!asset.contentType || asset.contentType.toLowerCase().split(";")[0].trim() === "application/octet-stream") {
-      throw new Error(`无法识别本地素材「${asset.fileName || describeAssetValue(url)}」的类型，不能安全判断它是图片、视频还是音频。请重新导入并保留正确的文件扩展名。`);
+      throw new Error(tagNomiError("asset-invalid", `无法识别本地素材「${asset.fileName || describeAssetValue(url)}」的类型，不能安全判断它是图片、视频还是音频。请重新导入并保留正确的文件扩展名。`));
     }
     assertLocalAssetMediaBytes(asset);
     if (trustedOriginalUrl(asset)) continue;
-    const mediaKind = mediaKindFromContentType(asset.contentType);
+    const mediaKind = assetUploadChannelKind(asset.contentType);
     const candidates = resolveIngestion(mediaKind);
     let consentRequired = false;
     const safe = candidates.some((candidate) => {
@@ -300,7 +310,7 @@ export async function resolveLocalAsset(
     throw new Error(`所有免配置上传 host 都失败：${errors.join("；") || "(链为空)"}`);
   }
   const asset = readLocalizableAsset(localUrl, read);
-  if (!asset) throw new Error(`参考素材的本地文件读取失败（可能已被删除或随项目迁移）：${describeAssetValue(localUrl)}。请重新生成该节点或重新导入这张素材。`);
+  if (!asset) throw new Error(tagNomiError("asset-invalid", `参考素材的本地文件读取失败（可能已被删除或随项目迁移）：${describeAssetValue(localUrl)}。请换一张或重新导入这张素材。`));
   assertLocalAssetMediaBytes(asset);
   // 本地 ComfyUI：LoadImage 只认上传回的 input 目录文件名（非公网 URL），故**跳过下面的 trustedOriginalUrl
   // 公网 URL 快路**，恒把本地字节 POST 到 /upload/image 换文件名（field 名 "image"、type=input、overwrite 避重名堆积）。
@@ -434,7 +444,21 @@ export async function resolveLocalAsset(
     if (typeof uploadUrl !== "string" || !uploadUrl || typeof fileUrl !== "string" || !fileUrl) {
       throw new Error(`上传初始化响应缺少 signed URL 或文件 URL(期望 ${ingestion.uploadUrlPath} / ${ingestion.urlPath})`);
     }
-    await putBinary(uploadUrl, { "Content-Type": asset.contentType }, asset.bytes, asset.contentType);
+    // 预签名 PUT 的头由供应商在初始化响应里指定（见 types.ts 的 uploadHeadersPath 注释）：
+    // 少一个被签名的头 = 403 SignatureDoesNotMatch。声明了路径就必须拿到，拿不到直接报错，
+    // 不静默退回「只发 Content-Type」——那会变成一个只在某些供应商上偶发的 403。
+    const declaredHeaders: Record<string, string> = {};
+    if (ingestion.uploadHeadersPath) {
+      const raw = readNestedPath(response, ingestion.uploadHeadersPath);
+      if (!raw || typeof raw !== "object") {
+        throw new Error(desktopT("assetUpload.missingPutHeaders", { path: ingestion.uploadHeadersPath }));
+      }
+      for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof value !== "string") throw new Error(desktopT("assetUpload.headerNotString", { name: key }));
+        declaredHeaders[key] = value;
+      }
+    }
+    await putBinary(uploadUrl, { "Content-Type": asset.contentType, ...declaredHeaders }, asset.bytes, asset.contentType);
     return fileUrl;
   }
 
@@ -584,9 +608,9 @@ export async function localizeAssetsForVendor(
   for (const url of urls) {
     const asset = readLocalizableAsset(url, read);
     if (asset && (!asset.contentType || asset.contentType.toLowerCase().split(";")[0].trim() === "application/octet-stream")) {
-      throw new Error(`无法识别本地素材「${asset.fileName || describeAssetValue(url)}」的类型，不能安全判断它是图片、视频还是音频。请重新导入并保留正确的文件扩展名。`);
+      throw new Error(tagNomiError("asset-invalid", `无法识别本地素材「${asset.fileName || describeAssetValue(url)}」的类型，不能安全判断它是图片、视频还是音频。请重新导入并保留正确的文件扩展名。`));
     }
-    const mediaKind = mediaKindFromContentType(asset?.contentType);
+    const mediaKind = assetUploadChannelKind(asset?.contentType);
     if (asset) assertLocalAssetMediaBytes(asset, mediaKind);
     const candidates = resolveIngestion(mediaKind);
     // 本地 ComfyUI（comfyui-upload）：公网 URL 用不了，必须传到它自己的 input 目录换文件名 → 跳过 trusted 快路，恒上传。
@@ -705,7 +729,7 @@ export function nomiPublicAssetRelayCandidate(): IngestionCandidate | null {
  */
 export function resolveAssetIngestionWithFallback(
   targetVendor: { key?: string; assetIngestion?: AssetIngestion; baseUrlHint?: string | null } | null | undefined,
-  allVendors: Array<{ key?: string; assetIngestion?: AssetIngestion }>,
+  allVendors: Array<{ key?: string; assetIngestion?: AssetIngestion; baseUrlHint?: string | null }>,
   getApiKey: (vendorKey: string) => string | null,
   mediaKind: AssetMediaKind = "image",
 ): Array<IngestionCandidate> {
@@ -747,9 +771,9 @@ export function resolveAssetIngestionWithFallback(
   // 3. KIE/APIMart 可能未出现在旧存量 catalog；已配置时补入，push 去重。
   const kieKey = getApiKey("kie");
   if (kieKey) push(resolveAssetIngestionForKind({ key: "kie" }, mediaKind), kieKey, "kie");
-  if (targetVendor?.key !== "apimart") {
+  if (!isVendorOfBuiltin(allVendors, targetVendor?.key, "apimart")) {
     const apimartKey = getApiKey("apimart");
-    if (apimartKey) push(resolveAssetIngestionForKind({ key: "apimart" }, mediaKind), apimartKey, "apimart");
+    if (apimartKey) push(resolveAssetIngestionForKind(allVendors.find((vendor) => vendor.key === APIMART_VENDOR_SEED.key) ?? { key: "apimart" }, mediaKind), apimartKey, "apimart");
   }
   // 4. Nomi relay：用户自己的 Relay 优先于 Nomi 公共 Relay，二者均只作为受控兜底。
   const nomiRelay = nomiAssetRelayCandidateFromEnvironment();
@@ -764,6 +788,9 @@ export function resolveAssetIngestionWithFallback(
   //    (litterbox → tmpfiles)，单 host 限速/宕机时自动切下一个。走到这里说明上面更优的通道都没命中
   //    （图片几乎总有 apimart；视频缺 KIE 时此处接住）。NET：上传零配置"开箱即用"，诚实错误
   //    只在链里**所有** host 都不可达时才触发。
-  if (ingestionAccepts(ANON_UPLOAD_CHAIN, mediaKind)) push(ANON_UPLOAD_CHAIN, "", null);
+  const anonymousIngestion = isVendorOfBuiltin(allVendors, targetVendor?.key, 'agnes') && ingestionAccepts(AGNES_UPLOAD_CHAIN, mediaKind)
+    ? AGNES_UPLOAD_CHAIN
+    : ANON_UPLOAD_CHAIN;
+  if (ingestionAccepts(anonymousIngestion, mediaKind)) push(anonymousIngestion, "", null);
   return candidates;
 }

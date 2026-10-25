@@ -15,14 +15,40 @@
   cursor: grab;
 }
 
-.generation-canvas-v2__stage[data-panning] {
-  cursor: grabbing;
-}
+/* 平移中的 grabbing 光标规则搬去 reactFlow/generationCanvasReactFlow.css（同宿主元素、
+   与写属性的 useGenerationCanvasReactFlowPointer 同层），这里不留第二份（P1/R10）。 */
 
 .generation-canvas-v2__canvas {
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* 高密度 SVG 连线是大画布平移时的主要合成瓶颈。视口移动期间不可操作连线，
+   暂停绘制并在停止 120ms 后恢复；小图保持连线全程可见。 */
+.generation-canvas-v2__stage[data-dense-edges]:is([data-viewport-moving], [data-dragging='true']) .generation-canvas-v2__edges {
+  visibility: hidden;
+}
+
+/* 自动/流畅模式只在交互最重的一小段时间暂停媒体合成，松手后立即恢复。 */
+.generation-canvas-v2__stage[data-suspend-media-while-moving]:is([data-viewport-moving], [data-dragging='true'])
+  .generation-canvas-v2-node :is(img, video, canvas) {
+  visibility: hidden;
+}
+
+.generation-canvas-v2__stage[data-reduce-effects] .generation-canvas-v2-node {
+  contain: layout style;
+}
+
+.generation-canvas-v2__stage[data-reduce-effects] .generation-canvas-v2-node[data-appear='true'] {
+  animation: none;
+}
+
+.generation-canvas-v2__stage[data-performance-preference='smooth']
+  .generation-canvas-v2-node :is([class*='shadow-'], [class*='backdrop-']) {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
 }
 
 .generation-canvas-v2__edges,
@@ -297,56 +323,6 @@
 .generation-canvas-v2__edge-cut:hover {
   background: var(--workbench-danger);
   color: var(--nomi-paper);
-}
-
-.generation-canvas-v2-node__handle {
-  pointer-events: auto;
-}
-
-.generation-canvas-v2-node__handle-dot {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--workbench-surface-solid);
-  border-radius: 999px;
-  background: var(--workbench-muted-soft);
-  box-shadow: 0 4px 12px rgba(18, 24, 38, 0.14);
-  transition: transform 150ms ease, background 150ms ease, opacity 150ms ease;
-}
-
-.generation-canvas-v2-node__handle:hover .generation-canvas-v2-node__handle-dot,
-.generation-canvas-v2-node__handle[data-active='true'] .generation-canvas-v2-node__handle-dot {
-  background: var(--workbench-accent);
-  transform: scale(1.08);
-}
-
-.generation-canvas-v2-node__magnetic-handle-icon {
-  --connection-handle-reveal-x: 0px;
-  opacity: 0;
-  transform: translate(calc(-50% + var(--connection-handle-reveal-x)), -50%) scale(0.86);
-}
-
-.generation-canvas-v2-node__magnetic-handle[data-side='left'] .generation-canvas-v2-node__magnetic-handle-icon {
-  --connection-handle-reveal-x: 28px;
-}
-
-.generation-canvas-v2-node__magnetic-handle[data-side='right'] .generation-canvas-v2-node__magnetic-handle-icon {
-  --connection-handle-reveal-x: -28px;
-}
-
-.generation-canvas-v2-node:hover .generation-canvas-v2-node__magnetic-handle-icon,
-.generation-canvas-v2-node:focus-within .generation-canvas-v2-node__magnetic-handle-icon,
-.generation-canvas-v2-node__magnetic-handle:hover .generation-canvas-v2-node__magnetic-handle-icon,
-.generation-canvas-v2-node__magnetic-handle[data-active='true'] .generation-canvas-v2-node__magnetic-handle-icon,
-.generation-canvas-v2-node__magnetic-handle[data-following='true'] .generation-canvas-v2-node__magnetic-handle-icon {
-  --connection-handle-reveal-x: 0px;
-  opacity: 0.82;
-  transform: translate(-50%, -50%) scale(1);
-}
-
-.generation-canvas-v2-node:hover .generation-canvas-v2-node__magnetic-handle:hover .generation-canvas-v2-node__magnetic-handle-icon,
-.generation-canvas-v2-node__magnetic-handle[data-active='true'] .generation-canvas-v2-node__magnetic-handle-icon,
-.generation-canvas-v2-node__magnetic-handle[data-following='true'] .generation-canvas-v2-node__magnetic-handle-icon {
-  opacity: 1;
 }
 
 /* 助手面板的布局和交互样式全部由组件 Tailwind className 管理，避免 CSS 与组件双写漂移。 */

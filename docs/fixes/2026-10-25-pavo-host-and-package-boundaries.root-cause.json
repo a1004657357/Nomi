@@ -1,0 +1,122 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-pavo-host-and-package-boundaries",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "扩展运行宿主与前端打包归属错配",
+  "symptom": "扩展运行宿主与前端打包归属错配",
+  "direct_cause": "定制入口合入主线时没有沿用既有 owner 和真实消费者证据。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "eslint.config.mjs",
+    "package.json",
+    "pnpm-lock.yaml",
+    "integrations/pavo-web-adapter/content.js",
+    "integrations/pavo-web-adapter/panel.js",
+    "integrations/pavo-web-adapter/mock-server.js",
+    "integrations/pavo-web-adapter/server-auth.js",
+    "electron/pavoWeb/fixtures/preset-tasks.cjs",
+    "scripts/extension-lint-hosts.node-test.mjs"
+  ],
+  "entry_points": [
+    "eslint.config.mjs::PAVO_ADAPTER_LINT_CONTEXTS"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留用户功能、项目与素材，不提交真实生成，不修改账号、密钥或 Cookie。",
+    "浏览器、service worker 和 Node 分别只得到自己真实拥有的 API，未知全局仍报错。",
+    "三个演示样例完整保留为离线 fixture；生产启动不新增任务或外部生成。",
+    "Markdown 包版本不变，仍由 Vite 进入界面产物，不作为主进程外置依赖装包。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "eslint.config.mjs",
+    "tests": [
+      "scripts/extension-lint-hosts.node-test.mjs"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "eslint.config.mjs",
+      "symbol": "PAVO_ADAPTER_LINT_CONTEXTS"
+    }
+  ],
+  "door_reduction": {
+    "before": 0,
+    "after": 1,
+    "why_not": "4 个真实宿主通过一个命名配置 owner 纳管；0→1 是新增显式读取面，不是假称入口减少。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "eslint.config.mjs",
+      "symbol": "PAVO_ADAPTER_LINT_CONTEXTS",
+      "responsibility": "扩展运行宿主与前端打包归属错配"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "eslint.config.mjs",
+      "entry_point": "PAVO_ADAPTER_LINT_CONTEXTS",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门与共享 owner 接线一致；没有关闭检查或提高违规上限。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "eslint.config.mjs",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "复用仓库现有 owner，并用真实源文件和正反向回归约束，不给具体入口增加豁免。",
+    "artifacts": [
+      "eslint.config.mjs",
+      "package.json",
+      "pnpm-lock.yaml",
+      "integrations/pavo-web-adapter/content.js",
+      "integrations/pavo-web-adapter/panel.js",
+      "integrations/pavo-web-adapter/mock-server.js",
+      "integrations/pavo-web-adapter/server-auth.js",
+      "electron/pavoWeb/fixtures/preset-tasks.cjs",
+      "scripts/extension-lint-hosts.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "scripts/extension-lint-hosts.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/extension-lint-hosts.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "retain-with-exit",
+    "current": "react-markdown ^10.1.0、remark-gfm 4.0.1 位于生产 dependencies，主进程无加载证据。",
+    "target": "版本和前端消费者保持不变，置入 devDependencies 由 Vite 打入 renderer。",
+    "rationale": "依赖已经锁定并适用，仅纠正安装包归属，不重新实现 Markdown。",
+    "exit_criteria": [
+      "frozen lockfile 安装通过。",
+      "最终前端构建保留 Markdown 渲染，packaged-deps 无未解释外置包。"
+    ]
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

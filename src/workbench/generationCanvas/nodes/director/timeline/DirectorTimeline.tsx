@@ -9,7 +9,7 @@
  *        全部打到命令层；被拒绝的操作统一 toast 原因。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from '../../../../../ui/toast'
 import { useDirectorStore, useDirectorStoreApi } from '../DirectorEditorContext'
@@ -262,7 +262,7 @@ export function DirectorTimeline({
         <div className="flex min-h-0 flex-1 items-stretch" data-testid="director-timeline-empty">
           <div className="flex flex-1 items-center gap-2 px-3 text-caption text-nomi-ink-40">
             <span className="text-nomi-ink-60">{t('director.timeline.emptyTitle')}</span>
-            <span className="min-w-0 truncate text-micro">{t('director.timeline.emptyHint')}</span>
+            <span className="min-w-0 truncate text-caption">{t('director.timeline.emptyHint')}</span>
           </div>
           <div className="w-[220px] shrink-0 border-l border-nomi-line-soft">
             <TrackListHeader trackCount={0} />

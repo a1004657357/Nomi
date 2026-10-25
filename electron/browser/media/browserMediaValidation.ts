@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import { desktopT } from "../../i18n";
 
-export const BROWSER_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
+import { MEDIA_IMPORT_SURFACES } from '../../shared/contracts/mediaImportPolicy';
+
+export const BROWSER_MEDIA_MAX_BYTES = MEDIA_IMPORT_SURFACES['browser-capture'].hardCapBytes!;
 
 export function mediaTypeFromContentType(contentType: string): "image" | "video" | null {
   if (contentType.startsWith("image/")) return "image";

@@ -1,0 +1,542 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-node-scroll-interaction-boundary",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "定制节点滚动区域漏接既有画布手势防护",
+  "symptom": "原全仓滚动守护列出 24 处 overflow 区域未阻断 React Flow 抢滚轮；部分交互也可能把内部拖动交给画布。",
+  "direct_cause": "19 个定制界面保留原 overflow，却没复用已有 NODE_SCROLL_REGION_CLASS_NAME。",
+  "class_root": "自定义节点和共享节点的用户输入边界分叉，局部 stopPropagation 不在原生 d3 监听之前生效。",
+  "affected_population": [
+    "分镜表、创意组件、结果收集器",
+    "Director 对话/资产/全屏",
+    "场景 3D 参数/轨迹/工具区",
+    "图片/视频比较及提示词菜单"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+    "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+    "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+    "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+    "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dMoveHub.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectoryListPanel.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectorySurfaces.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryPanel.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryTimeline.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+    "src/workbench/generationCanvas/nodes/nodeInnerScrollNoWheel.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs",
+    "scripts/fixtures/tsx-i18n-display.json"
+  ],
+  "entry_points": [
+    "src/workbench/generationCanvas/nodes/artifact/ArtifactBody.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/ClipNodeTimeline.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/controls/ParameterControlBody.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/InlineParameterBar.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodeFailureDetails.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodePromptOptimizer.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodeRecoverableReport.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/NodeResultStack.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/ProvenancePanel.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/render/TextDocumentNode.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dMoveHub.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectoryListPanel.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectorySurfaces.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryPanel.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryTimeline.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/shotTable/ShotTableGrid.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx::NODE_SCROLL_REGION_CLASS_NAME",
+    "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLibraryPanel.tsx::NODE_SCROLL_REGION_CLASS_NAME"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "使用现有 React Flow 默认 noWheel/noDrag、项目 noPan 和原共享常量，读取已安装源确认，不新增框架或规则。",
+  "invariants": [
+    "19 源文件仅新增共享类导入、24 原有 className 接入，不更改其他源码字节、布局类、尺寸、文本、回调或用户字段。",
+    "滚动区域由同一 nowheel/nodrag/项目 noPan 边界保护；区域之外的节点/画布手势保持原路。",
+    "不以 onWheel stopPropagation 替代原生监听前置保护，不增加豁免或修改原扫描器。",
+    "原 475 keys、37 组件与 111 绑定不变；只精确更新 10 个受影响 classHash，双向恢复摘要仍校验全部其余值。",
+    "不改 PNG、模型面、权限、Provider、并发/重试、素材或项目。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/nodeScrollRegionClassName.ts",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/nodeInnerScrollNoWheel.test.ts",
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/artifact/ArtifactBody.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/ClipNodeTimeline.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/controls/ParameterControlBody.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/InlineParameterBar.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeFailureDetails.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodePromptOptimizer.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeRecoverableReport.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeResultStack.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/ProvenancePanel.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/TextDocumentNode.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMoveHub.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectoryListPanel.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectorySurfaces.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryPanel.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryTimeline.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/shotTable/ShotTableGrid.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLibraryPanel.tsx",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME"
+    }
+  ],
+  "door_reduction": {
+    "before": 14,
+    "after": 33,
+    "why_not": "2971 个实际生产源 AST：既有共享类的消费者由 14 增至 33，恰为补齐 19 个定制文件，不是增加业务写入口。不同面板保留各自 DOM/交互，不为压门数删功能；24 个区域共同消费一个已有常量。"
+  },
+  "generality_proof": "原滚动检查先重现 24 处缺口，修复后 3/3。正式展示回归在类变更后准确报 10 处 classHash 不符，审计证实 19 文件除常量导入/24 接入外逐字节一致，精确对齐后 43/43；全部 key、绑定和其余哈希恒等。",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/nodeScrollRegionClassName.ts",
+      "symbol": "NODE_SCROLL_REGION_CLASS_NAME",
+      "responsibility": "现有 nowheel/nodrag/项目 noPan 的唯一组合，不另设字符串或手势规则"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/artifact/ArtifactBody.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/ClipNodeTimeline.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/controls/ParameterControlBody.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/InlineParameterBar.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeFailureDetails.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodePromptOptimizer.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeRecoverableReport.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeResultStack.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/ProvenancePanel.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/TextDocumentNode.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMoveHub.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectoryListPanel.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectorySurfaces.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryPanel.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryTimeline.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/shotTable/ShotTableGrid.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLibraryPanel.tsx",
+      "entry_point": "NODE_SCROLL_REGION_CLASS_NAME",
+      "disposition": "enforced",
+      "evidence": "实际 Git 前后 AST 引用；原 nodes/** 滚动/textarea 扫描和既有全类名快照持续执行。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制节点或弹层可能再次漏接共享手势边界。",
+    "same_class_scan": [
+      "原 nodeInnerScrollNoWheel 覆盖全部 nodes/**，原豁免不变",
+      "19 文件 24 实际区域的逐字节最小改动审计",
+      "真实 2971 源 AST 共享常量引用 14→33",
+      "10 个有限 classHash 更新，37 文件/111 绑定严格恢复摘要"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/nodeScrollRegionClassName.ts",
+    "invariant": "节点滚动区复用同一早于画布原生手势的共享标记组合。",
+    "failure_mode": "漏掉标记由原全类扫描拒绝；意外布局/文案/绑定变化由精确快照拒绝。",
+    "exception_policy": "none",
+    "strategy": "复用现有常量，不新增滚动状态、回调或忽略项；保留全量既有扫描。",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/nodeScrollRegionClassName.ts",
+      "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "src/workbench/generationCanvas/nodes/NodePromptPickerPopover.tsx",
+      "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dMoveHub.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectoryListPanel.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectorySurfaces.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryPanel.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryTimeline.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "src/workbench/generationCanvas/nodes/nodeInnerScrollNoWheel.test.ts",
+      "scripts/tsx-i18n-display.node-test.mjs",
+      "scripts/fixtures/tsx-i18n-display.json"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/nodeInnerScrollNoWheel.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/nodeInnerScrollNoWheel.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "没有删除文件、面板、动作或现有用户路径。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用现有 @xyflow/react 与类常量，无依赖变化。",
+    "exit_criteria": []
+  },
+  "migration": "无存档/素材迁移；不更改日常项目或账号，不调用真实生成。",
+  "residual_risks": [
+    "目前为源码/展示回归，最终构建后仍须执行隔离 Electron 的真实滚轮走查；不能把静态绿灯冒充真实手势验收。",
+    "旧视觉 PNG 与当前字体/定制界面差异仍未裁决，PNG 完全未更新。",
+    "全仓剩余失败和最终 main 验收未完成。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/nodeInnerScrollNoWheel.test.ts"
+  }
+}

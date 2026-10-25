@@ -9,15 +9,16 @@ import { notify } from '../../../ui/notificationPolicy'
  * ⚠️ 配色一律 `--nomi-*`：本面板 Portal 到画布视口，`--workbench-*` 只在 `.workbench-shell` 作用域内有定义，
  * 够不到就会**静默退回继承色**（上一轮走查读到 rgb(201,201,201) 才发现，单测全绿）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { IconAlertTriangle, IconX } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { getDesktopBridge } from '../../../desktop/bridge'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import type { ShotCutCoverage } from '../../../../electron/shared/canvas/shotTable'
 import { extractShotCutsToNodes } from './extractShotCutsToNodes'
+import { isProjectExecutionContextCurrent, withProjectAction } from '../../project/projectCanvasReadSurface'
 import {
   SHOT_SENSITIVITY_DEFAULT,
   SHOT_SENSITIVITY_MAX,
@@ -28,7 +29,6 @@ import {
   filterShotCuts,
   formatShotTimestamp,
   pickDefaultSensitivity,
-  shotSheetRows,
   shotSheetTileStyle,
   type ShotCut,
 } from './shotCutSelection'
@@ -42,7 +42,8 @@ type DetectState =
       durationSeconds: number
       sheetUrl: string | null
       sheetColumns: number
-      truncated: boolean
+      sheetRows: number
+      coverage: ShotCutCoverage
     }
 
 type Props = { onFeedback: (message: string) => void;  node: GenerationCanvasNode; onClose: () => void }
@@ -69,14 +70,15 @@ export default function NodeShotCutPanel({ onFeedback, node, onClose }: Props): 
   React.useEffect(() => {
     let alive = true
     const detect = getDesktopBridge()?.video?.detectShotCuts
-    const projectId = getActiveWorkbenchProjectId()
-    if (!detect || !projectId || !videoUrl) {
+    // 打开切镜面板即动作起点：签发原项目；联系表落进它，结果只在它仍打开时进面板。
+    const project = withProjectAction((issued) => issued)
+    if (!detect || !project || !videoUrl) {
       setState({ phase: 'failed', message: t('generationCommon.node.shotCuts.desktopOnly') })
       return () => { alive = false }
     }
-    detect({ videoUrl, projectId })
+    detect({ videoUrl, projectId: project.binding.projectId })
       .then((result) => {
-        if (!alive) return
+        if (!alive || !isProjectExecutionContextCurrent(project)) return
         const cuts = result.cuts ?? []
         // 灵敏度从这条视频自己的分数分布 derive——写死 0.3 会让弱切点的片子「打开即空」。
         const picked = pickDefaultSensitivity(cuts)
@@ -88,11 +90,12 @@ export default function NodeShotCutPanel({ onFeedback, node, onClose }: Props): 
           durationSeconds: Number(result.durationSeconds) || 0,
           sheetUrl: result.sheetUrl ?? null,
           sheetColumns: result.sheetColumns || 8,
-          truncated: Boolean(result.truncated),
+          sheetRows: result.sheetRows,
+          coverage: result.coverage,
         })
       })
       .catch((error: unknown) => {
-        if (!alive) return
+        if (!alive || !isProjectExecutionContextCurrent(project)) return
         setState({ phase: 'failed', message: error instanceof Error ? error.message : String(error) })
       })
     return () => { alive = false }
@@ -107,7 +110,6 @@ export default function NodeShotCutPanel({ onFeedback, node, onClose }: Props): 
   const allCuts = React.useMemo(() => (state.phase === 'ready' ? state.cuts : []), [state])
   const visible = React.useMemo(() => filterShotCuts(allCuts, threshold), [allCuts, threshold])
   const selected = React.useMemo(() => visible.filter((cut) => !excluded.has(cut.index)), [visible, excluded])
-  const rows = state.phase === 'ready' ? shotSheetRows(allCuts.length, state.sheetColumns) : 1
 
   const durationSeconds = state.phase === 'ready' ? state.durationSeconds : 0
   /** 全集 = 0：这段结构上就是一镜到底（AI 生成的片段基本都是）。不是失败，是换一条路——均匀抽帧。 */
@@ -130,10 +132,15 @@ export default function NodeShotCutPanel({ onFeedback, node, onClose }: Props): 
   /** 落画布只有这一条管线：切点选出来的秒数、均匀抽出来的秒数，走的都是它。 */
   const commitSeconds = async (seconds: readonly number[]) => {
     if (!seconds.length || committing) return
-    setCommitting({ done: 0, total: seconds.length })
-    const outcome = await extractShotCutsToNodes({ reportFeedback, node, seconds, onProgress: (progress) => setCommitting(progress) })
-    setCommitting(null)
-    if (outcome.failed === 0 && outcome.created > 0) onClose()
+    await withProjectAction(async (project) => {
+      setCommitting({ done: 0, total: seconds.length })
+      const outcome = await extractShotCutsToNodes({ project, reportFeedback, node, seconds, onProgress: (progress) => setCommitting(progress) })
+      if (outcome.cancelled) return
+      setCommitting(null)
+      if (outcome.failed === 0 && outcome.created > 0) onClose()
+    }, async () => {
+      reportFeedback(t('generationCommon.node.extractFrame.missingProject'))
+    })
   }
 
   const subtitle =
@@ -219,10 +226,14 @@ export default function NodeShotCutPanel({ onFeedback, node, onClose }: Props): 
           </div>
         ) : null}
 
-        {state.phase === 'ready' && state.truncated ? (
+        {state.phase === 'ready' && state.coverage.capped ? (
           <div className="flex items-center gap-2 rounded-nomi-sm bg-nomi-ink-05 px-3 py-2 text-body-sm text-nomi-ink-80">
             <IconAlertTriangle size={15} stroke={1.8} aria-hidden />
-            {t('generationCommon.node.shotCuts.truncated', { count: allCuts.length })}
+            {t('generationCommon.node.shotCuts.capped', {
+              detected: state.coverage.detectedCuts,
+              kept: state.coverage.keptCuts,
+              threshold: state.coverage.appliedThreshold.toFixed(2),
+            })}
           </div>
         ) : null}
 
@@ -258,7 +269,7 @@ export default function NodeShotCutPanel({ onFeedback, node, onClose }: Props): 
             >
               {visible.map((cut) => {
                 const isOn = !excluded.has(cut.index)
-                const tile = shotSheetTileStyle(cut.index, state.sheetColumns, rows)
+                const tile = shotSheetTileStyle(cut.index, state.sheetColumns, state.sheetRows)
                 return (
                   <button
                     key={cut.index}

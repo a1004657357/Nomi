@@ -1,8 +1,14 @@
 import { resolveSkillPreview } from "../skills/skillPreview";
-import { protocol } from "electron";
+import { readSkillRecords } from "../skills/skillStore";
+import { nativeImage, protocol } from "electron";
 import fs from "node:fs";
 import { createOwnedFileStream } from "./fileResponseStream";
 import { contentTypeFromPath } from "../assets/assetPaths";
+import {
+  cachedLocalAssetThumbnail,
+  LOCAL_ASSET_THUMBNAIL_PARAM,
+  parseLocalAssetThumbnailSize,
+} from "../assets/localAssetThumbnail";
 import { resolveContentType } from "../assets/mediaTypes";
 import { resolveProjectRelativePath } from "../projects/repository";
 import { getArtifactPreviewSecret, verifyArtifactPreviewHandle } from "../productionRun/artifactProjection";
@@ -60,7 +66,12 @@ export function parseLocalAssetUrl(rawUrl: string): { projectId: string; filePat
         expected: { projectId, runId, artifactId, relativePath: relativeParts.join("/") },
       });
     } else if (queryKeys.length > 0) {
-      return null;
+      const thumbnailSize = parseLocalAssetThumbnailSize(url);
+      if (
+        !thumbnailSize
+        || queryKeys.length !== 1
+        || queryKeys[0] !== LOCAL_ASSET_THUMBNAIL_PARAM
+      ) return null;
     }
     const filePath = resolveProjectRelativePath(projectId, relativeParts.join("/"));
     return filePath ? { projectId, filePath } : null;
@@ -124,20 +135,38 @@ function rangeNotSatisfiable(size: number): Response {
   });
 }
 
+async function localAssetThumbnailResponse(filePath: string, request: Request): Promise<Response | null> {
+  const size = parseLocalAssetThumbnailSize(new URL(request.url));
+  if (!size) return null;
+  const stat = fs.statSync(filePath);
+  const bytes = await cachedLocalAssetThumbnail(`${filePath}:${stat.mtimeMs}:${size.width}x${size.height}`, async () => {
+    const source = nativeImage.createFromPath(filePath);
+    if (source.isEmpty()) return null;
+    const original = source.getSize();
+    if (!original.width || !original.height) return null;
+    const scale = Math.min(size.width / original.width, size.height / original.height, 1);
+    return source.resize({ width: Math.max(1, Math.round(original.width * scale)), height: Math.max(1, Math.round(original.height * scale)), quality: 'good' }).toPNG();
+  });
+  if (!bytes) return null;
+  return new Response(request.method === 'HEAD' ? null : new Uint8Array(bytes), {
+    headers: withLocalAssetHeaders({ 'Content-Type': 'image/png', 'Content-Length': String(bytes.byteLength) }),
+  });
+}
+
 /**
  * 随包运行时资产（ort 的 wasm）与已下载权重的伺服。
  *
  * 与 `asset` host 分开处理是因为它们**不属于任何项目**：没有 projectId，也就不该进
  * 项目事件日志、不该走项目路径解析。命中白名单才有响应，其余一律 404。
  */
-function handleNonProjectHost(request: Request, hostname: string, segments: readonly string[]): Response | null {
+async function handleNonProjectHost(request: Request, hostname: string, segments: readonly string[]): Promise<Response | null> {
   const target =
     hostname === "runtime"
       ? resolveLocalRuntimeAsset(segments)
       : hostname === "model"
         ? resolveLocalModelAsset(segments)
         : hostname === "skill-preview"
-          ? resolveSkillPreview(segments)
+          ? resolveSkillPreview(segments, await readSkillRecords())
           : null;
   if (!target) return hostname === "runtime" || hostname === "model" || hostname === "skill-preview" ? new Response("Not found", { status: 404 }) : null;
   const stat = fs.statSync(target.filePath);
@@ -180,7 +209,7 @@ export async function handleNomiLocalRequest(request: Request): Promise<Response
   const nonProject = nonProjectHostSegments(request.url);
   if (nonProject && (nonProject.hostname === "runtime" || nonProject.hostname === "model" || nonProject.hostname === "skill-preview")) {
     try {
-      const response = handleNonProjectHost(request, nonProject.hostname, nonProject.segments);
+      const response = await handleNonProjectHost(request, nonProject.hostname, nonProject.segments);
       if (response) return response;
     } catch {
       return new Response("Not found", { status: 404 });
@@ -208,6 +237,8 @@ export async function handleNomiLocalRequest(request: Request): Promise<Response
     if (!filePath) {
       return new Response("Unsupported nomi-local host", { status: 404 });
     }
+    const thumbnailResponse = await localAssetThumbnailResponse(filePath, request);
+    if (thumbnailResponse) return thumbnailResponse;
     const rangeHeader = request.headers.get("range") || "";
     if (rangeHeader) {
       const stat = fs.statSync(filePath);

@@ -1,0 +1,61 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-node-summary-runner-owner",
+  "change_kind": "structural",
+  "problem_type": "Node测试被Vitest收集但没有Vitest测试套件",
+  "symptom": "全仓单测报No test suite found，同时原Node测试输出不能作为Vitest计数。",
+  "direct_cause": "使用node:test的五个摘要/提交次数用例以.test.mjs命名却没有正式Node runner归属。",
+  "class_root": "测试文件的运行器和正式可达入口必须一致；不能排除后不再运行。",
+  "scope_paths": [
+    "package.json",
+    "tests/ux/multimodal-provider-summary.test.mjs",
+    "tests/ux/multimodal-provider-summary.node-test.mjs",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "affected_population": [
+    "原五个离线多模态报告/次数边界用例"
+  ],
+  "entry_points": [
+    "pnpm test -> test:eng-system -> node --test"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "只调整既有测试文件和脚本归属，原用例逻辑保留。",
+  "invariants": [
+    "原五个Node用例不删除不改预期、不增加skip/timeout；新增正式入口归属断言。",
+    "Vitest不再收集Node专用文件；原eng-system的其他Node用例顺序和次数保持。",
+    "不运行付费脚本，只用vm执行报告归纳片段和静态次数守护。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "package.json",
+      "tests/ux/multimodal-provider-summary.test.mjs",
+      "tests/ux/multimodal-provider-summary.node-test.mjs",
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ],
+    "preserved_exports": [],
+    "behavior_preservation": "测试体原字节保持，只加Node说明及新增入口自验，重命名并接入原正式Node组。工程入口精确断言同步加入这一个文件，其他原文件各执行一次。",
+    "verification_limits": "只证明离线摘要和提交次数保护的正式运行器，不证明任何Provider生成或比例质量。"
+  },
+  "regression_tests": [
+    "tests/ux/multimodal-provider-summary.node-test.mjs",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "tests/ux/multimodal-provider-summary.test.mjs"
+    ],
+    "rationale": "同一用例移动到.node-test并由现有可达Node入口运行，不留双重收集。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "沿用Node内置测试运行器，不改依赖。",
+    "exit_criteria": []
+  },
+  "migration": "仅测试文件重命名与正式脚本接线，不改应用功能、数据或测试阈值。",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "最终eng-system与全仓尚需重跑；此六项绿灯不是媒体验收。"
+  ]
+}

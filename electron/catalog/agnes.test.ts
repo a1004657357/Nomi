@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { AGNES_VENDOR_SEED, AGNES_VIDEO_QUERY_OP, AGNES_STATUS_MAPPING } from "./agnesVendor";
+import { AGNES_VENDOR_SEED, AGNES_VIDEO_25_FLASH_QUERY_OP, AGNES_VIDEO_QUERY_OP, AGNES_STATUS_MAPPING } from "./agnesVendor";
 import { AGNES_IMAGE_MODELS } from "./agnesImages";
 import { AGNES_VIDEO_MODELS } from "./agnesVideos";
 import { AGNES_TEXT_MODELS } from "./agnesTexts";
 import { normalizeAgnesVideo25 } from "./agnesVideoContract";
 import { applyParamMap, agnesVideoWidth, agnesVideoHeight, agnesVideoNumFrames } from "./paramTranslate";
-import { buildHttpRequest, buildTemplateContext } from "../ai/requestPipeline";
+import { buildHttpRequest, buildTemplateContext, renderTemplateValue } from "../ai/requestPipeline";
 import { taskTemplateParams, applyHeadlessParamDefaults } from "./taskParams";
 import { applyRequestTransform, validateRequestTransform } from "../tasks/requestTransforms";
-import { getArchetypeById, resolveArchetypeForModel } from "../../src/config/modelArchetypes";
+import { getArchetypeById, resolveArchetypeForModel } from "../shared/modelArchetypes";
 import { buildArchetypeInputParams, currentArchetypeMode, ensureArchetypeNodeMeta } from "../../src/workbench/generationCanvas/nodes/controls/archetypeMeta";
 import { bodyReferenceSupport } from "./referenceReachability";
 import type { HttpOperation } from "./types";
@@ -69,15 +69,27 @@ describe("Agnes 图片（同步 create，形状锁）", () => {
 
 describe("Agnes 视频（异步 create→poll，形状锁 + 两个 quirk）", () => {
   const CREATE_OK = { id: "task_abc", task_id: "task_abc", video_id: "video_xyz", status: "queued" };
-  // Actual 2026-08-26 responses: output is url, remixed_from_video_id is null.
-  const QUERY_OK = {
+  const QUERY_OFFICIAL_OK = {
     id: "task_abc", video_id: "video_xyz", status: "completed", progress: 100,
-    remixed_from_video_id: null, url: "https://storage.googleapis.com/agnes-aigc/aigc/videos/out.mp4", error: null,
+    url: "https://storage.googleapis.com/agnes-aigc/aigc/videos/official.mp4", error: null,
+  };
+  // 旧版 live 响应曾把成品 URL 放在反常字段 remixed_from_video_id。
+  const QUERY_LEGACY_OK = {
+    id: "task_abc", video_id: "video_xyz", status: "completed", progress: 100,
+    remixed_from_video_id: "https://storage.googleapis.com/agnes-aigc/aigc/videos/legacy.mp4", error: null,
+  };
+  const QUERY_25_OK = {
+    id: "task_flash", video_id: "video_flash", status: "completed", progress: 100,
+    metadata: { url: "https://storage.googleapis.com/agnes-aigc/aigc/videos/flash.mp4" }, error: null,
   };
 
-  it("三款视频保留 V2.0 mapping IDs；提交抓 video_id；frame_rate 由控件提供", () => {
-    expect(AGNES_VIDEO_MODELS).toHaveLength(3);
-    const model = AGNES_VIDEO_MODELS[0];
+  it("v2.0 保持 t2v/i2v 两条 mapping；提交抓 video_id 进 providerMeta；frame_rate 由控件提供", () => {
+    expect(AGNES_VIDEO_MODELS.map((model) => model.modelKey)).toEqual([
+      "agnes-video-v2.0",
+      "agnes-video-2.5",
+      "agnes-video-2.5-flash",
+    ]);
+    const model = AGNES_VIDEO_MODELS.find((item) => item.modelKey === "agnes-video-v2.0")!;
     expect(model).toMatchObject({ modelKey: "agnes-video-v2.0", archetypeId: "agnes-video" });
     expect(model.mappings.map((m) => [m.id, m.taskKind])).toEqual([
       ["seed-agnes-video-v2-text_to_video", "text_to_video"],
@@ -89,27 +101,36 @@ describe("Agnes 视频（异步 create→poll，形状锁 + 两个 quirk）", ()
       expect(mp.create.provider_meta_mapping?.video_id).toBe("video_id");
       expect((mp.create.body as { frame_rate: unknown }).frame_rate).toBe("{{request.params.frame_rate}}"); // Number normalization is verified on the rendered request below.
     }
-    // i2v 多一个顶层 image 字段（单图首帧）。
+    // i2v 多一个顶层 image 字段（官方要求单图 URL string；多图/关键帧数组才进 extra_body.image）。
     const i2v = model.mappings[1].create.body as Record<string, unknown>;
     expect(i2v.image).toBe("{{request.params.image}}");
+    expect(Array.isArray(i2v.image)).toBe(false);
   });
 
-  it("quirk①：轮询 op 是 /agnesapi（非 /v1）+ video_id 走 query 参数", () => {
+  it("quirk①：轮询 op 是官方根路径 /agnesapi（非 /v1）+ video_id 走 query 参数", () => {
     expect(AGNES_VIDEO_QUERY_OP.method).toBe("GET");
     expect(AGNES_VIDEO_QUERY_OP.path).toBe("/agnesapi");
+    expect(AGNES_VIDEO_QUERY_OP.pathFrom).toBe("host-root");
     expect((AGNES_VIDEO_QUERY_OP.query as Record<string, unknown>)?.video_id).toBe("{{providerMeta.video_id}}");
   });
 
-  it("当前实际产物 URL 位于顶层 url；旧 remixed_from_video_id 为 null", () => {
-    const createMap = AGNES_VIDEO_MODELS[0].mappings[0].create.response_mapping as Record<string, unknown>;
+  it("兼容官方 url 与旧版 remixed_from_video_id，且优先使用官方字段", () => {
+    const legacy = AGNES_VIDEO_MODELS.find((item) => item.modelKey === "agnes-video-v2.0")!;
+    const createMap = legacy.mappings[0].create.response_mapping as Record<string, unknown>;
     expect(firstMappedString(CREATE_OK, createMap, "task_id")).toBe("video_xyz");
 
     const queryMap = AGNES_VIDEO_QUERY_OP.response_mapping as Record<string, unknown>;
-    const video = firstMappedString(QUERY_OK, queryMap, "video_url");
-    expect(video).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/out.mp4");
-    expect(collectAssetUrls(video)).toEqual(["https://storage.googleapis.com/agnes-aigc/aigc/videos/out.mp4"]);
+    expect(queryMap.video_url).toEqual(["metadata.url", "url", "remixed_from_video_id"]);
+    const officialVideo = firstMappedString(QUERY_OFFICIAL_OK, queryMap, "video_url");
+    expect(officialVideo).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/official.mp4");
+    const legacyVideo = firstMappedString(QUERY_LEGACY_OK, queryMap, "video_url");
+    expect(legacyVideo).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/legacy.mp4");
+    expect(collectAssetUrls([officialVideo, legacyVideo])).toEqual([
+      "https://storage.googleapis.com/agnes-aigc/aigc/videos/official.mp4",
+      "https://storage.googleapis.com/agnes-aigc/aigc/videos/legacy.mp4",
+    ]);
     // status "completed" 经 AGNES_STATUS_MAPPING 归一 succeeded。
-    expect(taskStatusFromResponse(QUERY_OK, queryMap, AGNES_STATUS_MAPPING, [video])).toBe("succeeded");
+    expect(taskStatusFromResponse(QUERY_OFFICIAL_OK, queryMap, AGNES_STATUS_MAPPING, [officialVideo])).toBe("succeeded");
   });
 
   it("status 归一：queued→queued、in_progress→running、failed→failed", () => {
@@ -117,6 +138,73 @@ describe("Agnes 视频（异步 create→poll，形状锁 + 两个 quirk）", ()
     expect(taskStatusFromResponse({ status: "queued" }, queryMap, AGNES_STATUS_MAPPING, [])).toBe("queued");
     expect(taskStatusFromResponse({ status: "in_progress" }, queryMap, AGNES_STATUS_MAPPING, [])).toBe("running");
     expect(taskStatusFromResponse({ status: "failed", error: "boom" }, queryMap, AGNES_STATUS_MAPPING, [])).toBe("failed");
+  });
+
+  it("2.5 Flash：固定 720P、seconds 字符串、参考模式只发送 images/audios", () => {
+    const flash = AGNES_VIDEO_MODELS.find((item) => item.modelKey === "agnes-video-2.5-flash")!;
+    expect(flash.archetypeId).toBe("agnes-video-2.5-flash");
+    expect(flash.mappings.map((mapping) => mapping.taskKind)).toEqual(["text_to_video", "image_to_video"]);
+
+    const mapping = flash.mappings.find((item) => item.taskKind === "image_to_video")!;
+    const params = applyParamMap(mapping.create.paramMap, {
+      duration: "8",
+      size: "720P",
+      mode: "reference",
+      aspect_ratio: "9:16",
+      images: ["https://example.com/character.png", "https://example.com/scene.png"],
+      audios: ["https://example.com/music.mp3"],
+    });
+    const context = buildTemplateContext({
+      request: { prompt: "Use <Picture 1> as the character reference." },
+      params,
+      model: {},
+      modelKey: flash.modelKey,
+      apiKey: "test-key",
+    });
+    expect(renderTemplateValue(mapping.create.body, context)).toEqual({
+      model: "agnes-video-2.5-flash",
+      prompt: "Use <Picture 1> as the character reference.",
+      mode: "reference",
+      seconds: "8",
+      size: "720P",
+      aspect_ratio: "9:16",
+      n: 1,
+      images: ["https://example.com/character.png", "https://example.com/scene.png"],
+      audios: ["https://example.com/music.mp3"],
+    });
+  });
+
+  it("2.5 Flash：文生模式不夹带媒体字段；轮询带 model_name 并回收 metadata.url", () => {
+    const flash = AGNES_VIDEO_MODELS.find((item) => item.modelKey === "agnes-video-2.5-flash")!;
+    const mapping = flash.mappings.find((item) => item.taskKind === "text_to_video")!;
+    const params = applyParamMap(mapping.create.paramMap, {
+      duration: "5",
+      size: "720P",
+      mode: "text",
+      aspect_ratio: "16:9",
+    });
+    const context = buildTemplateContext({
+      request: { prompt: "A cinematic tracking shot" },
+      params,
+      model: {},
+      modelKey: flash.modelKey,
+      apiKey: "test-key",
+    });
+    const body = renderTemplateValue(mapping.create.body, context) as Record<string, unknown>;
+    expect(body).toMatchObject({ mode: "text", seconds: "5", size: "720P", aspect_ratio: "16:9", n: 1 });
+    expect(body).not.toHaveProperty("first_frame");
+    expect(body).not.toHaveProperty("last_frame");
+    expect(body).not.toHaveProperty("images");
+    expect(body).not.toHaveProperty("audios");
+
+    expect(AGNES_VIDEO_25_FLASH_QUERY_OP.query).toEqual({
+      video_id: "{{providerMeta.video_id}}",
+      model_name: "agnes-video-2.5-flash",
+    });
+    const queryMap = AGNES_VIDEO_25_FLASH_QUERY_OP.response_mapping as Record<string, unknown>;
+    const video = firstMappedString(QUERY_25_OK, queryMap, "video_url");
+    expect(video).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/flash.mp4");
+    expect(taskStatusFromResponse(QUERY_25_OK, queryMap, AGNES_STATUS_MAPPING, [video])).toBe("succeeded");
   });
 });
 
@@ -139,7 +227,8 @@ describe("Agnes 视频 paramMap 派生（D1：比例+清晰度+时长 → width/
   });
 
   it("applyParamMap 套到 create.paramMap：注入数字 width/height/num_frames，原 canonical 键保留", () => {
-    const paramMap = AGNES_VIDEO_MODELS[0].mappings[0].create.paramMap;
+    const legacy = AGNES_VIDEO_MODELS.find((item) => item.modelKey === "agnes-video-v2.0")!;
+    const paramMap = legacy.mappings[0].create.paramMap;
     const out = applyParamMap(paramMap, { aspect_ratio: "16:9", resolution: "1080p", duration: "5" });
     expect(out.width).toBe(1920);
     expect(out.height).toBe(1080);
@@ -254,8 +343,9 @@ describe("Agnes 2026-08-26 documented wire contracts", () => {
     expect(archetype.modes.map((m) => m.id)).toEqual(["text", "keyframe", "reference"]);
     const mode = archetype.modes.find((m) => m.id === "reference")!;
     expect(mode.slots.map((s) => s.kind)).toEqual(modelKey.endsWith("flash") ? ["image_ref", "audio_ref"] : ["image_ref", "audio_ref", "video_ref"]);
-    expect(mode.slots[0].max).toBe(modelKey.endsWith("flash") ? 5 : undefined);
-    expect(archetype.sources?.[0].checkedAt).toBe("2026-08-26");
+    expect(mode.slots[0].max).toBe(modelKey.endsWith("flash") ? 5 : 8);
+    expect(mode.slots.find((slot) => slot.kind === "audio_ref")?.max).toBe(3);
+    expect(archetype.sources?.[0].checkedAt).toBe("2026-09-12");
     const input = buildArchetypeInputParams({ archetype: { id: archetype.id, modeId: "reference" }, referenceAudioUrls: ["https://example.com/a.mp3"] }, archetype);
     const { body } = await renderAgnes(videoOp(modelKey, "image_to_video"), modelKey, { archetypeInput: input });
     expect(body).toMatchObject({ mode: "reference", audios: ["https://example.com/a.mp3"] });
@@ -286,9 +376,11 @@ describe("Agnes runtime defaults and preflight", () => {
   });
   it("reference video controls are applied to URL inputs and preserve per-video overrides", async () => {
     const op = videoOp("agnes-video-2.5", "image_to_video");
-    const { body } = await renderAgnes(op, "agnes-video-2.5", { video_start_seconds: 35, video_require_audio: true, archetypeInput: { mode: "reference", videos: ["https://example.com/a.mp4", { url: "https://example.com/b.mp4", start_seconds: 0, require_audio: false }] } });
-    expect(body.videos).toEqual([{ url: "https://example.com/a.mp4", start_seconds: 35, require_audio: true }, { url: "https://example.com/b.mp4", start_seconds: 0, require_audio: false }]);
-    expect(body.video_start_seconds).toBeUndefined();
+    for (const video of ["https://example.com/a.mp4", { url: "https://example.com/b.mp4", start_seconds: 0, require_audio: false }]) {
+      const { body } = await renderAgnes(op, "agnes-video-2.5", { video_start_seconds: 35, video_require_audio: true, archetypeInput: { mode: "reference", videos: [video] } });
+      expect(body.videos).toEqual([typeof video === "string" ? { url: video, start_seconds: 35, require_audio: true } : video]);
+      expect(body.video_start_seconds).toBeUndefined();
+    }
   });
   it("top-level actual and documented nested output URLs both resolve", () => {
     const mapping = AGNES_VIDEO_QUERY_OP.response_mapping!;
@@ -335,6 +427,6 @@ it("Image 2.1 headless caller aspect and resolution reach the wire instead of de
 });
 it("Video 2.5 headless caller resolution reaches uppercase size", async () => {
   const op = videoOp("agnes-video-2.5");
-  const extras = applyHeadlessParamDefaults({ resolution: "960p" }, "agnes-video-2.5", "text_to_video", "agnes", op.defaultParams, op.body);
-  expect((await renderAgnes(op, "agnes-video-2.5", extras)).body.size).toBe("960P");
+  const extras = applyHeadlessParamDefaults({ resolution: "1080p" }, "agnes-video-2.5", "text_to_video", "agnes", op.defaultParams, op.body);
+  expect((await renderAgnes(op, "agnes-video-2.5", extras)).body.size).toBe("1080P");
 });

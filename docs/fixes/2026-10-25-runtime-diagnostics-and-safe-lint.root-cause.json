@@ -1,0 +1,695 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-runtime-diagnostics-and-safe-lint",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "捕获错误丢失原因与冗余绑定",
+  "symptom": "批量和运动资产失败仅在 console 可见；包装错误丢 cause，隐藏 Unicode 及无消费代码超出 lint 上限。",
+  "direct_cause": "新增 catch 未使用既有 rendererLog/错误原因约定，纯冗余声明未随调用者迁移清除。",
+  "class_root": "定制功能主线整合未同步共享合同与可重复验证。",
+  "affected_population": [
+    "当前定制 Nomi 的离线主线整合，不迁移日常项目"
+  ],
+  "scope_paths": [
+    "electron/ai/promptSanitize.test.ts",
+    "electron/ai/promptSanitize.ts",
+    "electron/assets/glbValidation.ts",
+    "electron/audioTaskRunner.ts",
+    "electron/capabilityCore/core.ts",
+    "electron/capabilityCore/dispatcher.ts",
+    "electron/capabilityCore/residentProductionJourney.contract.test.ts",
+    "electron/capabilityCore/semanticGenerationCandidate.ts",
+    "electron/catalog/curatedVideoSharedContracts.test.ts",
+    "electron/catalog/secrets.ts",
+    "electron/export/exportJobIpc.test.ts",
+    "electron/export/exportJobManager.test.ts",
+    "electron/export/exportTypes.ts",
+    "electron/export/ffmpegFiltergraph.ts",
+    "electron/export/ffmpegRunner.ts",
+    "electron/pavoWeb/contentPreset.test.ts",
+    "electron/productionRun/productionPendingSpend.test.ts",
+    "electron/promptLibrary/promptLibraryStore.ts",
+    "electron/providerAdapter/compiler.test.ts",
+    "electron/providerAdapter/compiler.ts",
+    "electron/providerAdapter/service.test.ts",
+    "electron/runtime.ts",
+    "electron/tasks/taskIpcGuard.test.ts",
+    "electron/tasks/taskIpcGuard.ts",
+    "electron/telemetry/telemetryEvents.test.ts",
+    "electron/workspace/workspaceIpc.ts",
+    "electron/workspace/workspaceRegistry.ts",
+    "scripts/tsx-diagnostics-lint.node-test.mjs",
+    "src/i18n/locales/onboardingProviders.ts",
+    "src/ui/onboarding/comfyuiGraphGeometry.ts",
+    "src/utils/orientation.ts",
+    "src/workbench/ai/v4/askUserContract.test.ts",
+    "src/workbench/capability/capabilityLegacyActions.ts",
+    "src/workbench/export/exportApi.ts",
+    "src/workbench/generationCanvas/agent/applyCanvasToolCall.test.ts",
+    "src/workbench/generationCanvas/agent/availableModels.ts",
+    "src/workbench/generationCanvas/agent/canvasWriteTarget.integration.test.ts",
+    "src/workbench/generationCanvas/agent/plannedNodeMeta.test.ts",
+    "src/workbench/generationCanvas/agent/proposalTxn.ts",
+    "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+    "src/workbench/generationCanvas/components/batchPlanPreview.ts",
+    "src/workbench/generationCanvas/components/canvasNodeLevelOfDetail.test.ts",
+    "src/workbench/generationCanvas/components/toolCallSummary.ts",
+    "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.test.ts",
+    "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dCrowd.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts",
+    "src/workbench/generationCanvas/runner/dependencyWaves.ts",
+    "src/workbench/generationCanvas/runner/generationRunController.ts",
+    "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+    "src/workbench/generationCanvas/runner/relayFrameResolver.ts",
+    "src/workbench/observability/classifyError.ts",
+    "src/desktop/rendererLog.ts"
+  ],
+  "entry_points": [
+    "electron/ai/promptSanitize.ts::sanitizeForBroadCompat",
+    "electron/ai/streamTextTask.ts::sanitizeForBroadCompat",
+    "electron/harness/context/agentContext.ts::sanitizeForBroadCompat",
+    "electron/tasks/taskIpcHandlers.ts::runTaskIpcGuard",
+    "src/design/media.tsx::logRendererWarn",
+    "src/media/videoPlaybackDiagnostics.ts::logRendererError",
+    "src/ui/browser/popover/useBrowserAssetActions.ts::logRendererError",
+    "src/ui/browser/popover/useBrowserAssetCaptureImport.ts::logRendererError",
+    "src/ui/browser/prompt/browserPromptExtractionRunner.ts::logRendererError",
+    "src/workbench/ai/lane/laneCommandFailure.ts::logRendererError",
+    "src/workbench/ai/v4/missingInterventionCard.ts::logRendererError",
+    "src/workbench/ai/v4/useAgentPanelSpendConfirm.ts::logRendererWarn",
+    "src/workbench/assets/assetLibraryLocalImport.ts::logRendererError",
+    "src/workbench/assets/AssetLibraryPanel.tsx::logRendererError",
+    "src/workbench/assets/assetSurfaceMigration.ts::logRendererError",
+    "src/workbench/assets/importAudioToLibrary.ts::logRendererError",
+    "src/workbench/capability/capabilityLegacyActions.ts::logRendererError",
+    "src/workbench/export/exportApi.ts::logRendererWarn",
+    "src/workbench/generationCanvas/adapters/useNodeImageUpload.ts::logRendererError",
+    "src/workbench/generationCanvas/components/MemoryFold.tsx::logRendererError",
+    "src/workbench/generationCanvas/components/viewportAnimationSettlement.ts::logRendererError",
+    "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts::logRendererWarn",
+    "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts::logRendererError",
+    "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx::logRendererError",
+    "src/workbench/generationCanvas/nodes/NodeResultStack.tsx::logRendererError",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx::logRendererWarn",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts::logRendererWarn",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx::logRendererError",
+    "src/workbench/generationCanvas/reactFlow/useReactFlowViewportAnimation.ts::logRendererError",
+    "src/workbench/NomiStudioApp.tsx::logRendererError",
+    "src/workbench/onboarding/demoProject.ts::logRendererError",
+    "src/workbench/production/detachReportFeedback.ts::logRendererWarn",
+    "src/workbench/production/productionShotActions.ts::logRendererError",
+    "src/workbench/project/projectHydrationRecovery.ts::logRendererError",
+    "src/workbench/project/projectNormalize.ts::logRendererWarn",
+    "src/workbench/project/useProjectNotificationTarget.ts::logRendererError",
+    "src/workbench/project/useProjectWindowLifecycle.ts::logRendererError",
+    "src/workbench/taskCenter/TaskCenterPanel.tsx::logRendererError",
+    "src/workbench/timeline/addAssetToTimeline.ts::logRendererWarn",
+    "src/workbench/timeline/TimelineSecondaryAddRow.tsx::logRendererError"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "仅使用现有仓库、真实 Git 前后快照和已锁定依赖，没有新的第三方 API 假设。",
+  "invariants": [
+    "原严重级别、Error 身份/stack/code、回退及本地可见性保留；由主进程统一脱敏。",
+    "包装 message 和现有 IPC 编码不变，仅补 cause；非结构化错误仍原对象抛出。",
+    "Unicode 仅改为等价转义，保留原字符集合，中文与 emoji 不额外清洗。",
+    "只清除未用 import、纯私有死代码、未消费绑定及读取前必覆盖的占位初始值；hook、公开 Props、测试调用和实际参数均保留。",
+    "保持原 79 warning 上限，不增忽略/静音规则，不新增自动付费重试。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/desktop/rendererLog.ts",
+    "tests": [
+      "scripts/tsx-diagnostics-lint.node-test.mjs",
+      "src/desktop/rendererLog.test.ts",
+      "electron/ai/promptSanitize.test.ts",
+      "electron/tasks/taskIpcGuard.test.ts",
+      "electron/pavoWeb/contentPreset.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "write",
+      "path": "electron/ai/promptSanitize.ts",
+      "symbol": "sanitizeForBroadCompat"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/streamTextTask.ts",
+      "symbol": "sanitizeForBroadCompat"
+    },
+    {
+      "kind": "write",
+      "path": "electron/harness/context/agentContext.ts",
+      "symbol": "sanitizeForBroadCompat"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/taskIpcHandlers.ts",
+      "symbol": "runTaskIpcGuard"
+    },
+    {
+      "kind": "write",
+      "path": "src/design/media.tsx",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/media/videoPlaybackDiagnostics.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/popover/useBrowserAssetActions.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/popover/useBrowserAssetCaptureImport.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/prompt/browserPromptExtractionRunner.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/lane/laneCommandFailure.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/v4/missingInterventionCard.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/v4/useAgentPanelSpendConfirm.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/assets/assetLibraryLocalImport.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/assets/AssetLibraryPanel.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/assets/assetSurfaceMigration.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/assets/importAudioToLibrary.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/capability/capabilityLegacyActions.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/export/exportApi.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/adapters/useNodeImageUpload.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/MemoryFold.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/viewportAnimationSettlement.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeResultStack.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/reactFlow/useReactFlowViewportAnimation.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/NomiStudioApp.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/onboarding/demoProject.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/production/detachReportFeedback.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/production/productionShotActions.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectHydrationRecovery.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/useProjectNotificationTarget.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/useProjectWindowLifecycle.ts",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/taskCenter/TaskCenterPanel.tsx",
+      "symbol": "logRendererError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/timeline/addAssetToTimeline.ts",
+      "symbol": "logRendererWarn"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/timeline/TimelineSecondaryAddRow.tsx",
+      "symbol": "logRendererError"
+    }
+  ],
+  "door_reduction": {
+    "before": 38,
+    "after": 40,
+    "why_not": "保留各消费者职责，合并重复定义与旁路，不删除用户入口来降低计数；新增共享引用会增加门数，预算并未放宽。"
+  },
+  "generality_proof": "源驱动测试执行三处新增 reporter 调用和原三类资源边界，使用真实 rendererLog 验证本地与桥接证据；IPC 测试核对 cause 和非结构化错误身份；Unicode 测试遍历原零宽/空格集合及相邻非成员。既有批量、项目、抽帧、密钥及生成编排回归验证原流程仍在。",
+  "shared_boundaries": [
+    {
+      "path": "src/desktop/rendererLog.ts",
+      "symbol": "logRendererError",
+      "responsibility": "原严重级别、Error 身份/stack/code、回退及本地可见性保留；由主进程统一脱敏。"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/ai/promptSanitize.ts",
+      "entry_point": "sanitizeForBroadCompat",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/ai/streamTextTask.ts",
+      "entry_point": "sanitizeForBroadCompat",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/harness/context/agentContext.ts",
+      "entry_point": "sanitizeForBroadCompat",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/tasks/taskIpcHandlers.ts",
+      "entry_point": "runTaskIpcGuard",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/design/media.tsx",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/media/videoPlaybackDiagnostics.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/ui/browser/popover/useBrowserAssetActions.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/ui/browser/popover/useBrowserAssetCaptureImport.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/ui/browser/prompt/browserPromptExtractionRunner.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/ai/lane/laneCommandFailure.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/ai/v4/missingInterventionCard.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/ai/v4/useAgentPanelSpendConfirm.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/assets/assetLibraryLocalImport.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/assets/AssetLibraryPanel.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/assets/assetSurfaceMigration.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/assets/importAudioToLibrary.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/capability/capabilityLegacyActions.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/export/exportApi.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/adapters/useNodeImageUpload.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/MemoryFold.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/viewportAnimationSettlement.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/director/scene/character/poseClipLibrary.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeResultStack.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironment.tsx",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/reactFlow/useReactFlowViewportAnimation.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/NomiStudioApp.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/onboarding/demoProject.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/production/detachReportFeedback.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/production/productionShotActions.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/project/projectHydrationRecovery.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/project/projectNormalize.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/project/useProjectNotificationTarget.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/project/useProjectWindowLifecycle.ts",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/taskCenter/TaskCenterPanel.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/timeline/addAssetToTimeline.ts",
+      "entry_point": "logRendererWarn",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/timeline/TimelineSecondaryAddRow.tsx",
+      "entry_point": "logRendererError",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增入口或迁移可能再次脱离共享实现。",
+    "same_class_scan": [
+      "coordinator-closeout-door-evidence.json；before=bb451850747b05499da9d31bc6cc03b5ee4c445e",
+      "src/electron 的 2966 份实际非测试源文件 AST",
+      "scripts/tsx-diagnostics-lint.node-test.mjs",
+      "src/desktop/rendererLog.test.ts",
+      "electron/ai/promptSanitize.test.ts",
+      "electron/tasks/taskIpcGuard.test.ts",
+      "electron/pavoWeb/contentPreset.test.ts"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/desktop/rendererLog.ts",
+    "invariant": "原严重级别、Error 身份/stack/code、回退及本地可见性保留；由主进程统一脱敏。 包装 message 和现有 IPC 编码不变，仅补 cause；非结构化错误仍原对象抛出。 Unicode 仅改为等价转义，保留原字符集合，中文与 emoji 不额外清洗。 只清除未用 import、纯私有死代码、未消费绑定及读取前必覆盖的占位初始值；hook、公开 Props、测试调用和实际参数均保留。 保持原 79 warning 上限，不增忽略/静音规则，不新增自动付费重试。",
+    "failure_mode": "成员、线协议、原因或共享报告退化时，聚焦回归和原门岗失败。",
+    "exception_policy": "none",
+    "strategy": "修复已有 owner 与消费者，不另设并行实现或放宽预算。",
+    "artifacts": [
+      "electron/ai/promptSanitize.test.ts",
+      "electron/ai/promptSanitize.ts",
+      "electron/assets/glbValidation.ts",
+      "electron/audioTaskRunner.ts",
+      "electron/capabilityCore/core.ts",
+      "electron/capabilityCore/dispatcher.ts",
+      "electron/capabilityCore/residentProductionJourney.contract.test.ts",
+      "electron/capabilityCore/semanticGenerationCandidate.ts",
+      "electron/catalog/curatedVideoSharedContracts.test.ts",
+      "electron/catalog/secrets.ts",
+      "electron/export/exportJobIpc.test.ts",
+      "electron/export/exportJobManager.test.ts",
+      "electron/export/exportTypes.ts",
+      "electron/export/ffmpegFiltergraph.ts",
+      "electron/export/ffmpegRunner.ts",
+      "electron/pavoWeb/contentPreset.test.ts",
+      "electron/productionRun/productionPendingSpend.test.ts",
+      "electron/promptLibrary/promptLibraryStore.ts",
+      "electron/providerAdapter/compiler.test.ts",
+      "electron/providerAdapter/compiler.ts",
+      "electron/providerAdapter/service.test.ts",
+      "electron/runtime.ts",
+      "electron/tasks/taskIpcGuard.test.ts",
+      "electron/tasks/taskIpcGuard.ts",
+      "electron/telemetry/telemetryEvents.test.ts",
+      "electron/workspace/workspaceIpc.ts",
+      "electron/workspace/workspaceRegistry.ts",
+      "scripts/tsx-diagnostics-lint.node-test.mjs",
+      "src/i18n/locales/onboardingProviders.ts",
+      "src/ui/onboarding/comfyuiGraphGeometry.ts",
+      "src/utils/orientation.ts",
+      "src/workbench/ai/v4/askUserContract.test.ts",
+      "src/workbench/capability/capabilityLegacyActions.ts",
+      "src/workbench/export/exportApi.ts",
+      "src/workbench/generationCanvas/agent/applyCanvasToolCall.test.ts",
+      "src/workbench/generationCanvas/agent/availableModels.ts",
+      "src/workbench/generationCanvas/agent/canvasWriteTarget.integration.test.ts",
+      "src/workbench/generationCanvas/agent/plannedNodeMeta.test.ts",
+      "src/workbench/generationCanvas/agent/proposalTxn.ts",
+      "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+      "src/workbench/generationCanvas/components/batchPlanPreview.ts",
+      "src/workbench/generationCanvas/components/canvasNodeLevelOfDetail.test.ts",
+      "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.test.ts",
+      "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dCrowd.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dMannequinLocomotion.ts",
+      "src/workbench/generationCanvas/runner/dependencyWaves.ts",
+      "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+      "src/workbench/generationCanvas/runner/relayFrameResolver.ts",
+      "src/workbench/observability/classifyError.ts",
+      "src/desktop/rendererLog.ts",
+      "src/desktop/rendererLog.test.ts"
+    ]
+  },
+  "regression_tests": [
+    "scripts/tsx-diagnostics-lint.node-test.mjs",
+    "src/desktop/rendererLog.test.ts",
+    "electron/ai/promptSanitize.test.ts",
+    "electron/tasks/taskIpcGuard.test.ts",
+    "electron/pavoWeb/contentPreset.test.ts"
+  ],
+  "class_regression_tests": [
+    "scripts/tsx-diagnostics-lint.node-test.mjs",
+    "src/desktop/rendererLog.test.ts",
+    "electron/ai/promptSanitize.test.ts",
+    "electron/tasks/taskIpcGuard.test.ts",
+    "electron/pavoWeb/contentPreset.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "保留用户功能模块和数据，仅替换重复定义与无消费者实现。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "无新增或升级依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不改日常项目、素材、账号、密钥、Cookie 或共享代理进程。",
+  "residual_risks": [
+    "完整整合树、UI、CI、独立审查和合并 SHA 收据仍待最终验证。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/tsx-diagnostics-lint.node-test.mjs"
+  }
+}

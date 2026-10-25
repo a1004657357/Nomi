@@ -7,15 +7,17 @@
 // 外挂组件:BaseGenerationNode 是白名单巨壳(R12),不往里塞实现(同 TechnicalReviewBadge)。
 //
 // 锁态自己从 store 读:浮条只知道 nodeId,再让它把 locked 一路传下来就是把同一个事实抄两份。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconLock, IconLockOpen } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { selectCanvasNodeById } from '../store/canvasNodeGenerationIndex'
 
 export function NodeLockBadge({ nodeId }: { nodeId: string }): JSX.Element {
   const { t } = useTranslation()
-  const locked = useGenerationCanvasStore((state) => Boolean(state.nodes.find((node) => node.id === nodeId)?.locked))
+  // S3(2026-09-12)：浮条挂在每张选中的卡上，整表 find 等于每张卡每次重渲染都扫一遍全表。
+  const locked = useGenerationCanvasStore((state) => Boolean(selectCanvasNodeById(state, nodeId)?.locked))
   return (
     <button
       type="button"

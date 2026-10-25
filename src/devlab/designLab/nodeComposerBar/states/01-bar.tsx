@@ -1,4 +1,4 @@
-// 「画布 · 节点生成浮框底栏」六格：视频（运镜未选 / 已选）、图片、明暗各一，
+// 「画布 · 节点生成浮框底栏」六格：视频、图片、明暗各一，
 // 外加一格「chips 模式（付费卡用）」。
 // 前五格渲染的都是**现役** BaseGenerationNode + NodeGenerationComposer 本体（coverage: 'shell'）——
 // 2026-09-11 拍板的 v1.1 已接线，参数区是摘要 pill：同日 02:10 的逐参数 chip 于 04:30 被用户收回，
@@ -8,13 +8,14 @@
 //
 // 格 id 保持样张阶段的名字不变：截图文件名是拍板对账的锚点，改名等于把前几版的对账线索弄丢。
 import React from 'react'
-import { ChipsModeStage, ComposerBarStage } from '../nodeComposerBarLabKit'
+import { ChipsModeStage, ComposerBarStage, ParamPanelStage } from '../nodeComposerBarLabKit'
 import type { LabState } from '../../labScreen'
 
 const SOURCE = 'docs/design/2026-09-10-node-composer-bar-v1.md §v1.1（摘要 pill + 统一面板）'
 const CHIPS_SOURCE = 'docs/design/2026-09-10-node-composer-bar-v1.md §B（逐参数下拉 · 只给付费确认卡）'
+const FLAT_SOURCE = 'docs/design/2026-09-10-node-composer-bar-v1.md §v1.2（面板里选项摊开 · 单参数直出）'
 const MIRRORS = [
-  'src/workbench/generationCanvas/nodes/InlineParameterBar.tsx:109',
+  'src/workbench/generationCanvas/nodes/InlineParameterBar.tsx:166',
   'src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx:414',
   'src/workbench/generationCanvas/nodes/NodePromptToolCluster.tsx:22',
   'src/workbench/generationCanvas/nodes/NodeFloatingToolbar.tsx:26',
@@ -32,12 +33,12 @@ export const COMPOSER_BAR_STATES: readonly LabState[] = [
   },
   {
     id: 'composer-bar-v1-video-camera',
-    name: 'v1.1 · 视频节点（运镜已选 · icon 带激活点）',
+    name: 'v1.1 · 视频节点（运镜写在提示词）',
     source: SOURCE,
     mirrors: MIRRORS,
     coverage: 'shell',
     scheme: 'light',
-    render: () => <ComposerBarStage kind="video" cameraPicked />,
+    render: () => <ComposerBarStage kind="video" />,
   },
   {
     id: 'composer-bar-v1-image',
@@ -50,12 +51,12 @@ export const COMPOSER_BAR_STATES: readonly LabState[] = [
   },
   {
     id: 'composer-bar-v1-video-dark',
-    name: 'v1.1 · 视频节点 · 暗',
+    name: 'v1.1 · 视频节点 · 暗（运镜写在提示词）',
     source: SOURCE,
     mirrors: MIRRORS,
     coverage: 'shell',
     scheme: 'dark',
-    render: () => <ComposerBarStage kind="video" cameraPicked />,
+    render: () => <ComposerBarStage kind="video" />,
   },
   {
     id: 'composer-bar-v1-image-dark',
@@ -77,5 +78,27 @@ export const COMPOSER_BAR_STATES: readonly LabState[] = [
     coverage: 'shell',
     scheme: 'light',
     render: () => <ChipsModeStage />,
+  },
+  // ── v1.2：点开之后那一层（2026-09-11 13:00 用户真机拍板「点好几次」）──────────────
+  // 浮层 portal 到 body、不在舞台子树里，所以这两格必须截整屏（capture: 'viewport'）。
+  {
+    id: 'composer-bar-panel-flat-options',
+    name: 'v1.2 · 参数面板展开：选项全摊开，一个下拉都没有（比例带图形 / 清晰度 / 时长滑杆）',
+    source: FLAT_SOURCE,
+    mirrors: 'src/workbench/generationCanvas/nodes/NodeParameterControls.tsx:670',
+    coverage: 'component-only',
+    capture: 'viewport',
+    scheme: 'light',
+    render: () => <ParamPanelStage kind="video-panel" />,
+  },
+  {
+    id: 'composer-bar-panel-solo-direct',
+    name: 'v1.2 · 只有一个参数（Agnes Image 只声明「尺寸」）：点 pill 一步直出选项，没有面板壳',
+    source: FLAT_SOURCE,
+    mirrors: 'src/workbench/generationCanvas/nodes/NodeParameterControls.tsx:670',
+    coverage: 'component-only',
+    capture: 'viewport',
+    scheme: 'light',
+    render: () => <ParamPanelStage kind="image-solo" />,
   },
 ]

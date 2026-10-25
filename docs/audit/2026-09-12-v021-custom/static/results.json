@@ -1,0 +1,142 @@
+[
+  {
+    "name": "check:gates-chain",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 539,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-gates-chain.txt"
+  },
+  {
+    "name": "check:filesize",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 691,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-filesize.txt"
+  },
+  {
+    "name": "check:tokens",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 1199,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-tokens.txt"
+  },
+  {
+    "name": "check:dangling-tokens",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 795,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-dangling-tokens.txt"
+  },
+  {
+    "name": "check:archetype-defaults",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 925,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-archetype-defaults.txt"
+  },
+  {
+    "name": "check:archetype-sources",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 559,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-archetype-sources.txt"
+  },
+  {
+    "name": "check:secrets",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 5687,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-secrets.txt"
+  },
+  {
+    "name": "check:third-party",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 543,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-third-party.txt"
+  },
+  {
+    "name": "check:symlinks",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 623,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-symlinks.txt"
+  },
+  {
+    "name": "check:i18n",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 2754,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-i18n.txt"
+  },
+  {
+    "name": "check:heavy-path",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 1024,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-heavy-path.txt"
+  },
+  {
+    "name": "check:adoption-bridge",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 627,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-adoption-bridge.txt"
+  },
+  {
+    "name": "check:ipc-sender-binding",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 582,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-ipc-sender-binding.txt"
+  },
+  {
+    "name": "check:batch-machines",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 906,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-batch-machines.txt"
+  },
+  {
+    "name": "check:test-waits",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 657,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-test-waits.txt"
+  },
+  {
+    "name": "check:agents-sync",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 538,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-agents-sync.txt"
+  },
+  {
+    "name": "check:controls",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 1411,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-controls.txt"
+  },
+  {
+    "name": "check:e2e-launch",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 585,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-e2e-launch.txt"
+  },
+  {
+    "name": "check:walkthroughs",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 946,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-walkthroughs.txt"
+  },
+  {
+    "name": "check:site",
+    "exitCode": 0,
+    "signal": null,
+    "ms": 1559,
+    "log": "/Users/huawuer/Projects/Nomi-upstream-v021-20260912/docs/audit/2026-09-12-v021-custom/static/check-site.txt"
+  }
+]

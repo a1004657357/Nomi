@@ -47,21 +47,36 @@ const settingsDirectory = path.join(process.cwd(), 'src/workbench/settings')
 //             **这次只有这一行变**，
 //             对应正向断言见下方 uses the split motion tokens on the gesture options——锁住它不许
 //             退回打包写法（退回=按钮 hover 又变回硬切，而所有快照仍然全绿）。
+// 2026-09-11：「模型框里显示哪些、排在哪」区块挂进本 tab，紧贴「默认走哪家」下面（用户当天拍板的
+//             两张表：上面那张管每行高亮哪个供应商标签，下面这张管有哪几行、什么顺序）。故更新
+//             AiModelsSection 基线；对应正向断言见下方 hosts the model box order right below the
+//             vendor preference——锁住两块必须同屏相邻（分开放 = 用户要去两个地方找同一件事）。
 // 2026-09-10 DC24: remove repeated teaching; retain actionable upload/privacy and gesture details.
 // Positive cross-surface coverage: quietDefaults.test.ts.
 const APPROVED_NON_MODEL_SECTION_SHA256 = {
   // 2026-09-04：检查反馈 tone 改为从公共 toast 函数参数推导，避免重复词表 owner。
   // 2026-09-09：目录操作错误回现有status；保留共享tone类型，正向回归见下方local feedback。
-  'ProjectLocationSection.tsx': '6fdcf159d9a0e32e72637049fce6d0f9acaeee43369d0c8d2be46d3f7ec81c10',
+  'ProjectLocationSection.tsx': '8859c5bd425d82b8880c26d89218e36c274b1a7d6003b00a3e64de39bb535689',
   // 2026-09-02: AiModelsSection 按渲染边界收口供应商/模型展示名（translateModelDisplayText）。
   // B4: user explicitly removed the global budget setting; the positive absence assertion is below.
-  'AiModelsSection.tsx': '8fee6e8299842d0b52892766a4e94c88a37fb69e0fa9900095f00a4a299e3c7c',
+  // 2026-09-14：删「默认模型策略」整栏（说明文字 + 161 个白名单复选框 + 深链聚焦）；已接入即放行。
+  // 2026-09-21：目录读失败不再把供应商/模型清空（同形裸 catch 横扫）。清空等于替用户断言
+  //             「你没有这些」，而真相只是「这一次没读到」——用户那句「重装之后配置都没了」
+  //             就是这么来的。正向断言见下方 keeps the last catalog when a read fails。
+  // 2026-09-22（#831）：「已接入 Kie」的判据从 key 字面量改成经 builtinVendorIdentity 解析身份，
+  //             这样兄弟连接（`kie--x`）也认得出。两刀都只改判据，布局与文案一个字没动。
+  'AiModelsSection.tsx': '97ebb8ee265bff40cdf8368c98dc056a2b08f6e3ed61ea697c0195d0bd44a54c',
   // 2026-09-03：toggleHost 参数类型从 SettingsHostKey（四值联合）泛化为 string（支持自定义 profile key）；
   // 新增 CustomMcpClientCard UI TODO 注释（底层能力已就绪，UI 面另排样张拍板）。
   // 2026-09-09：声音归通用设置的单一入口，移除这里的旧开关；下方断言保留系统通知策略。
-  'AutomationPermissionsSection.tsx': '5eaf11a9f41fb95a0d6873de082de9e8e5fe62eded8282304c0cd6298a357c40',
-  'CanvasGestureSection.tsx': '6f6fbf6802c6daae381c83838b387623a78ac7de49ffb1e47ee6101db312c95d',
-  'AboutSection.tsx': 'b38e0e2265f29ca56da53595e4bb5886bd14799ea3a7f7f36797b33d46eda57f',
+  // 2026-09-14：删「默认制作模式」三段与「支出与风险边界」整栏（#781），并删掉独立的「可信发起方」栏——开关并进 MCP 连接页每张客户端卡（#783）。
+  'AutomationPermissionsSection.tsx': '721c88e732d8c03887adf19b69e6795f048db08c73701033fd33dc3972e5d83e',
+  'CanvasGestureSection.tsx': '26dd136e2825d7c3758e10ffca5e690e8f9b94cbd1b25f75e53f5999d36afd4a',
+  // 2026-09-15：两处非布局改动——① 那行注释原来提到 FeedbackShareDialog，而那份文件本次被删
+  // （失败面那条路不再套带标题的 modal 外壳，直接呈现反馈卡）；② `FeedbackShareContent` 的
+  // `variant` prop 只剩一个合法值，删掉之后这里的 `variant="embedded"` 也跟着去掉。
+  // 布局、区块顺序、文案一个字没动。更新这颗钉子是因为它钉的是整份文件的内容。
+  'AboutSection.tsx': 'f355cbcbd965dd5b49593b04b7044605f08efa5cc36df288b9d169d91d9c26b5',
 } as const
 
 describe('settings dialog structure', () => {
@@ -82,8 +97,11 @@ describe('settings dialog structure', () => {
     expect(settingsSource).toContain('overflow-x-auto')
     expect(settingsSource).toContain('data-settings-tab-id={id}')
     expect(settingsSource).toContain('active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2')
-    expect(settingsSource).toContain("'production-policy'")
+    // 2026-09-14：「默认模型策略」白名单整栏已删（审计 §⑥ 4/7），深链 section 'production-policy' 随之消失。
+    expect(settingsSource).not.toContain("'production-policy'")
     expect(aiModelsSource).not.toContain('data-settings-field="hard-budget"')
+    expect(aiModelsSource).not.toContain('data-settings-field="production-provider"')
+    expect(aiModelsSource).not.toContain('settings.ai.policy.')
   })
 
   it('keeps notification policy in settings instead of duplicating it in task center', () => {
@@ -167,7 +185,7 @@ describe('settings dialog structure', () => {
     expect(aboutSource).toContain("t('about.feedbackShare')")
     // 入口切内嵌视图，不再 dispatch 全局事件、不再关掉设置弹窗。
     expect(aboutSource).toContain("setView('feedback')")
-    expect(aboutSource).toContain('<FeedbackShareContent variant="embedded"')
+    expect(aboutSource).toContain('<FeedbackShareContent onBackToAbout=')
     expect(aboutSource).not.toContain("window.dispatchEvent(new CustomEvent('nomi-open-feedback-share'))")
   })
 
@@ -194,12 +212,10 @@ describe('settings dialog structure', () => {
     expect(fs.existsSync(path.join(settingsDirectory, 'settingsLayout.tsx'))).toBe(false)
   })
 
-  // 「新建卡片默认模型」必须挂在 AI 策略页顶部，且与下方的「默认模型策略」（权限）分得开——
-  // 同屏两个「默认模型」是用户拍板时明确点出的混淆点。
-  it('mounts the new-card default model picker above the permission policy block', () => {
+  // 「新建卡片默认模型」挂在 AI 策略页顶部；2026-09-14 起同屏不再有第二个「默认模型」块（白名单栏已删）。
+  it('mounts the new-card default model picker at the top of the AI policy tab', () => {
     expect(aiModelsSource).toContain('<DefaultGenerationModelsSection')
-    expect(aiModelsSource.indexOf('<DefaultGenerationModelsSection'))
-      .toBeLessThan(aiModelsSource.indexOf("data-settings-section=\"production-policy\""))
+    expect(aiModelsSource).not.toContain('data-settings-section="production-policy"')
   })
 
   // 2026-08-25 用户拍板：这块从「推销 KIE」改成「说出现在实际走哪条通道」。
@@ -215,7 +231,10 @@ describe('settings dialog structure', () => {
     // 现状必须来自 main 的真解析器；渲染层一旦自己排优先级，这张卡迟早开始说谎。
     expect(aiModelsSource).toContain('assetTransport?.describeChannels()')
     // 「已接入」按它是否真的在收文件判，不按 key 存不存在判——否则徽章和下面的通道行会互相打架。
-    expect(aiModelsSource).toContain("channels.some((channel) => channel.vendorKey === 'kie')")
+    // #831：同域名可以有多条 Kie 连接（`kie--x`），所以这里问的是**身份**而不是 key 字面量——
+    // 比字面量的话，第二条 Kie 连接接好了徽章也不亮，下面的通道行却说它在收文件。
+    expect(aiModelsSource).toContain("builtinVendorKeyOfKey(channel.vendorKey) === 'kie'")
+    expect(aiModelsSource).toContain("electron/shared/builtinVendorIdentity")
     // 公开可访问的通道必须走警示样式，不能和私有链接长一样。
     expect(aiModelsSource).toContain(
       "channel.visibility === 'public-anonymous' || channel.visibility === 'public-provider'",
@@ -229,13 +248,11 @@ describe('settings dialog structure', () => {
   // 词典再全也没用，界面照样是中文（2026-09-02 走查在这屏抓到 34 处）。
   it('translates vendor and model display names through the model-display boundary', () => {
     expect(aiModelsSource).toContain("import { translateModelDisplayText } from '../../i18n/modelDisplayText'")
-    // 供应商勾选行的标题。
-    expect(aiModelsSource).toContain('{translateModelDisplayText(provider.name)}')
-    // 模型勾选行的「模型名 · 供应商名」，两段都要过边界。
-    expect(aiModelsSource).toContain('translateModelDisplayText(model.labelZh || model.modelKey)')
-    expect(aiModelsSource).toContain('const providerName = translateModelDisplayText(')
+    // 2026-09-14 起这一屏只剩「优先供应商」排序条目仍渲染供应商名（勾选行随白名单栏一起删了），它必须过边界。
+    expect(aiModelsSource).toContain('name: translateModelDisplayText(provider.name)')
     // 不许再出现直连原始字段的裸渲染。
     expect(aiModelsSource).not.toContain('<span className="truncate">{provider.name}</span>')
+    expect(aiModelsSource).not.toContain('name: provider.name')
   })
 
   // 2026-09-06：「同一个模型好几家都能跑时默认走哪家」是**策略**（设计系统 §1.7.2 的分界线：
@@ -251,6 +268,21 @@ describe('settings dialog structure', () => {
     expect(modelHome, '优先供应商不该在「模型」tab 再有一个家').not.toContain('VendorPreference')
   })
 
+  // 2026-09-11：「模型框里显示哪些、排在哪」必须和「默认走哪家」同屏相邻。
+  // 用户心里这两块是同一件事（「模型框里我看到什么」）：一块定每行高亮哪个供应商标签，
+  // 一块定有哪几行、什么顺序。把它挪去别的 tab 不会让任何快照变红，却会让用户去两个地方
+  // 找同一件事（§1.5.2 一功能一个家）。
+  it('hosts the model box order right below the vendor preference', () => {
+    expect(aiModelsSource).toContain("import { ModelBoxOrderSection } from './ModelBoxOrderSection'")
+    expect(aiModelsSource).toContain('<ModelBoxOrderSection />')
+    const vendorAt = aiModelsSource.indexOf('<VendorPreferenceOrderSection')
+    const modelBoxAt = aiModelsSource.indexOf('<ModelBoxOrderSection />')
+    expect(vendorAt, '「默认走哪家」必须在前（每行标签的顺序是它定的）').toBeGreaterThan(-1)
+    expect(modelBoxAt, '「显示哪些、排在哪」紧跟其后').toBeGreaterThan(vendorAt)
+    const modelHome = readCode(path.join(process.cwd(), 'src/ui/onboarding/ModelSettingsHome.tsx'))
+    expect(modelHome, '模型框整理不该在「模型」tab 再有一个家').not.toContain('ModelBoxOrder')
+  })
+
   // 2026-09-08：哈希只证明「变了/没变」，证不了「变成对的」。这条锁住动效 token 的拆包形态：
   // 旧的打包写法（把 140ms 与缓动塞进 `--nomi-transition-fast` 一个值再喂给 duration）
   // 计算值是 0s（非法声明被丢弃），
@@ -259,6 +291,18 @@ describe('settings dialog structure', () => {
     const gestureSource = fs.readFileSync(path.join(settingsDirectory, 'CanvasGestureSection.tsx'), 'utf8')
     expect(gestureSource).toContain('duration-nomi-fast ease-nomi-fast')
     expect(gestureSource, '打包成一个值的旧 token 会让 transition-duration 非法、计算值 0s').not.toContain('--nomi-transition-fast')
+  })
+
+  /**
+   * 哈希只证明「变了」，证不了「变成对的」。这一条钉住 2026-09-21 那次改动的**语义**：
+   * 读目录失败时**不许**把已经在屏上的供应商/模型清成空。
+   * 退回 `setProviders([])` / `setModels([])` 不会让任何快照变红，但用户会再一次看到空白页
+   * 并得出「我的配置没了」这个错误结论。
+   */
+  it('keeps the last catalog when a read fails', () => {
+    expect(aiModelsSource, '读失败不许清空供应商').not.toContain('setProviders([])')
+    expect(aiModelsSource, '读失败不许清空模型').not.toContain('setModels([])')
+    expect(aiModelsSource).toContain('if (Array.isArray(values)) setModels(values)')
   })
 
   it('keeps all five non-model sections at their explicitly approved content baseline', () => {
@@ -273,7 +317,7 @@ describe('settings dialog structure', () => {
     const consumers = [
       'src/workbench/settings/CanvasGestureSection.tsx',
       'src/ui/onboarding/workflowPage/WorkflowGraphCanvas.tsx',
-      'src/workbench/generationCanvas/components/useCanvasViewportGestures.ts',
+      'src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx',
     ]
     for (const consumer of consumers) {
       const file = path.join(process.cwd(), consumer)

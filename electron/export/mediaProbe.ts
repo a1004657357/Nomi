@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 
 import { resolveFfmpegPath } from "./ffmpegRunner";
 import { ensureExecutable } from "./ensureExecutable";
+import { asarUnpackedPath } from "../shared/asarUnpackedPath";
 
 export const MEDIA_DECODER_PROTOCOL_WHITELIST = "file,pipe,data";
 
@@ -14,6 +15,8 @@ export type MediaProbeMetadata = {
   height?: number;
   fps?: number;
   videoCodec?: string;
+  /** ffprobe `pix_fmt`（如 rgba / yuv420p10le）；预览派生靠它判断源有没有 alpha。 */
+  pixelFormat?: string;
   audioCodec?: string;
   hasAudio: boolean;
   sampleRate?: number;
@@ -249,6 +252,7 @@ export class MediaProbeError extends Error {
 type FfprobeStream = Record<string, unknown> & {
   codec_type?: unknown;
   codec_name?: unknown;
+  pix_fmt?: unknown;
   width?: unknown;
   height?: unknown;
   avg_frame_rate?: unknown;
@@ -352,6 +356,7 @@ export function parseFfprobeJson(json: string): MediaProbeMetadata {
   const height = finitePositiveInteger(videoStream?.height);
   const fps = parseRational(videoStream?.avg_frame_rate) ?? parseRational(videoStream?.r_frame_rate);
   const videoCodec = stringValue(videoStream?.codec_name);
+  const pixelFormat = stringValue(videoStream?.pix_fmt);
   const audioCodec = stringValue(audioStream?.codec_name);
   const sampleRate = finitePositiveInteger(audioStream?.sample_rate);
   const channels = finitePositiveInteger(audioStream?.channels);
@@ -370,6 +375,7 @@ export function parseFfprobeJson(json: string): MediaProbeMetadata {
   if (height !== undefined) metadata.height = height;
   if (fps !== undefined && kind !== "image") metadata.fps = fps;
   if (videoCodec !== undefined) metadata.videoCodec = videoCodec;
+  if (pixelFormat !== undefined) metadata.pixelFormat = pixelFormat;
   if (audioCodec !== undefined) metadata.audioCodec = audioCodec;
   if (sampleRate !== undefined) metadata.sampleRate = sampleRate;
   if (channels !== undefined) metadata.channels = channels;
@@ -377,14 +383,9 @@ export function parseFfprobeJson(json: string): MediaProbeMetadata {
   return metadata;
 }
 
-function executablePathForRuntime(candidate: string): string {
-  if (!candidate.includes("app.asar")) return candidate;
-  return candidate.replace(/app\.asar(?!\.unpacked)/g, "app.asar.unpacked");
-}
-
 function commandExists(command: string): boolean {
   if (!command) return false;
-  const runtimeCommand = executablePathForRuntime(command);
+  const runtimeCommand = asarUnpackedPath(command);
   if (path.isAbsolute(runtimeCommand)) return fs.existsSync(runtimeCommand);
   const pathParts = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
   return pathParts.some((dir) => fs.existsSync(path.join(dir, runtimeCommand)));
@@ -393,14 +394,14 @@ function commandExists(command: string): boolean {
 function siblingFfprobePath(ffmpegPath: string): string {
   if (!ffmpegPath || !path.isAbsolute(ffmpegPath)) return "";
   const executableName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
-  return path.join(path.dirname(executablePathForRuntime(ffmpegPath)), executableName);
+  return path.join(path.dirname(asarUnpackedPath(ffmpegPath)), executableName);
 }
 
 function bundledFfprobePath(): string {
   // 打包随附的 ffprobe（@ffprobe-installer），让"双击即用"用户无需自装 ffprobe 即可探测音轨
   try {
     const installer = require("@ffprobe-installer/ffprobe") as { path?: string };
-    const installerPath = typeof installer?.path === "string" ? executablePathForRuntime(installer.path) : "";
+    const installerPath = typeof installer?.path === "string" ? asarUnpackedPath(installer.path) : "";
     return installerPath && commandExists(installerPath) ? installerPath : "";
   } catch {
     return "";

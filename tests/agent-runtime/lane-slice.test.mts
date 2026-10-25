@@ -5,14 +5,14 @@
 // 就空了。这里证的是新通路里顺序**根本不需要被算出来**——它落在盘上，关掉进程、重开、
 // 从盘上读回来，段与段的相对位置一个字都不变。
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { laneSessionsRoot } from '../../electron/agentLane/laneSession.mjs';
 import type { LanePart } from '../../electron/shared/agentLane/laneContracts.js';
 import { LANE_APPROVAL_NOTE_TYPE } from '../../electron/shared/agentLane/laneContracts.js';
-import { createLaneFixture } from './laneFixture.mjs';
+import { createLaneFixture, readFixtureNativeEntries } from './laneFixture.mjs';
 
 /** 段的身份 = 「这是哪一种段 + 它是谁」。**刻意不含 sequence**——否则断言就是在自证。 */
 function shape(part: LanePart): string {
@@ -29,8 +29,8 @@ function shape(part: LanePart): string {
 }
 
 const READ_THEN_WRITE = [
-  { type: 'tool' as const, calls: [{ id: 'call-read', name: 'read_full_text', arguments: {} }] },
-  { type: 'tool' as const, calls: [{ id: 'call-write', name: 'append_to_end', arguments: { content: '\n\nAnd then the door opened.' } }] },
+  { type: 'tool' as const, calls: [{ id: 'call-read', name: 'read_script', arguments: {} }] },
+  { type: 'tool' as const, calls: [{ id: 'call-write', name: 'write_script', arguments: { where: 'end', content: '\n\nAnd then the door opened.' } }] },
   { type: 'text' as const, text: 'I read the document and appended one paragraph.' },
 ];
 
@@ -70,10 +70,10 @@ test('G3 · the projected order is the transcript order, not the wall-clock orde
 
   assert.deepEqual(parts.map(shape), [
     'user:Append one paragraph to the document.',
-    'call:read_full_text:call-read',
-    'result:read_full_text:call-read:false',
-    'call:append_to_end:call-write',
-    'result:append_to_end:call-write:false',
+    'call:read_script:call-read',
+    'result:read_script:call-read:false',
+    'call:write_script:call-write',
+    'result:write_script:call-write:false',
     'text:I read the document and appended one paragraph.',
   ]);
   // `entrySeq` 单调不减，是「我们走的是转录本身，不是自己攒的一个数组」的凭据。
@@ -100,7 +100,7 @@ test('the tool call and its result carry the same id, so the panel joins them wi
 test('a refused tool never runs, and the user\'s own sentence reaches the model verbatim as the tool result', async (t) => {
   const REFUSAL = '不对，横屏。先把画幅问清楚再动文稿。';
   const fixture = await createLaneFixture(t, [
-    { type: 'tool', calls: [{ id: 'call-blocked', name: 'append_to_end', arguments: { content: 'unapproved' } }] },
+    { type: 'tool', calls: [{ id: 'call-blocked', name: 'write_script', arguments: { where: 'end', content: 'unapproved' } }] },
     { type: 'text', text: 'Understood, I will not append that.' },
   ], { hasUserInterface: true, policy: () => ({ mode: 'step', spend: 'confirm' }) });
   const lane = await fixture.openLane(fixture.options);
@@ -128,7 +128,7 @@ test('a refused tool never runs, and the user\'s own sentence reaches the model 
   // 宿主的审批记录骑在**同一条**转录上，排在被拒的那次调用之前（岔路 2 = B）。
   const note = parts.find((part) => part.kind === 'host-note');
   assert.ok(note && note.noteType === LANE_APPROVAL_NOTE_TYPE);
-  assert.deepEqual(note.data, { toolCallId: 'call-blocked', toolName: 'append_to_end', decision: 'denied', reason: REFUSAL });
+  assert.deepEqual(note.data, { toolCallId: 'call-blocked', toolName: 'write_script', decision: 'denied', reason: REFUSAL });
 
   // 而且它**不复制**工具正文：note 里只有 id 与那一句理由，没有第二份结果。
   const wire = fixture.http.requests.at(-1)?.body as { messages?: Array<{ role: string; content: unknown }> };
@@ -141,7 +141,7 @@ test('the running tool is marked running while it is in flight, and settles when
   let release: (() => void) | undefined;
   const inFlight = new Promise<void>((resolve) => { release = resolve; });
   const fixture = await createLaneFixture(t, [
-    { type: 'tool', calls: [{ id: 'call-slow', name: 'read_full_text', arguments: {} }] },
+    { type: 'tool', calls: [{ id: 'call-slow', name: 'read_script', arguments: {} }] },
     { type: 'deferred', beforeReply: async () => { await inFlight; return { type: 'text', text: 'Done.' }; } },
   ]);
   const lane = await fixture.openLane(fixture.options);
@@ -181,9 +181,30 @@ test('the live projection matches the checked-in fixture the renderer layer is t
   await lane.execute({ kind: 'prompt', text: 'Append one paragraph to the document.' });
 
   // 从仓库根解析，不从 `import.meta.url`：编译产物住在 `.tmp/` 下，夹具 JSON 不跟着搬。
-  const expected = JSON.parse(await readFile(
-    join(process.cwd(), 'tests/agent-runtime/__fixtures__/lane-projection.json'), 'utf8')) as unknown;
-  assert.deepEqual(JSON.parse(JSON.stringify(lane.projection())), expected,
+  const projection = lane.projection();
+  await lane.close();
+  const entries = await readFixtureNativeEntries(fixture.projectDir);
+  const ids = new Map(entries.filter(entry => entry.id).map(entry => [entry.id, `native-entry-${entry.seq}`]));
+  assert.equal(ids.size, entries.filter(entry => entry.id).length, 'native ids are unique');
+  for (const part of projection.parts) {
+    const native = entries.find(entry => entry.seq === part.entrySeq);
+    assert.ok(native, 'each projected entrySeq belongs to the native log');
+    assert.equal(part.entryId, native.id, 'projection retains the exact native entry id');
+  }
+  const normalize = (key: string, value: unknown) => {
+    if (['entryId', 'retryInputEntryId', 'continuationEntryId', 'before'].includes(key) && typeof value === 'string') {
+      assert.ok(ids.has(value), `${key} must refer to an actual native entry`);
+      return ids.get(value);
+    }
+    return value;
+  };
+  const actual = JSON.parse(JSON.stringify(projection, normalize));
+  const fixturePath = join(process.cwd(), 'tests/agent-runtime/__fixtures__/lane-projection.json');
+  if (process.env.NOMI_UPDATE_LANE_PROJECTION_FIXTURE === '1') {
+    await writeFile(fixturePath, `${JSON.stringify(actual, null, 2)}\n`);
+  }
+  const expected = JSON.parse(await readFile(fixturePath, 'utf8')) as unknown;
+  assert.deepEqual(actual, expected,
     'regenerate tests/agent-runtime/__fixtures__/lane-projection.json when the wire shape changes on purpose');
 });
 

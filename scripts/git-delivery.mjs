@@ -4,6 +4,9 @@ import path from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
+import { gitNameStatus } from './lib/gitPaths.mjs'
+import { classifyValidationPolicy, CORE_SMOKE_ADVISORY_CHECK_NAMES, CORE_SMOKE_BLOCKING_CHECK_NAMES } from './validation-policy.mjs'
+
 export const DEFAULT_FETCH_TIMEOUT_MS = 45_000
 export const DEFAULT_CI_EVIDENCE_TIMEOUT_MS = 30 * 60_000
 export const DEFAULT_CI_POLL_INTERVAL_MS = 10_000
@@ -298,6 +301,85 @@ export function parseGitHubRepository(remoteUrl) {
   return match[1]
 }
 
+function deliveryRepository(value, source) {
+  let repository
+  try {
+    repository = parseGitHubRepository(value)
+  } catch {
+    throw new DeliveryError('invalid_delivery_repository', `Cannot resolve a GitHub repository for ${source}; use OWNER/REPO or github.com/OWNER/REPO.`)
+  }
+  if (!/^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(repository) || ['.', '..'].includes(repository.split('/')[1])) {
+    throw new DeliveryError('invalid_delivery_repository', `Invalid GitHub repository identity for ${source}.`)
+  }
+  return repository
+}
+
+export function resolveDeliveryTarget({ cwd = process.cwd(), env = process.env, repository, remote, base = 'main' } = {}) {
+  const contexts = [['repository', repository], ['GH_REPO', env.GH_REPO], ['GITHUB_REPOSITORY', env.GITHUB_REPOSITORY]]
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([source, value]) => {
+      const raw = String(value).trim()
+      const remoteUrl = /^[^/:]+\/[^/]+$/.test(raw)
+        ? `https://github.com/${raw}`
+        : /^github\.com\//i.test(raw) ? `https://${raw}` : raw
+      return { source, repository: deliveryRepository(remoteUrl, source) }
+    })
+  if (new Set(contexts.map(context => context.repository.toLowerCase())).size > 1) {
+    throw new DeliveryError('conflicting_delivery_repository', `Conflicting delivery repository contexts: ${contexts.map(context => context.source).join(', ')}.`)
+  }
+  if (typeof base !== 'string' || gitStatus(cwd, ['check-ref-format', `refs/heads/${base}`]).exitCode !== 0) {
+    throw new DeliveryError('invalid_delivery_base', 'Delivery base must be a valid branch name.')
+  }
+  const targetRepository = contexts[0]?.repository
+  const names = gitOutput(cwd, ['remote']).split(/\r?\n/).filter(Boolean)
+  if (remote !== undefined && (typeof remote !== 'string' || !names.includes(remote))) {
+    throw new DeliveryError('missing_delivery_remote', 'The explicit delivery remote is not configured in this repository.')
+  }
+  if (!targetRepository && remote === undefined && names.length > 1) {
+    throw new DeliveryError('ambiguous_delivery_repository', 'Ambiguous delivery repository: declare GH_REPO or an explicit --remote; origin is not assumed to own the PR target.')
+  }
+  // Fetch identity owns the tracking ref. A push URL cannot establish that identity.
+  const candidates = (remote === undefined ? names : [remote]).map(name => {
+    const urls = gitOutput(cwd, ['remote', 'get-url', '--all', name]).split(/\r?\n/).filter(Boolean)
+    const identities = new Map()
+    let unsupported = false
+    for (const remoteUrl of urls) {
+      try {
+        const identity = deliveryRepository(remoteUrl, `fetch remote ${name}`)
+        identities.set(identity.toLowerCase(), identity)
+      } catch (error) {
+        if (!(error instanceof DeliveryError)) throw error
+        unsupported = true
+      }
+    }
+    return { name, identities, unsupported }
+  })
+  const matches = targetRepository && remote === undefined
+    ? candidates.filter(candidate => candidate.identities.has(targetRepository.toLowerCase()))
+    : candidates
+  if (matches.length === 0) {
+    throw new DeliveryError('missing_delivery_remote', 'No configured fetch remote matches the delivery repository; check GH_REPO and fetch remote ownership.')
+  }
+  if (matches.length > 1) {
+    throw new DeliveryError('ambiguous_delivery_remote', 'Ambiguous delivery remote: multiple fetch remotes match the repository; select one explicitly with --remote.')
+  }
+  const selected = matches[0]
+  if (selected.unsupported || selected.identities.size !== 1) {
+    throw new DeliveryError('ambiguous_remote_repository', `Ambiguous or unsupported fetch repository for remote ${selected.name}; one GitHub repository identity is required.`)
+  }
+  const selectedRepository = [...selected.identities.values()][0]
+  if (targetRepository && selectedRepository.toLowerCase() !== targetRepository.toLowerCase()) {
+    throw new DeliveryError('delivery_repository_mismatch', `The explicit remote ${selected.name} does not match the delivery repository.`)
+  }
+  const remoteRef = `${selected.name}/${base}`
+  const qualifiedRef = `refs/remotes/${remoteRef}`
+  const resolved = gitStatus(cwd, ['rev-parse', '--verify', `${qualifiedRef}^{commit}`])
+  if (resolved.exitCode !== 0) {
+    throw new DeliveryError('missing_delivery_base', `Missing target ${qualifiedRef}; refresh the selected remote with git fetch --no-tags ${selected.name} refs/heads/${base}:${qualifiedRef}, then retry.`)
+  }
+  return { repository: targetRepository || selectedRepository, remote: selected.name, base, remoteRef, qualifiedRef, remoteCommit: resolved.stdout.trim() }
+}
+
 function checkValue(check, snakeName, camelName) {
   return check?.[snakeName] ?? check?.[camelName] ?? null
 }
@@ -324,14 +406,40 @@ function receiptCheck(check) {
   }
 }
 
-export function evaluateRequiredChecks(checkRuns, requiredNames = REQUIRED_MERGED_CHECKS) {
+/**
+ * 这个 merge SHA 要哪些 check（2026-09-22，核心冒烟第三道防线）。
+ * 与 CI 同一个分类器、同一个 diff（相对第一父提交，也就是 main push 的 before..after）：
+ * 只要不是纯文档，**阻断档**的核心冒烟（当前只有 empty）就必须是 success——skipped / neutral /
+ * 缺席一律拒绝，否则「上一个合入没验过 main」会被一张写着「跳过」的收据掩盖过去。
+ * 非阻断档（当前是 used）**记进收据但不判**：它的结论照抄下来供人看，红了不拦收据。
+ * 名单的唯一 owner 在 validation-policy.mjs，CI 与这里从同一处派生。
+ */
+export function mergedCheckRequirement({ cwd, commitSha }) {
+  const parents = gitOutput(cwd, ['rev-list', '--parents', '-n', '1', commitSha]).split(/\s+/).slice(1)
+  const entries = parents.length > 0 ? gitNameStatus(['diff', '--name-status', parents[0], commitSha], { cwd }) : []
+  const policy = classifyValidationPolicy(entries, { eventName: 'push' })
+  return policy.coreSmoke
+    ? {
+        names: [...REQUIRED_MERGED_CHECKS, ...CORE_SMOKE_BLOCKING_CHECK_NAMES],
+        successOnly: [...CORE_SMOKE_BLOCKING_CHECK_NAMES],
+        advisory: [...CORE_SMOKE_ADVISORY_CHECK_NAMES],
+        coreSmoke: { required: true, reason: policy.reason },
+      }
+    : { names: [...REQUIRED_MERGED_CHECKS], successOnly: [], advisory: [], coreSmoke: { required: false, reason: policy.reason } }
+}
+
+/** 同名 check 取最新一条（必需档与非阻断档共用同一条取法）。 */
+function latestCheck(checkRuns, name) {
+  return checkRuns.filter((check) => check?.name === name).sort((left, right) => checkOrder(right) - checkOrder(left))[0]
+}
+
+export function evaluateRequiredChecks(checkRuns, requiredNames = REQUIRED_MERGED_CHECKS, { successOnly = [], advisory = [] } = {}) {
   const checks = []
   const missing = []
   const pending = []
   const failed = []
   for (const name of requiredNames) {
-    const candidates = checkRuns.filter((check) => check?.name === name).sort((left, right) => checkOrder(right) - checkOrder(left))
-    const check = candidates[0]
+    const check = latestCheck(checkRuns, name)
     if (!check) {
       missing.push(name)
       continue
@@ -339,14 +447,22 @@ export function evaluateRequiredChecks(checkRuns, requiredNames = REQUIRED_MERGE
     const projected = receiptCheck(check)
     checks.push(projected)
     if (check.status !== 'completed') pending.push(projected)
-    else if (!ACCEPTED_CHECK_CONCLUSIONS.has(check.conclusion)) failed.push(projected)
+    else if (successOnly.includes(name) && check.conclusion !== 'success') {
+      failed.push({ ...projected, rejection: `${name} 必须是 success（实际 ${check.conclusion}）：核心冒烟没真跑过的 merge 不发收据` })
+    } else if (!ACCEPTED_CHECK_CONCLUSIONS.has(check.conclusion)) failed.push(projected)
   }
+  // 非阻断档：只把结论抄进收据，不进 state 的任何一支。缺席就写 missing，不算红。
+  const advisoryChecks = advisory.map((name) => {
+    const check = latestCheck(checkRuns, name)
+    return check ? { ...receiptCheck(check), advisory: true } : { name, conclusion: 'missing', advisory: true }
+  })
   return {
     state: failed.length > 0 ? 'failed' : missing.length > 0 || pending.length > 0 ? 'pending' : 'passed',
     checks,
     missing,
     pending,
     failed,
+    advisoryChecks,
   }
 }
 
@@ -389,6 +505,8 @@ export async function waitForRequiredChecks({
   requestTimeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
   pollIntervalMs = DEFAULT_CI_POLL_INTERVAL_MS,
   requiredNames = REQUIRED_MERGED_CHECKS,
+  successOnly = [],
+  advisory = [],
   listCheckRuns = listCommitCheckRuns,
   nowMs = () => Date.now(),
   sleep = (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs)),
@@ -399,10 +517,11 @@ export async function waitForRequiredChecks({
   const deadline = nowMs() + timeoutMs
   while (true) {
     const checkRuns = await listCheckRuns({ repository, commitSha, timeoutMs: requestTimeoutMs })
-    const evaluation = evaluateRequiredChecks(checkRuns, requiredNames)
+    const evaluation = evaluateRequiredChecks(checkRuns, requiredNames, { successOnly, advisory })
     if (evaluation.state === 'passed') return evaluation
     if (evaluation.state === 'failed') {
-      throw new DeliveryError('required_checks_failed', `Required checks failed for ${commitSha}`, evaluation)
+      const reasons = evaluation.failed.map((check) => check.rejection ?? `${check.name}=${check.conclusion}`).join('; ')
+      throw new DeliveryError('required_checks_failed', `Required checks failed for ${commitSha}: ${reasons}`, evaluation)
     }
     const remainingMs = deadline - nowMs()
     if (remainingMs <= 0) {
@@ -503,6 +622,7 @@ export async function verifyMergedDelivery({
   await fetchRemote({ cwd, remote, base, timeoutMs })
   const state = assertMergedState(inspectDeliveryState({ cwd, remote, base }), { expectedSha, cwd })
   const receiptPath = receiptPathFor(state, expectedSha)
+  const requirement = mergedCheckRequirement({ cwd, commitSha: expectedSha })
   const existing = readReceipt(receiptPath)
   if (
     existing &&
@@ -510,7 +630,7 @@ export async function verifyMergedDelivery({
     existing.tip === state.remoteCommit &&
     existing.relation === state.verificationRelation &&
     existing.treeSha === gitOutput(cwd, ['rev-parse', `${expectedSha}^{tree}`]) &&
-    evaluateRequiredChecks(existing.checks).state === 'passed'
+    evaluateRequiredChecks(existing.checks, requirement.names, { successOnly: requirement.successOnly }).state === 'passed'
   ) {
     return { state, receiptPath, receipt: existing, reused: true }
   }
@@ -524,6 +644,9 @@ export async function verifyMergedDelivery({
       timeoutMs: ciTimeoutMs,
       requestTimeoutMs: timeoutMs,
       pollIntervalMs,
+      requiredNames: requirement.names,
+      successOnly: requirement.successOnly,
+      advisory: requirement.advisory,
       listCheckRuns,
       ...(sleep ? { sleep } : {}),
     })
@@ -537,7 +660,11 @@ export async function verifyMergedDelivery({
       relation: state.verificationRelation,
       repository: resolvedRepository,
       observedAt: now().toISOString(),
-      requiredChecks: [...REQUIRED_MERGED_CHECKS],
+      requiredChecks: requirement.names,
+      coreSmoke: requirement.coreSmoke.required
+        // advisory 抄结论不判红：红了也发收据，但收据上看得见它红过（2026-09-22 用户拍板，升阻断条件见方案）。
+        ? { required: true, checks: requirement.successOnly, advisory: evidence.advisoryChecks ?? [] }
+        : { required: false, reason: requirement.coreSmoke.reason },
       checks: evidence.checks,
     }
     writeReceipt(receiptPath, receipt)

@@ -1,3 +1,4 @@
+import { enOnboardingWebBridge, zhOnboardingWebBridge } from './onboardingWebBridge'
 export const zhOnboardingProviders = {
   splash: {
     aria: 'Nomi 开屏介绍',
@@ -81,7 +82,10 @@ export const zhOnboardingProviders = {
   },
   workspace: {
     connectionSubtitle: '管理连接、模型和调用方式。',
-    addOtherModels: '添加其他',
+    addOtherModels: '添加模型',
+    editConnection: '编辑连接',
+    replaceApiKey: '更换 API Key',
+    credentialSavedPending: 'API Key 已保存，待验证',
     handoff: {
       saved: '已保存 {{count}} 个模型',
       summary: '{{ready}} 个可直接使用 · {{pending}} 个还需设置',
@@ -91,8 +95,8 @@ export const zhOnboardingProviders = {
     basicSettings: '基本设置',
     modelIdentity: '连接：{{vendor}} · 模型 ID：{{model}}',
     moreActions: '更多操作',
-    enabled: '在画布中启用',
-    enabledHint: '关闭后保留配置，但不再出现在节点的模型列表里。',
+    enabled: '在画布中显示',
+    enabledHint: '隐藏后保留配置，只是不再出现在画布的模型列表里，随时可以显示回来。',
     modelKind: '模型类型',
     modelKindHint: '类型决定它出现在哪类节点和输入槽中。',
     modelMissing: '这个模型已被删除。返回连接页选择其他模型。',
@@ -141,10 +145,10 @@ export const zhOnboardingProviders = {
       },
       enabledLockedHint: '后台适配正在处理这个模型，停止或完成后才能修改启用状态。',
       notReadyEnabledHint: '完成输入与请求方式后，才能显示在画布的模型列表中。',
-      consentTitle: '开始后台自动适配？',
+      consentTitle: '开始接入检查？',
       consentMessage:
-        '这通常需要几分钟。Nomi 可能读取公开 API 文档、调用你已配置的文本模型，并向当前上游发送真实测试请求，因此可能消耗额度。开始后可以转到后台、查看当前步骤或随时停止。',
-      consentConfirm: '开始适配',
+        'Nomi 会读取公开 API 文档、调用你已配置的文本模型来生成调用方式，然后做一次自检（确认密钥可用、拉一次模型清单、检查调用方式是否完整）。**不会发起任何生成请求。** 开始后可以转到后台、查看当前步骤或随时停止。',
+      consentConfirm: '开始检查',
       unavailable: '当前桌面版本没有提供后台自动适配，请重启应用后再试；模型和现有配置不会丢失。',
     },
     capability: {
@@ -283,6 +287,8 @@ export const zhOnboardingProviders = {
       emptySubtitle: '还没有接入生成模型',
       search: '搜索连接或模型',
       tasks: '任务 {{count}}',
+      customApi: '自定义 API / 中转站',
+      customApiHint: '先保存地址与 Key，再获取列表或手动输入模型',
       directScript: '我已有调用脚本',
       directScriptHint: '自定义普通 HTTP 请求；模型输入项仍需单独设置',
       advancedBadge: '高级',
@@ -298,13 +304,12 @@ export const zhOnboardingProviders = {
       fillKey: '填写 Key',
       apimartHint: '一个 Key，接入预置文本、图片、视频与音频模型',
       kieHint: '一个 Key，接入预置图片与视频模型；上传通道也一并免费解锁',
-      adaptedHint: '{{name}} 已有预置地址、模型和请求适配',
+      adaptedHintNoModels: '{{name}} 已有预置地址和请求方式；模型在接入后按需添加',
+      adaptedHintWithCount: '{{name}} · 已预置 {{count}} 个模型，地址和请求方式都现成的',
       moreAdapted: '更多已适配平台',
       moreAdaptedHint: 'Agnes AI、魔搭、火山方舟等',
       viewAll: '查看全部',
       otherMethods: '其他接入方式',
-      customApi: '自定义 API / 中转站',
-      customApiHint: '先保存地址与 Key，再获取列表或手动输入模型',
       comfyuiHint: '使用本机或局域网中的 ComfyUI 工作流',
       dreaminaHint: '用即梦高级会员积分生成 Seedance 2.0 视频',
       codexImageHint: '让 Nomi 使用本机 Codex 生成图片',
@@ -375,13 +380,33 @@ export const zhOnboardingProviders = {
     loading: '加载中…',
     bridgeMissingTitle: '暂时连不上 Nomi 后台',
     bridgeMissingBody: '应用后台可能还在启动。点下面重试；若多次无效，请重启 Nomi。',
+    readOnlyNewerTitle: '这份配置来自更新版本的 Nomi，当前只能看不能改',
+    readOnlyNewerBody: '你的配置一条都没丢，只是盘上这份是用 v{{diskVersion}} 写的，而现在跑的是 v{{appVersion}}——旧版本改它会把新版本才有的设置弄坏。升级回新版 Nomi 就能照常编辑。',
+    unreadableTitle: '配置文件现在打不开，界面上这份可能不是最新的',
+    unreadableBody: '你的原文件一个字节都没动，已原样留在 {{path}}。常见原因是被别的程序锁着（同步盘、杀毒、另一个 Nomi）；关掉它们再重启 Nomi 即可。',
+    loadErrorTitle: '这一次没读到配置，屏幕上显示的是上一次读到的那份',
+    loadErrorBody: '你的配置没有被清空，也没有被改写。原因：{{detail}}',
+    configPackageHint: '把这台机器上的模型配置存成一份文件，换机或重装时导回来。导出的包不含密钥，导入后逐个补；导入默认保留本机已有的，不覆盖。',
+    exportConfig: '导出配置',
+    importConfig: '导入配置',
+    exportFailedTitle: '导出没成',
+    importFailedTitle: '导入没成，本机配置未改动',
+    importDoneTitle: '导入完成',
+    importDoneBody: '接入了 {{vendors}} 家、{{models}} 个模型、{{mappings}} 条映射。',
+    importConflictTitle: '有 {{count}} 条同名但内容不同',
+    importConflictKept: '默认保留本机已有的这几条，包里的那份不写进来：',
+    importConflictReplaceToggle: '改用包里的覆盖本机已有的（这一次）',
+    importConflictConfirm: '按上面的处理',
+    importNeedsKey: '导入的连接还缺密钥，逐条补上才能用——包里从不带密钥。',
   },
   keyOnly: {
     offlineTitle: '已保存 · 未验证',
     offlineHint: '密钥已加密保存。联网后会自动复验，下次调用前也会先检查一次。',
     title: '接入 {{name}}',
     subtitle: '已适配平台 · 只需填写 API Key',
-    catalogManaged: 'Nomi 已维护 {{count}} 个预置模型及其请求方式',
+    catalogManaged: '已预置 {{count}} 个模型，地址和请求方式都由 Nomi 维护',
+    catalogManagedNoModels: '已预置平台地址和请求方式；这家的模型在接入后按需添加',
+    showAllModels: '展开全部',
     keyLabel: '{{name}} API Key',
     keyPlaceholder: '粘贴平台 API Key',
     keyRequired: '请先填写 API Key',
@@ -400,6 +425,15 @@ export const zhOnboardingProviders = {
     replaceKey: '更换密钥',
     unavailable: '暂时连不上 Nomi 后台，请重启应用后再试。',
     saveFailed: '保存失败：{{message}}',
+    // 「这台机器上到底存没存住这把 key」——从状态派生，不是一条文案分支（2026-09-17，W-17）。
+    storedYes: '这台机器上已经存着 {{name}} 的密钥。',
+    storedNo: '这台机器上还没有存 {{name}} 的密钥。',
+    // 「点这一下会发什么、花不花钱」——料源是主进程那份唯一的探测策略（，09-22 拍板）。
+    // 不知道就说不知道：**不许**在问不到的时候默认说「免费验证」。
+    probeCostFree: '保存时会用这把密钥发一次验证请求（只查权限，不生成内容）。',
+    probeCostPaid: '这家没有免费的验证端点：保存时会发一次最小的真实请求来验密钥，预计消耗 {{amount}} 额度。发之前会再问你一次。',
+    probeCostPaidUnpriced: '这家没有免费的验证端点：保存时会发一次最小的真实请求来验密钥，会消耗额度（这家还没填价，具体多少说不准）。发之前会再问你一次。',
+    probeCostUnknown: '暂时读不到这家的验证方式；保存前 Nomi 会先告诉你这一下花不花钱。',
   },
   knownVendors: {
     apimart: {
@@ -416,10 +450,28 @@ export const zhOnboardingProviders = {
         'Agnes AI 提供 OpenAI 兼容的文本、图片与视频 API。公开模型清单不代表当前套餐均可调用。',
       promoCta: '打开 Agnes 平台',
     },
+    pixstag: {
+      tagline: '一个 key，用 MiniMax H3 生视频（最长 15 秒）',
+      credentialPlaceholder: '粘贴 Pixstag API Key',
+      credentialHint:
+        '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–15 秒、720P–2K。凭证本地加密存储。',
+      promoText:
+        'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 15 秒。credit 按量计费。',
+      promoCta: '去 Pixstag 注册',
+    },
     kie: {
       tagline: '一个 key，解锁内置模型',
       promoText: '如果你愿意，可以用我们的链接注册；不愿意也可以直接去官方注册。',
       promoCta: '用我们的链接',
+    },
+    higgsfield: {
+      tagline: '官方原生 · Soul 2 图片与 DoP 运镜视频',
+      credentialPlaceholder: '粘贴 Higgsfield 的 id:secret',
+      credentialHint:
+        '在 Higgsfield 控制台创建 API 凭据，粘贴时把 id 和 secret 用冒号连成一串（形如 abc123:xyz789）。凭证本地加密存储。',
+      promoText:
+        'Higgsfield 官方 API。Nomi 只接它自研的三个旗舰模型（Soul 2、Soul Cinema、DoP）；它转售的 Kling / Seedance 等你在 Nomi 里已经能直连原厂，不必多绕一层。',
+      promoCta: '打开 Higgsfield 控制台',
     },
     modelscope: {
       tagline: '官方原生 · 绑定阿里云每天免费额度',
@@ -539,14 +591,13 @@ export const zhOnboardingProviders = {
     preview: '看内容',
     previewSummary: '任务提示词 · 技能文件',
     previewSummaryWithMcp: '任务提示词 · 技能文件 · MCP 配置',
-    manual: '或：手动接入 →',
     sections: {
       prompt: '任务提示词',
       skill: '技能文件',
       mcp: 'MCP 配置片段',
     },
     promptBody:
-      '用 nomi-add-model 这个技能，帮我把 <模型名，或厂商文档页链接> 接进 Nomi。\n如果你的助手有技能目录，把下面那份 SKILL.md 存进去；没有就直接照它做。\n接完跑一次最小样例确认真能出东西，再告诉我它在模型列表里叫什么。',
+      '用 nomi-add-model 这个技能，帮我把 <模型名，或厂商文档页链接> 接进 Nomi。\n如果你的助手有技能目录，把下面那份 SKILL.md 存进去；没有就直接照它做。\n先读这家的官方 API 文档再动手，凭记忆填等于没查。\n密钥默认由我本人在 Nomi 自己的页面里粘贴：不要向我索要、不要打印、不要写进文件或提交。除非我主动把密钥交给你并要求你代填——那时才用 set_key，填完告诉我它绑到了哪个地址。轮到我操作时停下来告诉我该点哪里。\n没有真跑成一次、拿到产物之前，不要说「接好了」；跑不成就直说卡在哪一步、对方回了什么。\n最后告诉我它在模型列表里叫什么。',
     mcpNote: '只有「其它」要手动粘这段；上面三家由 Nomi 一键写入。',
     otherOneClickHint: 'Nomi 也能替 {{clients}} 一键写好配置。',
     steps: {
@@ -594,28 +645,36 @@ export const zhOnboardingProviders = {
       checking: '检测中…',
       broken: '配置已失效',
       configured: '已配置',
+      notDetected: '未检测到',
     },
     // 实连验证：「配置里有 nomi 这行字」≠「还连得上」。下面几条是失效时给用户的人话原因 + 出路。
     verified: '已连通 {{client}}',
     verifiedBody: '刚刚实测握手成功，{{count}} 个工具可用。',
-    upgradedTitle: '{{client}} 接入已升级',
-    upgradedBody: '旧配置已备份并升级，刚刚实测 {{count}} 个工具可用。',
-    cursorConfigured: 'Cursor 配置已写入',
-    cursorConnection: '本机连接',
-    cursorConnectionVerified: '已验证 · {{count}} 个工具',
-    cursorConnectionChecking: '正在验证',
-    cursorConnectionUnknown: '尚未验证',
-    cursorNomiPermission: 'Nomi 权限',
-    cursorNomiAllowed: '已允许',
-    cursorNomiRequired: '未允许',
-    cursorHostPermission: 'Cursor 权限',
-    cursorHostPermissionUnknown: '首次调用时可能提示确认',
-    openCursorPermissions: 'Cursor 权限',
-    // pi 自己不带 MCP，得先装社区适配器才读得到我们写的配置。命令只给不代跑。
-    piAdapterTitle: 'Pi 还需要装一次 MCP 适配器',
-    piAdapterBody: 'Pi 本身不带 MCP。在终端里跑一次下面这条命令装上适配器，它会自动读到 Nomi 写进 ~/.config/mcp/mcp.json 的配置；装完重开 Pi。',
-    piAdapterCopy: '复制命令',
+    // 宿主自己那道审批门（如 Cursor）：Nomi 握手成功不代表宿主已放行。
+    hostApprovalHint: '{{client}} 首次调用 Nomi 时可能会再向你确认一次。',
+    // 「连上后允许做什么」——每张客户端卡的第二个开关（此前是设置页里独立的「可信发起方」一栏）。
+    trust: {
+      title: '允许 {{client}} 自动发起制作',
+      hint: '关闭时它只能发起草稿、查看状态和打开安全深链；花钱前仍然每次都要你确认。',
+    },
+    noneDetected: '本机没有检测到 {{clients}}。装好其中任何一个再回来，或用下面的通用配置接入别的客户端。',
+    // 通用入口：不带客户端身份的条目，Nomi 把它当作外部客户端（不在可信发起方之列）。
+    generic: {
+      title: '其他客户端',
+      body: '用 Cline / Windsurf / pi-mcp-adapter 等别的 MCP 客户端？复制这段通用配置粘进它的 MCP 设置。它不带客户端身份，Nomi 会把它当作外部客户端。',
+      copy: '复制配置',
+    },
+    // 写盘被拒时的人话（主进程 mcpConfig.McpWriteRefusal）。
+    refused: {
+      unknownClient: '不认识的客户端，没有写入任何文件。',
+      clientNotInstalled: '本机没有检测到 {{client}}，没有写入任何文件。',
+      isolatedInstance: '这是一个隔离的测试实例，不会改写你本机的 {{client}} 配置。请在正式安装的 Nomi 里接入。',
+      configUnreadable: '{{client}} 的配置文件现在不是合法 JSON，Nomi 不会覆盖它。请先修好那个文件再接入。',
+    },
     brokenTitle: '接入配置需要更新',
+    elsewhereStatus: '指向另一份',
+    elsewhereTitle: '该客户端当前指向另一份 Nomi：',
+    switchHere: '切到这一份',
     upgrade: '升级接入 {{client}}',
     repair: '修复接入 {{client}}',
     developmentConnection: '这是当前开发目录的临时接入；目录删除或依赖重装后会失效。安装正式版后再升级为稳定接入。',
@@ -627,20 +686,25 @@ export const zhOnboardingProviders = {
       handshakeFailed: '能启动但连不上，多半是旧版本的接入方式。点下面重新接入就好。',
       clientAuthMissing: '这份旧配置缺少当前版本的客户端身份凭据，能列工具但不能安全推进制作。重新接入即可升级。',
     },
+    // 读回配置就能判死的四种过时形状（不 spawn）；文案按形状说人话，按钮统一是「升级接入」。
+    staleConfig: {
+      legacyLauncher: '{{client}} 里连的还是 Nomi 旧版本的启动脚本，那个脚本已经不在了。升级接入会换成当前版本的启动方式。',
+      staleDevelopment: '{{client}} 仍指向一个已经删除的 Nomi 开发目录。升级接入会换成稳定启动方式。',
+      authStale: '这份旧配置缺少当前版本的客户端身份凭据，能列工具但不能安全推进制作。升级接入即可。',
+      launcherBroken: '{{client}} 里的 Nomi 启动器已不存在、不可执行，或资料库已删除。重新接入即可指回当前这份。',
+    },
     name: 'AI 助手',
-    subtitle: '让 Claude Code / Codex / Cursor / Pi / WorkBuddy 帮你建项目、出图',
+    subtitle: '让 Claude Code / Claude Desktop / Codex / Cursor / WorkBuddy 帮你建项目、出图',
     credentialPending: '凭证还没生成——重启 Nomi 一次即可（启动时自动生成）。',
     configWritten: '已写入 {{client}} 配置',
     restartClient: '重启 {{client}} 后生效。',
     sayNow: '现在可以对它说：',
-    sayAfterApproval: '完成权限设置后，在 Cursor 里可以说：',
     disconnect: '撤销接入',
     description: '一键把 Nomi 接进 {{client}}——之后你一句话，它就能在 Nomi 里建项目、拆镜头、用你配好的模型真出图。',
     connect: '一键接入 {{client}}',
     copied: '已复制',
-    copyConfig: '复制配置',
+    copyConfig: '复制 {{client}} 配置',
     guide: '看用法',
-    otherClients: '用 Cline / Windsurf 等其它助手？点「复制配置」粘进它的「扩展 / 工具」设置即可。',
   },
   // Codex 在 Nomi 里是两个方向：上面那张卡 = 助手**来用** Nomi；这张 = Nomi **去用** Codex 出图。
   // 两张卡各开各的（此前被一个按钮绑在一起，且用户手动关掉会被抽屉刷新掰回去）。
@@ -649,7 +713,7 @@ export const zhOnboardingProviders = {
     subtitle: 'Nomi 来用你电脑上已登录的 Codex 出图',
     status: { on: '已开启', off: '未开启' },
     readyTitle: '图片节点里可以选「Codex 生图」了',
-    readyBody: '用你 ChatGPT 账号的额度，不另外收费。',
+    readyBody: '使用你的 ChatGPT 账号生成。',
     requirement: '需要你电脑上装了 Codex 并已登录。',
     notTheSame: '这张卡和上面的「接入 AI 编程助手」是两回事：那张是让助手来用 Nomi，这张是 Nomi 去用 Codex 出图。',
     turnOn: '开启生图',
@@ -657,7 +721,7 @@ export const zhOnboardingProviders = {
   },
   localModel: {
     cardName: '本地模型',
-    subtitle: '连你电脑上的 Ollama / LM Studio / LocalAI，用本地模型省额度、保隐私',
+    subtitle: '连你电脑上的 Ollama / LM Studio / LocalAI，用本地模型，数据留在本机',
     status: {
       connected: '已连 {{count}} 个模型',
       detecting: '检测中…',
@@ -679,6 +743,7 @@ export const zhOnboardingProviders = {
       unknown: '能力未知',
     },
   },
+  ...zhOnboardingWebBridge,
   customVendor: {
     newKeyPlaceholder: '粘贴新的 API Key（sk-…）',
     notSet: '（未设置）',
@@ -688,9 +753,14 @@ export const zhOnboardingProviders = {
     modelsSection: '模型',
     addressLabel: '接入地址',
     editAddress: '修改',
+    fieldLossTitle: '这家的两项声明可能在旧版本里丢了',
+    fieldLossBody:
+      '旧版本每次保存连接都会抹掉「本地素材怎么上传」和「Authorization 方案词」。内置供应商的已经自动补回来了；这家是你自己接入的，我们没有出处补不了。如果你当初是用接入包接的它，重新导入一次那份包就能恢复——手动接入的连接不受影响（那两项本来就只有内置种子和接入包写得了）。',
   },
   modelControls: {
-    unlisted: '供应商已不再列出',
+    // 「已不再」断言了永久性，而清单抖动是常态（鉴权降级 / 网关抖动 / 上游改分页形状都会
+    // 回一份不完整的清单）。2026-09-21 起后台对账不会因此停用它，措辞也要跟着说实话。
+    unlisted: '供应商清单里暂时没有它',
     more: '更多',
     kind: {
       text: '文本',
@@ -712,17 +782,24 @@ export const zhOnboardingProviders = {
     selectedCount: '已选 {{count}}',
     deleteSelected: '删除选中',
     bulkDelete: '批量删除',
-    enabledCount: '已启用 {{enabled}} / {{total}}',
+    // 同一个 enabled 字段此前有三套词：「启用/停用」（aria）、「隐藏/显示」（tooltip）、
+    // 「已启用 N / 共 M」（计数），旁边还有语义完全不同的「彻底删除」。用户想把一个模型从模型框里
+    // 拿掉，猜不出该点哪个，猜错的代价是不可逆删除。2026-09-11 收成两个词：
+    // **显示 / 隐藏**（画布可见性，可逆）与 **删除**（不可逆）。
+    showAll: '全部显示',
+    hideAll: '全部隐藏',
+    visibleCount: '显示中 {{enabled}} / {{total}}',
     noMatchQuery: '没有匹配「{{query}}」的模型',
     deselectModelAria: '取消选择 {{name}}',
     selectModelAria: '选择 {{name}}',
-    disableModelAria: '停用 {{name}}',
-    enableModelAria: '启用 {{name}}',
-    deleteModelAria: '彻底删除 {{name}}',
-    deleteModelTitle: '彻底移除（需重拉才回来）',
+    hideModelAria: '隐藏 {{name}}',
+    showModelAria: '显示 {{name}}',
+    hideModelTitle: '隐藏（不再出现在画布的模型列表里，随时可以显示回来）',
+    showModelTitle: '显示（重新出现在画布的模型列表里）',
+    deleteModelAria: '删除 {{name}}',
+    deleteModelTitle: '删除（不可逆，需重新获取才回来）',
     removeModelAria: '删除 {{name}}',
-    enabledTitle: '已启用 · 点击隐藏（不再出现在节点模型列表）',
-    hiddenTitle: '已隐藏 · 点击启用（出现在节点模型列表）',
+    manageVisibility: '隐藏模型',
     pickerTitle: '选择要添加的模型',
     fetch: '获取可用模型',
     refetch: '重新获取列表',
@@ -738,9 +815,11 @@ export const zhOnboardingProviders = {
     selectGroup: '全选本组',
     manualPlaceholder: '没列出来的，输入模型 id 回车添加',
     add: '添加',
+    // 旧文案与另一个对话框（modelSetup.addedHint「只写入本地、不做真实测试」）直接矛盾，
+    // 而用户看到哪一个取决于他从哪个入口进来。2026-09-11 两处统一成同一句实话：自检不花钱。
     saveModelsDisclosure:
-      '确认后会立即进入认证：可能读取公开文档、调用文本 AI，并通过真实请求消耗上游额度。认证完成前，这些模型不会出现在普通模型选择器中。',
-    addModels: '验证 {{count}} 个',
+      '确认后做一次自检：确认密钥可用、拉一次模型清单、检查调用方式是否完整。不会发起生成请求。通过后它们会出现在画布的模型列表里，标注「未试跑」。',
+    addModels: '自检 {{count}} 个',
   },
   adapterVerification: {
     title: {
@@ -770,6 +849,10 @@ export const zhOnboardingProviders = {
       server: '对方服务器出错了（{{status}}），和你的配置无关。过一会儿重新验证。',
       network: '连不上这个地址。检查地址有没有写错，以及本机网络/代理。',
       compile: '我们没能读懂这家的接口文档，所以没生成出调用方式。和你填的东西无关。',
+      // 「我们这边缺什么」这一维的两条。它们此前全部落进 unknown，界面把英文原文甩给用户
+      // 再配一个「你自己接」——用户唯一能推断的是「我填错了」，而他没填错。
+      asyncWithoutQuery: '这家把生成做成了「先提交任务、再查结果」，而我们手上没有它查结果的接口——缺的是我们这边的一段接法，不是你填错了。让 AI 助手把这家的查询接口补进来，或改用「我自己接」写调用脚本。',
+      referenceSlotMissing: '这条改图/图生视频的接法没写明参考图放在哪个字段，参考图发不出去。让 AI 助手补上这一格，或改用「我自己接」写调用脚本。',
       noGenericContract: '这类模型没有通用的接口标准，所以自动接入这条路走不通——不是你填错了，也不是这个模型有问题。改用「我自己接」写调用脚本，或导入 ComfyUI 工作流，都能把它接上。',
       unknown: '这个错误我们没认出来。原文在下面，可以照着自己接，或复制给 AI 帮你看。',
     },
@@ -789,11 +872,11 @@ export const zhOnboardingProviders = {
       queued: '等待开始…',
       discovering_docs: '正在查找官方 API 文档…',
       compiling: '正在理解不同接口并生成接法…',
-      testing: '正在真实测试 {{model}}',
+      testing: '正在自检 {{model}}（不发生成请求）',
       repairing: '正在根据真实错误自动修复…',
       completed: '全部验证完成',
       partial: '可用能力已接入',
-      failed: '没有能力通过验证',
+      failed: '自检没有通过',
       needs_ai: '需要先配置一个文本 AI 模型',
       cancelled: '验证已停止',
       timed_out: '验证超时，已保留当前结果',
@@ -863,6 +946,9 @@ export const zhOnboardingProviders = {
     loginAfterRequirement: '这一档。',
     starting: '发起中…',
     login: '扫码登录',
+
+    update: "更新工具",
+    updating: "更新中…",
   },
   comfyWorkflow: {
     jsonPlaceholder: '{ "nodes": [...] } 或 { "3": { "class_type": "KSampler", ... } }',
@@ -917,6 +1003,9 @@ export const zhOnboardingProviders = {
     missingNodes: '本机 ComfyUI 缺 {{count}} 个节点：{{list}}——先装齐（如用 ComfyUI-Manager），否则运行必失败',
     missingFiles:
       '{{count}} 个输入引用了本机没有的文件/选项：{{list}}——在 ComfyUI 里改成本机存在的值后重新导出，或把该输入暴露成参数、生成时改填',
+    unknownComboShapes:
+      '{{count}} 个输入用了 Nomi 没见过的新格式（{{list}}）——ComfyUI 可能又升级了，这些字段暂时无法核对/烤下拉',
+    reportUnknownShape: '反馈给 Nomi',
   },
   comfyPreset: {
     sectionTitle: '预置模板（官方 · 即用）',
@@ -1065,6 +1154,7 @@ export const zhOnboardingProviders = {
       continue: '继续填写',
       unavailable: 'Nomi 后台暂时不支持建立脚本草稿，请重启应用后再试。',
       createFailed: '草稿保存失败：{{message}}',
+      missingFields: '还差{{fields}}才能继续。',
       scriptRequired: '草稿必须填写调用脚本后才能保存。',
       enableHint: '当前是草稿；脚本和输入方式都完整后才会启用。',
       badge: '待填脚本',
@@ -1169,11 +1259,9 @@ export const zhOnboardingProviders = {
     errorCardHintAria: '打开 {{name}} 的自定义调用编辑器',
   },
 } as const
-
 type TranslationShape<T> = {
   [K in keyof T]: T[K] extends string ? string : TranslationShape<T[K]>
 }
-
 export const enOnboardingProviders = {
   splash: {
     aria: 'Nomi introduction',
@@ -1259,7 +1347,10 @@ export const enOnboardingProviders = {
   },
   workspace: {
     connectionSubtitle: 'Manage the connection, models, and call behavior.',
-    addOtherModels: 'Add More',
+    addOtherModels: 'Add Models',
+    editConnection: 'Edit connection',
+    replaceApiKey: 'Replace key',
+    credentialSavedPending: 'API Key saved, verification pending',
     handoff: {
       saved: '{{count}} models saved',
       summary: '{{ready}} ready to use · {{pending}} still need setup',
@@ -1269,8 +1360,8 @@ export const enOnboardingProviders = {
     basicSettings: 'Basic settings',
     modelIdentity: 'Connection: {{vendor}} · Model ID: {{model}}',
     moreActions: 'More actions',
-    enabled: 'Enable on canvas',
-    enabledHint: 'When off, settings are kept but the model is hidden from node model lists.',
+    enabled: 'Show on canvas',
+    enabledHint: 'Hiding keeps the settings; the model just stops appearing in the canvas model list. You can show it again any time.',
     modelKind: 'Model type',
     modelKindHint: 'The type decides which nodes and input slots can use this model.',
     modelMissing: 'This model was removed. Return to the connection and choose another model.',
@@ -1319,10 +1410,10 @@ export const enOnboardingProviders = {
       },
       enabledLockedHint: 'Background adaptation is processing this model. Stop it or wait for completion before changing availability.',
       notReadyEnabledHint: 'Finish the input and request setup before showing this model on the canvas.',
-      consentTitle: 'Start background auto-adaptation?',
+      consentTitle: 'Start the integration check?',
       consentMessage:
-        'This usually takes a few minutes. Nomi may read public API docs, call a configured text model, and send real test requests to this upstream, so it may use credit. You can move it to the background, inspect the current step, or stop it at any time.',
-      consentConfirm: 'Start adaptation',
+        'Nomi reads the public API documentation and uses the text model you already configured to build the call contract, then runs one self-check (key works, model list fetched once, call contract complete). **No generation request is sent.** You can send this to the background, watch the current step, or stop it at any time.',
+      consentConfirm: 'Start check',
       unavailable: 'Background auto-adaptation is unavailable in this desktop build. Restart and try again; the model and current configuration are preserved.',
     },
     capability: {
@@ -1464,6 +1555,8 @@ export const enOnboardingProviders = {
       emptySubtitle: 'No generation models connected yet',
       search: 'Search connections or models',
       tasks: 'Tasks {{count}}',
+      customApi: 'Custom API / gateway',
+      customApiHint: 'Save the URL and key first, then fetch or manually enter models',
       directScript: 'I already have a call script',
       directScriptHint: 'Customize ordinary HTTP requests; model inputs are configured separately',
       advancedBadge: 'Advanced',
@@ -1479,13 +1572,12 @@ export const enOnboardingProviders = {
       fillKey: 'Enter key',
       apimartHint: 'One key for preset text, image, video, and audio models',
       kieHint: 'One key for preset image and video models; also unlocks free asset uploads',
-      adaptedHint: '{{name}} has a preset endpoint, catalog, and request adapter',
+      adaptedHintNoModels: '{{name}} has a preset endpoint and request behavior; models are added on demand after you connect',
+      adaptedHintWithCount: '{{name}} · {{count}} preset models, endpoint and request behavior ready',
       moreAdapted: 'More adapted platforms',
       moreAdaptedHint: 'Agnes AI, ModelScope, Volcengine Ark, and more',
       viewAll: 'View all',
       otherMethods: 'Other connection methods',
-      customApi: 'Custom API / gateway',
-      customApiHint: 'Save the URL and key first, then fetch or manually enter models',
       comfyuiHint: 'Use ComfyUI workflows on this machine or your local network',
       dreaminaHint: 'Use Dreamina Premium credits for Seedance 2.0 video',
       codexImageHint: 'Let Nomi use local Codex to generate images',
@@ -1561,13 +1653,33 @@ export const enOnboardingProviders = {
     loading: 'Loading…',
     bridgeMissingTitle: 'Cannot reach the Nomi backend yet',
     bridgeMissingBody: 'The app backend may still be starting. Retry below; if it keeps failing, restart Nomi.',
+    readOnlyNewerTitle: 'This configuration was written by a newer Nomi — read-only for now',
+    readOnlyNewerBody: 'Nothing was lost. The file on disk was written by v{{diskVersion}} and you are running v{{appVersion}}; editing it from the older version would break settings only the newer one understands. Upgrade Nomi and it becomes editable again.',
+    unreadableTitle: 'The configuration file cannot be opened right now, so this list may be out of date',
+    unreadableBody: 'Your original file was not touched — it is still at {{path}}. Usually something else is holding it open (a sync client, antivirus, another Nomi). Close those and restart Nomi.',
+    loadErrorTitle: 'This read failed — you are looking at the last configuration that loaded',
+    loadErrorBody: 'Nothing was cleared and nothing was rewritten. Reason: {{detail}}',
+    configPackageHint: 'Save this machine\'s model setup to a file and bring it back after a reinstall or on a new machine. The exported package never contains keys — add them again after importing. Importing keeps what you already have and does not overwrite it.',
+    exportConfig: 'Export configuration',
+    importConfig: 'Import configuration',
+    exportFailedTitle: 'Export failed',
+    importFailedTitle: 'Import failed — nothing on this machine was changed',
+    importDoneTitle: 'Import complete',
+    importDoneBody: 'Added {{vendors}} providers, {{models}} models and {{mappings}} mappings.',
+    importConflictTitle: '{{count}} entries have the same name but different contents',
+    importConflictKept: 'These are kept as they are on this machine; the versions in the package are not written:',
+    importConflictReplaceToggle: 'Use the package\'s versions instead, just this once',
+    importConflictConfirm: 'Do that',
+    importNeedsKey: 'The imported connections still need their keys — add them one by one. Packages never carry keys.',
   },
   keyOnly: {
     offlineTitle: 'Saved · Not verified',
     offlineHint: 'Your key is saved securely. It will be checked again when connected, and before the next call.',
     title: 'Connect {{name}}',
     subtitle: 'Adapted platform · Only an API key is required',
-    catalogManaged: 'Nomi maintains {{count}} preset models and their request behavior',
+    catalogManaged: '{{count}} preset models — Nomi maintains the endpoint and request behavior',
+    catalogManagedNoModels: 'The endpoint and request behavior are preset; models for this platform are added on demand after you connect',
+    showAllModels: 'Show all',
     keyLabel: '{{name}} API Key',
     keyPlaceholder: 'Paste the platform API key',
     keyRequired: 'Enter an API key first',
@@ -1583,6 +1695,12 @@ export const enOnboardingProviders = {
     replaceKey: 'Replace key',
     unavailable: 'The Nomi backend is unavailable. Restart the app and try again.',
     saveFailed: 'Could not save: {{message}}',
+    storedYes: 'A {{name}} key is stored on this machine.',
+    storedNo: 'No {{name}} key is stored on this machine yet.',
+    probeCostFree: 'Saving sends one verification request with this key (it checks access only — nothing is generated).',
+    probeCostPaid: 'This provider has no free verification endpoint: saving sends one minimal real request to check the key, costing about {{amount}} in credits. You are asked once more before it goes out.',
+    probeCostPaidUnpriced: 'This provider has no free verification endpoint: saving sends one minimal real request to check the key, which spends credits (no price is on file, so the amount is unknown). You are asked once more before it goes out.',
+    probeCostUnknown: 'Nomi cannot read this provider’s verification method right now; it will tell you whether the check costs anything before sending it.',
   },
   knownVendors: {
     apimart: {
@@ -1599,10 +1717,28 @@ export const enOnboardingProviders = {
         'Agnes AI provides OpenAI-compatible text, image and video APIs. The public model catalog does not guarantee access under your current plan.',
       promoCta: 'Open Agnes platform',
     },
+    pixstag: {
+      tagline: 'One key for MiniMax H3 video (up to 15 seconds)',
+      credentialPlaceholder: 'Paste your Pixstag API Key',
+      credentialHint:
+        'Register at pixstag.com and create an API Key in the console (pay-as-you-go credits). Currently offers MiniMax H3: text-to-video, first/last frame, and multimodal reference, 4–15 seconds at 720P–2K. Credentials are encrypted locally.',
+      promoText:
+        'Pixstag carries the official MiniMax H3 v2 wire: reference images, videos, and audio ride the same content channel, with adaptive ratio and up to 15 seconds. Pay-as-you-go credits.',
+      promoCta: 'Register with Pixstag',
+    },
     kie: {
       tagline: 'One key unlocks built-in models',
       promoText: 'You can register with our link if you like, or go directly to the official website.',
       promoCta: 'Use our link',
+    },
+    higgsfield: {
+      tagline: 'Official access · Soul 2 images and DoP camera-move video',
+      credentialPlaceholder: 'Paste your Higgsfield id:secret',
+      credentialHint:
+        'Create API credentials in the Higgsfield console, then paste the id and secret joined by a colon (like abc123:xyz789). Credentials are encrypted locally.',
+      promoText:
+        'Higgsfield official API. Nomi seeds only its three in-house flagships (Soul 2, Soul Cinema, DoP). The Kling and Seedance models it resells are already available in Nomi straight from their original vendors, so there is no need to route through another layer.',
+      promoCta: 'Open Higgsfield console',
     },
     modelscope: {
       tagline: 'Official access · Daily free quota with an Alibaba Cloud account',
@@ -1726,14 +1862,13 @@ export const enOnboardingProviders = {
     preview: 'Preview',
     previewSummary: 'Task prompt · Skill file',
     previewSummaryWithMcp: 'Task prompt · Skill file · MCP config',
-    manual: 'Or: connect it manually →',
     sections: {
       prompt: 'Task prompt',
       skill: 'Skill file',
       mcp: 'MCP config snippet',
     },
     promptBody:
-      'Use the nomi-add-model skill to connect <model name, or a link to the vendor API docs> to Nomi.\nIf your assistant has a skills directory, save the SKILL.md below into it; otherwise just follow it directly.\nRun one minimal sample to prove it really produces output, then tell me what it is called in the model list.',
+      'Use the nomi-add-model skill to connect <model name, or a link to the vendor API docs> to Nomi.\nIf your assistant has a skills directory, save the SKILL.md below into it; otherwise just follow it directly.\nRead the provider\'s official API docs first — working from memory counts as not having checked.\nBy default the key is pasted by me, on Nomi\'s own page: never ask me for it, never print it, never write it into a file or a commit. Only if I hand you the key myself and ask you to fill it in should you use set_key — then tell me which origin it was bound to. When it is my turn, stop and tell me exactly what to click.\nDo not tell me it works until you have actually generated something with it; if a run fails, say so plainly and name the step it stopped at.\nFinally, tell me what it is called in the model list.',
     mcpNote: 'Only "Other" needs this pasted by hand; Nomi writes it for the three hosts above.',
     otherOneClickHint: 'Nomi can also write the config for {{clients}} in one click.',
     steps: {
@@ -1782,26 +1917,31 @@ export const enOnboardingProviders = {
       checking: 'Checking…',
       broken: 'Configuration broken',
       configured: 'Configured',
+      notDetected: 'Not detected',
     },
     verified: 'Connected to {{client}}',
     verifiedBody: 'Handshake just verified — {{count}} tools available.',
-    upgradedTitle: '{{client}} connection upgraded',
-    upgradedBody: 'The previous configuration was backed up and upgraded. A live handshake just verified {{count}} tools.',
-    cursorConfigured: 'Cursor configuration written',
-    cursorConnection: 'Local connection',
-    cursorConnectionVerified: 'Verified · {{count}} tools',
-    cursorConnectionChecking: 'Checking',
-    cursorConnectionUnknown: 'Not verified yet',
-    cursorNomiPermission: 'Nomi permission',
-    cursorNomiAllowed: 'Allowed',
-    cursorNomiRequired: 'Not allowed',
-    cursorHostPermission: 'Cursor permission',
-    cursorHostPermissionUnknown: 'May ask for approval on first use',
-    openCursorPermissions: 'Cursor Permissions',
-    piAdapterTitle: 'Pi needs its MCP adapter first',
-    piAdapterBody: 'Pi ships without MCP. Run the command below once in a terminal to install the adapter; it picks up the configuration Nomi writes to ~/.config/mcp/mcp.json on its own. Restart Pi afterwards.',
-    piAdapterCopy: 'Copy command',
+    hostApprovalHint: '{{client}} may ask you to approve Nomi once on first use.',
+    trust: {
+      title: 'Let {{client}} start production on its own',
+      hint: 'When off, it can only start drafts, read status, and open safe deep links. Spending still asks you every time.',
+    },
+    noneDetected: 'None of {{clients}} was detected on this computer. Install one and come back, or connect another client with the generic configuration below.',
+    generic: {
+      title: 'Other clients',
+      body: 'Using Cline, Windsurf, pi-mcp-adapter, or another MCP client? Copy this generic configuration into its MCP settings. It carries no client identity, so Nomi treats it as an external client.',
+      copy: 'Copy config',
+    },
+    refused: {
+      unknownClient: 'Unknown client. Nothing was written.',
+      clientNotInstalled: '{{client}} was not detected on this computer. Nothing was written.',
+      isolatedInstance: 'This is an isolated test instance; it will not rewrite the {{client}} configuration on this computer. Connect from the installed Nomi instead.',
+      configUnreadable: 'The {{client}} configuration file is not valid JSON right now, so Nomi will not overwrite it. Fix that file first, then connect.',
+    },
     brokenTitle: 'Connection configuration needs an update',
+    elsewhereStatus: 'Another Nomi',
+    elsewhereTitle: 'This client currently points to another Nomi:',
+    switchHere: 'Switch to this Nomi',
     upgrade: 'Upgrade {{client}} connection',
     repair: 'Repair {{client}} connection',
     developmentConnection:
@@ -1817,29 +1957,32 @@ export const enOnboardingProviders = {
       clientAuthMissing:
         'This older configuration lacks the client identity proof required for safe production. Reconnect to upgrade it.',
     },
+    staleConfig: {
+      legacyLauncher: '{{client}} still points at the launch script of an older Nomi, and that script no longer exists. Upgrading the connection switches to the current launcher.',
+      staleDevelopment: '{{client}} still points at a deleted Nomi development folder. Upgrading the connection switches to the stable launcher.',
+      authStale: 'This older configuration lacks the client identity proof required for safe production. Upgrade the connection to fix it.',
+      launcherBroken: 'The Nomi launcher in {{client}} is missing or not executable, or its library was deleted. Reconnect to use this Nomi.',
+    },
     name: 'AI agents',
-    subtitle: 'Let Claude Code, Codex, Cursor, Pi, or WorkBuddy create projects and generate images',
+    subtitle: 'Let Claude Code, Claude Desktop, Codex, Cursor, or WorkBuddy create projects and generate images',
     credentialPending: 'Credentials have not been created yet. Restart Nomi once to generate them automatically.',
     configWritten: '{{client}} configuration updated',
     restartClient: 'Restart {{client}} to apply the change.',
     sayNow: 'Now you can say:',
-    sayAfterApproval: 'After permissions are set, say this in Cursor:',
     disconnect: 'Remove connection',
     description:
       'Connect Nomi to {{client}} in one click. Then it can create projects, split shots, and generate images with your configured models.',
     connect: 'Connect to {{client}}',
     copied: 'Copied',
-    copyConfig: 'Copy configuration',
+    copyConfig: 'Copy {{client}} configuration',
     guide: 'View guide',
-    otherClients:
-      'Using Cline, Windsurf, or another assistant? Copy the configuration and paste it into its extensions or tools settings.',
   },
   codexImage: {
     name: 'Codex image generation',
     subtitle: 'Nomi uses the Codex you are already signed into on this computer',
     status: { on: 'On', off: 'Off' },
     readyTitle: 'You can now pick “Codex image generation” on image nodes',
-    readyBody: 'It uses your ChatGPT account allowance — no extra charge.',
+    readyBody: 'It generates through your ChatGPT account.',
     requirement: 'Requires Codex installed and signed in on this computer.',
     notTheSame:
       'This is separate from “Connect an AI coding assistant” above: that one lets an assistant drive Nomi, this one lets Nomi generate images through Codex.',
@@ -1848,7 +1991,7 @@ export const enOnboardingProviders = {
   },
   localModel: {
     cardName: 'Local models',
-    subtitle: 'Connect Ollama / LM Studio / LocalAI on your machine — save credits, keep it private',
+    subtitle: 'Connect Ollama / LM Studio / LocalAI on your machine — your data stays on this machine',
     status: {
       connected: '{{count}} model(s) connected',
       detecting: 'Detecting…',
@@ -1870,6 +2013,7 @@ export const enOnboardingProviders = {
       unknown: 'Capability unknown',
     },
   },
+  ...enOnboardingWebBridge,
   customVendor: {
     newKeyPlaceholder: 'Paste a new API key (sk-…)',
     notSet: '(Not set)',
@@ -1879,9 +2023,12 @@ export const enOnboardingProviders = {
     modelsSection: 'Models',
     addressLabel: 'Address',
     editAddress: 'Edit',
+    fieldLossTitle: 'Two settings on this provider may have been lost',
+    fieldLossBody:
+      'An older version wiped "how local assets are uploaded" and the Authorization scheme word every time a connection was saved. Built-in providers have been restored automatically. This one you added yourself, and we have no source to restore it from. If you added it from a connection package, re-import that package to get the settings back — connections added by hand are unaffected (only built-in seeds and connection packages could ever set those two).',
   },
   modelControls: {
-    unlisted: 'No longer listed by provider',
+    unlisted: "Not in the provider's list right now",
     more: 'More',
     kind: {
       text: 'Text',
@@ -1904,17 +2051,20 @@ export const enOnboardingProviders = {
     selectedCount: '{{count}} selected',
     deleteSelected: 'Delete selected',
     bulkDelete: 'Bulk delete',
-    enabledCount: '{{enabled}} / {{total}} enabled',
+    showAll: 'Show all',
+    hideAll: 'Hide all',
+    visibleCount: '{{enabled}} / {{total}} shown',
     noMatchQuery: 'No models match “{{query}}”',
     deselectModelAria: 'Deselect {{name}}',
     selectModelAria: 'Select {{name}}',
-    disableModelAria: 'Disable {{name}}',
-    enableModelAria: 'Enable {{name}}',
-    deleteModelAria: 'Permanently delete {{name}}',
-    deleteModelTitle: 'Remove permanently (fetch again to restore)',
+    hideModelAria: 'Hide {{name}}',
+    showModelAria: 'Show {{name}}',
+    hideModelTitle: 'Hide from the canvas model list (you can show it again any time)',
+    showModelTitle: 'Show in the canvas model list again',
+    deleteModelAria: 'Delete {{name}}',
+    deleteModelTitle: 'Delete (not reversible; fetch again to restore)',
     removeModelAria: 'Delete {{name}}',
-    enabledTitle: 'Enabled · Click to hide from node model lists',
-    hiddenTitle: 'Hidden · Click to enable in node model lists',
+    manageVisibility: 'Hide models',
     pickerTitle: 'Choose models to add',
     fetch: 'Get available models',
     refetch: 'Get list again',
@@ -1931,8 +2081,8 @@ export const enOnboardingProviders = {
     manualPlaceholder: 'Enter an unlisted model ID and press Enter',
     add: 'Add',
     saveModelsDisclosure:
-      'Confirmation starts certification immediately. It may read public docs, call a text AI, and use upstream credit through real requests. These models stay out of normal pickers until certification passes.',
-    addModels: 'Verify {{count}} models',
+      'Confirming runs one self-check: confirm the key works, fetch the model list once, and check that the call contract is complete. No generation request is sent. Models that pass appear in the canvas model list marked “not tried yet”.',
+    addModels: 'Self-check {{count}} models',
   },
   adapterVerification: {
     title: {
@@ -1960,6 +2110,8 @@ export const enOnboardingProviders = {
         'The provider rejected the request ({{status}}) — the call shape we guessed does not match theirs. Changing the URL or key will not help.',
       server: 'The provider’s server errored ({{status}}). Nothing to do with your settings — verify again later.',
       network: 'Cannot reach this address. Check the URL, and your network or proxy.',
+      asyncWithoutQuery: 'This provider submits a task first and returns the result later, and we do not have its result-lookup endpoint. The missing piece is on our side, not yours. Ask your AI assistant to add that endpoint, or write a call script yourself.',
+      referenceSlotMissing: 'This edit / image-to-video contract does not say which field carries the reference image, so the reference never reaches the provider. Ask your AI assistant to fill that in, or write a call script yourself.',
       compile:
         'We could not understand this provider’s API docs, so no call was generated. Not caused by anything you entered.',
       noGenericContract:
@@ -1989,11 +2141,11 @@ export const enOnboardingProviders = {
       queued: 'Waiting to start…',
       discovering_docs: 'Finding official API documentation…',
       compiling: 'Understanding the API and building an adapter…',
-      testing: 'Running a real test for {{model}}',
+      testing: 'Self-checking {{model}} (no generation request)',
       repairing: 'Repairing from the real error…',
       completed: 'Verification complete',
       partial: 'Usable capabilities connected',
-      failed: 'No capability passed verification',
+      failed: 'The self-check did not pass',
       needs_ai: 'Configure a text AI model first',
       cancelled: 'Verification stopped',
       timed_out: 'Verification timed out; current results were kept',
@@ -2064,6 +2216,9 @@ export const enOnboardingProviders = {
     loginAfterRequirement: '.',
     starting: 'Starting…',
     login: 'Scan Login',
+
+    update: "Update CLI",
+    updating: "Updating…",
   },
   comfyWorkflow: {
     jsonPlaceholder: '{ "nodes": [...] } or { "3": { "class_type": "KSampler", ... } }',
@@ -2121,6 +2276,9 @@ export const enOnboardingProviders = {
       'Your ComfyUI is missing {{count}} node type(s): {{list}} — install them first (e.g. via ComfyUI-Manager), or every run will fail',
     missingFiles:
       '{{count}} input(s) reference files/options not on this machine: {{list}} — switch to values that exist in your ComfyUI and re-export, or expose the input as a parameter and set it at generation time',
+    unknownComboShapes:
+      '{{count}} input(s) use a format Nomi has not seen before: {{list}} — ComfyUI may have upgraded again; these fields cannot be checked or turned into a dropdown yet',
+    reportUnknownShape: 'Report Issue',
   },
   comfyPreset: {
     sectionTitle: 'Preset templates (official, ready to use)',
@@ -2279,6 +2437,7 @@ export const enOnboardingProviders = {
       continue: 'Continue Draft',
       unavailable: 'The Nomi background process cannot create script drafts yet. Restart the app and try again.',
       createFailed: 'Could not save the draft: {{message}}',
+      missingFields: 'Still needed: {{fields}}.',
       scriptRequired: 'A draft needs a call script before it can be saved.',
       enableHint: 'This is a draft; it is enabled only after both the script and input setup are complete.',
       badge: 'Script needed',

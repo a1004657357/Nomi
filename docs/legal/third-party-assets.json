@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-08-15",
+  "assets": [
+    {
+      "id": "scene3d-nomi-mannequin",
+      "distribution": "bundled",
+      "paths": [
+        "src/assets/nomi-mannequin.glb",
+        "src/assets/nomi-mannequin-animations.glb"
+      ],
+      "sha256": {
+        "src/assets/nomi-mannequin.glb": "7a5af6f5cfb615926c0129bce904d0038b87dfd7833b5c4a6d0020c2b2139811",
+        "src/assets/nomi-mannequin-animations.glb": "885ef2eb226a0293f9983c8c9e6ec110d12f3d6058c1d3becb1731293760a4e1"
+      },
+      "source": {
+        "name": "Nomi first-party procedural director mannequin",
+        "url": "repo://scripts/generate-nomi-mannequin.py",
+        "evidence": [
+          "geometry, rig, skin weights, and walk/run keyframes are defined programmatically in scripts/generate-nomi-mannequin.py",
+          "the generator imports no external model or animation file",
+          "mixamorig bone names are retained only as a saved-project compatibility API"
+        ]
+      },
+      "license": {
+        "name": "AGPL-3.0-only",
+        "url": "https://github.com/aqm857886159/Nomi/blob/main/LICENSE",
+        "projectUse": "allowed",
+        "redistribution": "allowed",
+        "note": "First-party generated artifacts are redistributed under the repository license. Repository switched Apache-2.0 → AGPL-3.0-only on 2026-08-01 (docs/audit/2026-08-01-upstream-45-compatibility-license-audit.md); this record was updated 2026-08-02 to reconcile the prior stale Apache-2.0 label (Gate 7 P1 fix)."
+      },
+      "releasePolicy": "allowed"
+    },
+    {
+      "id": "scene3d-ue-mannequin-retopology-spike",
+      "distribution": "bundled",
+      "paths": [
+        "src/assets/ue-mannequin-retopology.glb",
+        "src/assets/ue-mannequin-retopology.license.txt"
+      ],
+      "sha256": {
+        "src/assets/ue-mannequin-retopology.glb": "5622c6150467fb96ff70d30eb3393286131c8523feaa3b78f80515d499cb1a14",
+        "src/assets/ue-mannequin-retopology.license.txt": "26b0b701ff1feaa5dccde23ae249681bd350ff219d773b8f717359810da4729b"
+      },
+      "source": {
+        "name": "UE Mannequin (Retopology) by William Luque",
+        "url": "https://sketchfab.com/3d-models/ue-mannequin-retopology-5394d9f894374a2ab7c57a21929ce4c2",
+        "evidence": [
+          "the downloaded model includes a Sketchfab Standard license notice beside the GLB",
+          "the asset is used only by the opt-in Scene3D UE mannequin evaluation path",
+          "redistribution clearance for shipping the original GLB has not been independently confirmed"
+        ]
+      },
+      "license": {
+        "name": "Sketchfab Standard License",
+        "url": "https://sketchfab.com/licenses",
+        "projectUse": "allowed",
+        "redistribution": "requires-review",
+        "note": "Local evaluation is allowed by the supplied notice. Release redistribution remains blocked until the original model terms are reviewed and documented."
+      },
+      "releasePolicy": "blocked"
+    },
+    {
+      "id": "seedance2-chrome-extension",
+      "distribution": "external-user-supplied",
+      "paths": [],
+      "source": {
+        "name": "Seedance2 Chrome Extensions",
+        "url": "https://github.com/zhaihao118/Seedance2-Chrome-Extensions",
+        "revision": "a646f24fb1fb1f566f0160b09a5c2dbb20b5551c",
+        "evidence": [
+          "upstream manifest version 1.3.0",
+          "local user-managed copy manifest version 1.4.0",
+          "Nomi discovers the extension through NOMI_SEEDANCE_EXTENSION_DIR or external local paths and does not package the extension directory"
+        ]
+      },
+      "license": {
+        "name": "No license declared",
+        "url": "https://github.com/zhaihao118/Seedance2-Chrome-Extensions",
+        "projectUse": "user-responsibility",
+        "redistribution": "not-applicable",
+        "note": "The public upstream repository has no LICENSE or package license field. Nomi may integrate with a user-supplied local copy but must not copy or redistribute the extension."
+      },
+      "releasePolicy": "external-only"
+    },
+    {
+      "id": "kenney-furniture-kit-1.0",
+      "distribution": "remote-on-demand",
+      "paths": [],
+      "source": {
+        "name": "Kenney Furniture Kit",
+        "url": "https://kenney.nl/assets/furniture-kit",
+        "downloadUrl": "https://kenney.nl/media/pages/assets/furniture-kit/440e0608a4-1677580847/kenney_furniture-kit.zip",
+        "archiveSha256": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0",
+        "version": "1.0",
+        "evidence": [
+          "the official asset page declares Creative Commons CC0",
+          "the official support page permits commercial use and does not require attribution",
+          "Nomi downloads only the pinned official HTTPS archive, verifies SHA-256, and extracts an allowlisted GLB entry",
+          "the archive is cached in user data and is never bundled in Nomi release artifacts"
+        ]
+      },
+      "license": {
+        "name": "Creative Commons CC0 1.0 Universal",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "projectUse": "allowed",
+        "redistribution": "allowed",
+        "note": "Downloaded on demand from the official Kenney asset page. Nomi records source, pack, archive hash, file hash, and license with each imported Director asset."
+      },
+      "releasePolicy": "remote-only"
+    }
+  ]
+}

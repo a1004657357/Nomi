@@ -3,16 +3,16 @@ import type { ModelArchetype, ModelParameterControl, ArchetypeReferenceSlot } fr
 const options = (values: string[]) => values.map((value) => ({ value, label: value }));
 const params = (flash: boolean): ModelParameterControl[] => [
   { key: "duration", label: "时长(秒)", type: "select", options: options(["4", "5", "6", "7", "8", "9", "10", "11", "12"]), defaultValue: "5" },
-  { key: "size", label: "清晰度", type: "select", options: options(flash ? ["720P"] : ["720P", "960P", "2K"]), defaultValue: "720P" },
+  { key: "size", label: "清晰度", type: "select", options: options(flash ? ["720P"] : ["720P", "1080P", "1K", "2K"]), defaultValue: "720P" },
   { key: "aspect_ratio", label: "比例", type: "select", options: options(["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]), defaultValue: "16:9" },
   { key: "seed", label: "随机种子", type: "number", options: [], step: 1 },
 ];
 const modes = (flash: boolean): ModelArchetype["modes"] => {
   const controls = params(flash);
   const referenceSlots: ArchetypeReferenceSlot[] = [
-    { kind: "image_ref", label: "参考图", min: 0, ...(flash ? { max: 5 } : {}), inputKey: "images" },
-    { kind: "audio_ref", label: "参考音频", min: 0, inputKey: "audios" },
-    ...(!flash ? [{ kind: "video_ref" as const, label: "参考视频", min: 0, inputKey: "videos" }] : []),
+    { kind: "image_ref", label: "参考图", min: 0, max: flash ? 5 : 8, inputKey: "images" },
+    { kind: "audio_ref", label: "参考音频", min: 0, max: 3, inputKey: "audios" },
+    ...(!flash ? [{ kind: "video_ref" as const, label: "参考视频", min: 0, max: 1, inputKey: "videos" }] : []),
   ];
   return [
     { id: "text", intent: "text", vendorTerm: "文生视频", hint: "纯文字生成视频", promptRequired: true, slots: [], params: controls, transportTaskKind: "text_to_video" },
@@ -32,11 +32,19 @@ const modes = (flash: boolean): ModelArchetype["modes"] => {
 
 export const AGNES_VIDEO_25_ARCHETYPE: ModelArchetype = {
   id: "agnes-video-2.5", family: "agnes-video-2.5", label: "Agnes Video 2.5", kind: "video",
-  sources: [{ url: "https://agnes-ai.com/zh-Hans/docs/agnes-video-25", checkedAt: "2026-08-26", vendorKey: "agnes", covers: "text/keyframe/reference, string seconds 4–12, 720P/960P/2K, image/audio/video references; unpublished reference count caps omitted" }],
+  sources: [{ url: "https://agnes-ai.com/en/docs/agnes-video-25", checkedAt: "2026-09-12", vendorKey: "agnes", covers: "text/keyframe/reference; string seconds 4-12; 720P/1080P/1K/2K; at most 8 images, 3 audio files, 1 video, 12 total; n=1; polling video_id and model_name" }],
   defaultModeId: "text", transportTaskKind: "text_to_video", identifierPatterns: ["agnes-video-2.5"], modes: modes(false),
 };
 export const AGNES_VIDEO_25_FLASH_ARCHETYPE: ModelArchetype = {
   id: "agnes-video-2.5-flash", family: "agnes-video-2.5", label: "Agnes Video 2.5 Flash", kind: "video",
-  sources: [{ url: "https://agnes-ai.com/zh-Hans/docs/agnes-video-25-flash", checkedAt: "2026-08-26", vendorKey: "agnes", covers: "Shared 2.5 modes and seconds; 720P only, at most 5 images, audio allowed, video references unsupported" }],
-  defaultModeId: "text", transportTaskKind: "text_to_video", identifierPatterns: ["agnes-video-2.5-flash"], modes: modes(true),
+  sources: [{ url: "https://agnes-ai.com/en/docs/agnes-video-25-flash", checkedAt: "2026-09-12", vendorKey: "agnes", covers: "Shared 2.5 modes and seconds; 720P only, at most 5 images and 3 audio files; audio-only references allowed; no video references; n=1" }],
+  defaultModeId: "text", transportTaskKind: "text_to_video", identifierPatterns: ["agnes-video-2.5-flash"], modes: modes(true).map(mode => ({
+    ...mode,
+    vendorParams: { "pavo-web": [
+      // 2026-10-24 官网实测：设置弹层时长为数字输入 min=4 max=12，任意整数（6/8/11/12 均验证）可应用并回读。
+      { key: "duration", label: "时长(秒)", type: "select", options: options(["4", "5", "6", "7", "8", "9", "10", "11", "12"]), defaultValue: "4" },
+      { key: "size", label: "清晰度", type: "select", options: options(["720P"]), defaultValue: "720P" },
+      { key: "aspect_ratio", label: "比例", type: "select", options: options(["16:9", "9:16", "1:1"]), defaultValue: "16:9" },
+    ] },
+  })),
 };

@@ -141,10 +141,25 @@ describe('canvasNodeFactory · 批量镜号累进', () => {
   })
 
   it('已有镜号时从 max+1 续（编号是身份，不复用留空号）', () => {
-    const existing = [{ shotIndex: 5 }]
+    const existing = [{ kind: 'image', shotIndex: 5 }]
     const specs = [{ kind: 'image' }, { kind: 'image' }]
     const built = buildCanvasNodes(specs, specs.map(() => ({ x: 0, y: 0 })), existing, makeDeps('x'))
     expect(built.map((n) => n.shotIndex)).toEqual([6, 7])
+  })
+
+  it('参考卡与派生关键帧既不占号，也不抬高后续镜号', () => {
+    const existing = [
+      { kind: 'image', shotIndex: 2 },
+      { kind: 'image', shotIndex: 99, meta: { referenceSheet: true } },
+      { kind: 'keyframe', shotIndex: 100, meta: { excludeFromShotNumbering: true } },
+    ]
+    const specs = [
+      { kind: 'keyframe', meta: { excludeFromShotNumbering: true } },
+      { kind: 'image' },
+      { kind: 'video' },
+    ]
+    const built = buildCanvasNodes(specs, specs.map(() => ({ x: 0, y: 0 })), existing, makeDeps('x'))
+    expect(built.map((node) => node.shotIndex)).toEqual([undefined, 3, 4])
   })
 })
 

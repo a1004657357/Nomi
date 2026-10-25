@@ -28,4 +28,13 @@ describe('KNOWN_VENDORS × seed 身份键不变量', () => {
     expect(SEEDED_BUILTIN_KEYS.has('dreamina')).toBe(true)
     expect(KNOWN_VENDORS.some((v) => v.vendorKey === 'dreamina')).toBe(false)
   })
+
+  it('Agnes 接入提示按模态展示当前公开限速，不再宣称统一 RPM 20 或永久免费', () => {
+    const agnes = KNOWN_VENDORS.find((vendor) => vendor.vendorKey === 'agnes')
+    expect(agnes?.credentialHint).toContain('图片 1K 20 RPM')
+    expect(agnes?.credentialHint).toContain('2K 10 RPM')
+    expect(agnes?.credentialHint).toContain('视频 1 RPM')
+    expect(`${agnes?.tagline} ${agnes?.credentialHint} ${agnes?.promo?.text}`).not.toContain('无限期免费')
+    expect(agnes?.credentialHint).toContain('以控制台为准')
+  })
 })

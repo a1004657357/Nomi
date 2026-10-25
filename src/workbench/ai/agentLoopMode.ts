@@ -11,6 +11,7 @@ export const AGENT_LOOP_MODE = { singleShot: 'single-shot', multiTurn: 'multi-tu
 export type AgentLoopMode = (typeof AGENT_LOOP_MODE)[keyof typeof AGENT_LOOP_MODE]
 
 export type SingleShotAgentRequest = {
+  model?: { vendorKey: string; modelKey: string }
   featureKey: string
   prompt: string
   displayPrompt: string
@@ -30,7 +31,7 @@ export async function runSingleShotAgent(request: SingleShotAgentRequest): Promi
     throw new Error('agent_attachment_claim_required')
   }
   const requestId = `single-shot-${globalThis.crypto.randomUUID()}`
-  const pref = getAssistantModelPref()
+  const pref = request.model ?? getAssistantModelPref()
   let cancelled = false
   const pending = laneClient.singleShot({
     requestId, prompt: request.prompt, featureKey: request.featureKey,

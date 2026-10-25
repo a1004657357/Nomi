@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkbenchStore } from '../workbenchStore'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
@@ -19,7 +19,6 @@ import TimelineTransitionMarker from './TimelineTransitionMarker'
 import TimelineSeamHandle from './TimelineSeamHandle'
 import type { TimelineTransitionFeedback } from './timelineVisualFeedback'
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react'
-import { getActiveWorkbenchProjectId } from '../project/workbenchProjectSession'
 
 type TimelineTrackProps = {
   track: TimelineTrackData
@@ -126,7 +125,6 @@ function TimelineTrack({ track, transitionFeedback = [], variant = 'primary' }: 
         fps,
         startFrame: resolveFrame(event.clientX),
         targetTrackType: track.type,
-        activeProjectId: getActiveWorkbenchProjectId(),
         onFailure: (error) => presentFeedback(error instanceof Error ? error.message : t('timelineEditor.adoption.failedRecovered')),
       })
       if (!result) return false
@@ -134,9 +132,7 @@ function TimelineTrack({ track, transitionFeedback = [], variant = 'primary' }: 
       setDragPreview(null)
       setIsDragHovering(false)
       setDropCaretFrame(null)
-      if (result.status === 'reject-external') {
-        presentFeedback(t('assetLibrary.externalAssetHint'))
-      } else if (result.status === 'reject') {
+      if (result.status === 'reject') {
         const expectedTrack = result.expectedTrack === 'image'
           ? t('timelineEditor.track.imageLabel')
           : result.expectedTrack === 'video'

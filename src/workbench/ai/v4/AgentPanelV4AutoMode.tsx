@@ -12,7 +12,7 @@
 //
 // 尺寸按「极小」拿：一条 h-6 的微字横条，靠 warning-soft 底 + 一颗点被眼睛抓到，
 // 不用 icon——设计定稿 ⑧ 禁用闪光/机器人头那一族，而「自动」正是最容易被画成闪电的地方。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { V4Row } from './AgentPanelV4Row'
 import { IconX } from './AgentPanelV4Icons'
 
@@ -26,7 +26,7 @@ export function V4AutoModeBanner({
 }: {
   /** 档位名（「全自动」）。 */
   label: string
-  /** 那句诚实交代：仍然会问的是什么。 */
+  /** 那句诚实交代：付费生成会直接跑，不可逆仍然每次问（`autoModeBannerNote`）。 */
   note: string
   /** 退回上一档那颗小钮的文案（「回到自动改」）。 */
   revertLabel: string

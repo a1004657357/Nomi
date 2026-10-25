@@ -1,0 +1,128 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-planner-screen-visibility",
+  "problem_type": "Planner host messages omit an existing shared screen-visibility constraint",
+  "symptom": "First planning and revision requests do not contain the established screen-visibility rule, failing the two unchanged original storyboard regressions.",
+  "direct_cause": "buildStoryboardPlanningMessage builds both host envelopes without referencing SCREEN_VISIBILITY_PROMPT_RULE, though the shared shot compiler owner already exports it.",
+  "class_root": "Every planning mode and revision must receive the shared physical screen-visibility invariant at the host envelope boundary, without rewriting user story/plan data or copying another policy body.",
+  "affected_population": [
+    "Image/video/image-video initial storyboard planning",
+    "Revisions of existing plans with selected models, prompts and user parameters"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+    "src/workbench/storyboard.test.ts"
+  ],
+  "entry_points": [
+    "runStoryboardPlanner -> buildStoryboardPlanningMessage",
+    "Existing downstream shot prompt compiler -> SCREEN_VISIBILITY_PROMPT_RULE"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The rule is an existing internal physical-framing policy with a shared compiler owner and explicit failing tests. No provider behavior, model, billing or external framework changes are assumed.",
+  "invariants": [
+    "Reference the existing exported rule once in each host envelope; do not duplicate its policy body",
+    "Keep story trimming and revision JSON/request serialization exactly as before",
+    "Do not mutate input, model keys, plan prompts, user parameters or canonical saved data",
+    "Do not change final shot compiler, routing, privileges, billing, cancellation or retries"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/shared/storyboard/storyboardShotPrompts.ts",
+      "symbol": "SCREEN_VISIBILITY_PROMPT_RULE"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+      "symbol": "SCREEN_VISIBILITY_PROMPT_RULE"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/runStoryboardPlanner.ts",
+      "symbol": "buildStoryboardPlanningMessage"
+    }
+  ],
+  "door_reduction": {
+    "before": 2,
+    "after": 3,
+    "why_not": "Keep the existing compiler consumer and planner runner as separate legitimate lifecycles. The new host-formatter read is the previously missing policy connection, not another policy owner or business workflow."
+  },
+  "generality_proof": "Six new actual-function cases cover all three shot modes for initial planning and revision. Each asserts exactly one full shared rule in the host section, outside delimiters, while exact story/current-plan JSON/revision text and frozen original input stay unchanged. Two original failing assertions and existing title-language tests remain intact.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+      "symbol": "buildStoryboardPlanningMessage",
+      "responsibility": "Host envelope for both initial planning and revision references the shared invariant"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/agent/runStoryboardPlanner.ts",
+      "entry_point": "runStoryboardPlanner",
+      "disposition": "enforced",
+      "evidence": "The real launcher consumes this host-message constructor for both fresh and revision inputs."
+    },
+    {
+      "path": "electron/shared/storyboard/storyboardShotPrompts.ts",
+      "entry_point": "screenVisibilityPromptRule",
+      "disposition": "not-affected",
+      "evidence": "Existing compiler already consumes the same rule and avoids adding it again when its heading is present; no compiler body change or parallel rule is needed."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any initial mode or revision can otherwise plan physically impossible visible screen contents before shot compilation.",
+    "same_class_scan": [
+      "Generated actual buildStoryboardPlanningMessage and SCREEN_VISIBILITY_PROMPT_RULE doors across src/electron",
+      "Read both planner envelope branches and their runStoryboardPlanner caller",
+      "Read the shared constant and existing conditional screenVisibilityPromptRule compiler consumer",
+      "Read renderer barrel re-export; preserve the sole shared policy owner"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+    "invariant": "Every fresh/revision planner envelope includes the existing shared visibility rule outside user data.",
+    "failure_mode": "Regression rejects missing/repeated host rule or any alteration of exact story/plan/request boundaries.",
+    "exception_policy": "none",
+    "strategy": "Import the existing rule via the renderer barrel and reference it in the two existing branches, without another policy or migration.",
+    "artifacts": [
+      "src/workbench/generationCanvas/agent/storyboardLauncher.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/storyboard.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/storyboard.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/agent/storyboardLauncher.ts"
+    ],
+    "rationale": "Remove rule-free host-envelope behavior; keep all input/output APIs and original planning functionality."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse the existing shared string export and pure host formatter; no library/runtime dependency changes.",
+    "exit_criteria": []
+  },
+  "migration": "None; inputs and persisted prompts remain unchanged. Only future host planning envelopes gain the pre-existing constraint.",
+  "residual_risks": [
+    "No Provider-generated storyboard or final rendered shot is verified; real visual/physical compliance remains coordination acceptance",
+    "No App, media or PNG baseline run"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/agent/storyboardLauncher.ts",
+    "tests": [
+      "src/workbench/storyboard.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/storyboard.test.ts"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

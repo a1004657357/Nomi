@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import type { GenerationNodeResult } from '../model/generationCanvasTypes'
 import { isRemoteHttpUrl, localizeRemoteResultUrl } from './resultAssetLocalization'
+import { MEDIA_TRANSFER_STEP_MAX_MS } from './generationPhaseDeadline'
 
 vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: vi.fn() }))
 const mockedBridge = vi.mocked(getDesktopBridge)
@@ -40,8 +41,8 @@ describe('localizeRemoteResultUrl — 厂商临时 URL 落地结构闸', () => {
 
   it('http 结果 + projectId → 下载落地，换本地 url，原 CDN 进 providerUrl', async () => {
     const importRemoteUrl = vi.fn().mockResolvedValue({
-      id: 'asset-9',
-      data: { url: 'nomi-local://asset/proj-1/assets/generated/v.mp4' },
+      ok: true,
+      asset: { id: 'asset-9', data: { url: 'nomi-local://asset/proj-1/assets/generated/v.mp4' } },
     })
     mockedBridge.mockReturnValue(bridgeWithImport(importRemoteUrl))
     const out = await localizeRemoteResultUrl(videoResult('https://cdn.vendor/v.mp4'), 'proj-1', 'node-1')
@@ -52,12 +53,14 @@ describe('localizeRemoteResultUrl — 厂商临时 URL 落地结构闸', () => {
       projectId: 'proj-1',
       url: 'https://cdn.vendor/v.mp4',
       kind: 'generated',
+      // 结果记着是视频：主进程落盘关口按字节核它（V-1213）。
+      expectedKind: 'video',
       ownerNodeId: 'node-1',
     })
   })
 
   it('已有 providerUrl → 不覆盖（保住原始来源）', async () => {
-    const importRemoteUrl = vi.fn().mockResolvedValue({ data: { url: 'nomi-local://asset/p/v.mp4' } })
+    const importRemoteUrl = vi.fn().mockResolvedValue({ ok: true, asset: { data: { url: 'nomi-local://asset/p/v.mp4' } } })
     mockedBridge.mockReturnValue(bridgeWithImport(importRemoteUrl))
     const out = await localizeRemoteResultUrl(
       videoResult('https://cdn.vendor/v.mp4', { providerUrl: 'https://origin/real.mp4' }),
@@ -80,6 +83,36 @@ describe('localizeRemoteResultUrl — 厂商临时 URL 落地结构闸', () => {
     mockedBridge.mockReturnValue(bridgeWithImport(importRemoteUrl))
     const result = videoResult('https://cdn.vendor/expired.mp4')
     expect(await localizeRemoteResultUrl(result, 'proj-1', 'node-1')).toBe(result)
+  })
+
+  it('structured stale-project rejection retains the original result without fabricating a local URL', async () => {
+    const importRemoteUrl = vi.fn().mockResolvedValue({ ok: false, failure: { code: 'project_binding_stale', reason: 'import-failed' } })
+    mockedBridge.mockReturnValue(bridgeWithImport(importRemoteUrl))
+    const result = videoResult('https://cdn.vendor/v.mp4')
+    expect(await localizeRemoteResultUrl(result, 'proj-1', 'node-1')).toBe(result)
+  })
+
+  // 2026-09-28：主进程取回挂住时这次 IPC 永远不返回。「绝不阻断」必须对「永远不返回」也成立——
+  // 生成收尾、打开项目时的存量抢救都在等它。最多等一次媒体传输那么久，到点保持原样。
+  it('主进程一直没有回音 → 等满一次媒体传输的时限后原样返回，不陪它挂着', async () => {
+    vi.useFakeTimers()
+    try {
+      const importRemoteUrl = vi.fn(() => new Promise<never>(() => {}))
+      mockedBridge.mockReturnValue(bridgeWithImport(importRemoteUrl))
+      const result = videoResult('https://cdn.vendor/stuck.mp4')
+      let settled: GenerationNodeResult | undefined
+      const localizing = localizeRemoteResultUrl(result, 'proj-1', 'node-1').then((value) => {
+        settled = value
+      })
+      await vi.advanceTimersByTimeAsync(MEDIA_TRANSFER_STEP_MAX_MS - 1_000)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2_000)
+      await localizing
+      expect(settled).toBe(result)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('无桌面环境（bridge/importRemoteUrl 缺）→ 原样返回', async () => {

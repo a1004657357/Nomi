@@ -29,37 +29,25 @@ import {
   type NodeSpec,
 } from './canvasGraph'
 import type { ProjectGateway } from './gateway'
-import { verifyAndMaybeRetry, type ShotVerifyDeps, type ShotVerifyOutcome } from './shotVerifyOrchestrate'
+import { verifyAndMaybeRetry, type ShotVerifyOutcome } from './shotVerifyOrchestrate'
 import { unfrozenAnchorsForShot } from './anchorBible'
 import { composeShotPrompt, runFirstHop, shouldRenderLastFrame, shouldUseTwoHop } from './i2vTwoHop'
 import { pickFirstFramePainter } from './firstFramePainter'
 import { previousShotPromptFor } from './shotOrder'
+import { MediaImportRejectedError, importLocalFile } from '../assets/localFileImport'
+import { mcpImportRejectionMessage } from './mcpImportRejectionMessage'
 import { checkImportAsset, contentTypeForExtension } from './importAssetGuard'
-import { copyAssetFile } from '../assets/projectAssetStore'
+import { bindReferencesToNode } from './canvasReferenceBindings'
+export { renderDirectorOnProject, type DirectorStagePreset, type DirectorRenderInput, type DirectorRenderResult, type RunDirectorFn } from './directorRender'
+import { assertCatalogModelIdentity } from './canvasModelIdentity'
 
 /** 生成意图（粗粒度）→ 默认 ProfileKind。调用方也可显式传 kind 覆盖。 */
 export type GenerateIntent = 'image' | 'video' | 'text' | 'audio'
 
-/**
- * 审片环 deps 工厂（可选注入，由传输层提供）。**默认不传 = 行为逐字节不变**（batchPlanPreview 渲染层路径、
- * 纯 CLI 评测路径都不受影响）。传了 → 生成成功后 core 调一次 verifyAndMaybeRetry 并把 outcome 挂返回。
- * 领域策略住 shotVerifyOrchestrate（纯）、传输层只注入 deps、core 只透传 outcome——三层干净（方案 §3/§9）。
- *
- * ctx 是 core 在生成时算出的真实上下文（复用首发 grantId + 同 nodeId + 同模型/参数/参考重试的原料）。
- */
-export type ShotVerifyDepsContext = {
-  projectId: string
-  grantId: string
-  nodeId: string
-  vendor: string
-  modelKey: string
-  generationKind: string
-  nodeKind: string
-  basePrompt: string
-  params: Record<string, unknown>
-  references: string[]
-}
-export type MakeVerifyDeps = (ctx: ShotVerifyDepsContext) => ShotVerifyDeps
+// 审片环 deps 工厂的两份形状住在 ./shotVerifyDepsContext（R9：core.ts 贴着 800 行上限，类型不占它的额度）。
+export type { MakeVerifyDeps, ShotVerifyDepsContext } from './shotVerifyDepsContext'
+import type { MakeVerifyDeps } from './shotVerifyDepsContext'
+import { isTerminalTaskStatus } from '../shared/taskStatus'
 
 type TaskResultLike = {
   id?: string
@@ -84,23 +72,19 @@ export type RunTaskFn = (payload: { vendor: string; request: unknown }) => Promi
 /** fetchTaskResult 的形状（注入式）。异步 vendor（modelscope 图 / 视频）返 queued，需轮询到终态。 */
 export type FetchTaskResultFn = (payload: { taskId: string; vendor: string; taskKind: string; prompt: string; modelKey: string }) => Promise<{ result: TaskResultLike }>
 
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed'])
-
 // 任务已提交（付费已发生）后，查结果连续失败多久才放弃轮询、落失败终态。短于此 = 网络
 // 抖动，免费重试查询（绝不冒泡终止已付费任务）；与渲染层 catalogTaskActions 的
 // POLL_FAILURE_GRACE_MS 同策——**配对常量，改一处必改另一处**。
 const POLL_FAILURE_GRACE_MS = 45_000
 
 /** Headless/MCP 轮询上限：视频 API 官方建议客户端最多等待 15 分钟，允许环境变量覆盖。 */
-export function resolveCapabilityPollTimeoutMs(kind: string, envValue: string | undefined = process.env.NOMI_POLL_TIMEOUT_MS): number {
-  const override = Number(envValue)
-  if (Number.isFinite(override) && override > 0) return override
-  return kind === 'text_to_video' || kind === 'image_to_video' ? 900_000 : 240_000
-}
+export { resolveCapabilityPollTimeoutMs, resolveCapabilityPollIntervalMs } from './pollingPolicy'
+import { resolveCapabilityPollTimeoutMs, resolveCapabilityPollIntervalMs } from './pollingPolicy'
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
+
 
 // 连「参考边」就该等于「喂参考图」——但 headless 生成此前只读 input.references / node.references，
 // **从不读画布上的参考边**（多 agent 用户测试钉死：连线→生成=三个不同的人 / 改图模型 400「需要参考图」；
@@ -140,6 +124,7 @@ export function referencesFromEdges(snapshot: CanvasSnapshot, nodeId: string): s
   }
   return urls
 }
+
 
 function defaultKindForIntent(intent: GenerateIntent, hasReferences: boolean): string {
   switch (intent) {
@@ -244,7 +229,7 @@ export async function importProjectAsset(input: {
   if (!readProject(input.projectId)) throw new Error(`项目不存在: ${input.projectId}`)
   const raw = String(input.path || '')
   // I/O 先做（realpath 解软链 + stat），判据本身保持纯函数。
-  let realPath: string | null = null
+  let realPath: string | null
   let sizeBytes: number | null = null
   let isFile = false
   try {
@@ -255,6 +240,9 @@ export async function importProjectAsset(input: {
   } catch {
     realPath = null
   }
+  // 这里只判**路径安全**（deny 目录优先、软链逃逸、扩展名白名单、文件读不读得出来）。
+  // 「多大算大」不在这里判第二遍：唯一 owner 是 importLocalFile 里的准入闸，它按磁盘余量与
+  // 每面硬顶判，拒绝时带着数字回到模型（见下面的 mcpImportRejectionMessage）。
   const verdict = checkImportAsset({ rawPath: raw, realPath, sizeBytes, isFile })
   if (!verdict.ok) throw new Error(verdict.reason)
 
@@ -265,10 +253,19 @@ export async function importProjectAsset(input: {
     return base.toLowerCase().endsWith(verdict.extension) ? base : `${base}${verdict.extension}`
   })()
   const contentType = contentTypeForExtension(verdict.extension)
-  const record = (await copyAssetFile(input.projectId, verdict.realPath, fileName, contentType, {
-    kind: 'imported',
-    source: 'mcp-import',
-  })) as { id?: string; name?: string; data?: { url?: string; size?: number; contentHash?: string } }
+  // 落盘走**唯一那条路**（嗅探 + 准入闸 + 视频归一化都在 importLocalFile 里）；meta 在调用方
+  // 这一侧收窄成 owner 认的形状，不放宽 owner 的入参去迁就调用者。被准入闸挡下不是「导入失败」：
+  // 那一支独有的数字要讲给模型听，否则它会原地重试同一个文件。
+  let record: { id?: string; name?: string; data?: { url?: string; size?: number; contentHash?: string } }
+  try {
+    record = (await importLocalFile(
+      { projectId: input.projectId, sourcePath: verdict.realPath, fileName, contentType, kind: 'imported' },
+      { allowSourcePath: true },
+    )) as typeof record
+  } catch (error) {
+    if (error instanceof MediaImportRejectedError) throw Object.assign(new Error(mcpImportRejectionMessage(fileName, error.rejection)), { cause: error })
+    throw error
+  }
   const data = record.data
   const url = data?.url
   if (!url || !record.id || !data?.contentHash) throw new Error('素材已复制但没拿到完整的可引用身份，请重试。')
@@ -299,7 +296,9 @@ export function createNamedProject(name?: string): { id: string; name: string } 
  * 不静默丢没 key/发不出的模型——照列并标状态，让 agent 能对用户说清"kie 没配 key"而非瞎猜可用。
  */
 export function listAvailableModels(): ModelListingEntry[] {
-  return deriveModelListing(readCatalog())
+  const state = readCatalog()
+  const enabledVendors = new Set(state.vendors.filter((vendor) => vendor.enabled).map((vendor) => vendor.key))
+  return deriveModelListing({ ...state, models: state.models.filter((model) => enabledVendors.has(model.vendorKey)) })
 }
 
 // ── 画布写操作（经 ProjectGateway：A 模式转发渲染层 / B 模式直写盘，统一逻辑）────
@@ -315,7 +314,9 @@ export async function addProjectNodes(gateway: ProjectGateway, specs: NodeSpec[]
     })
     if (!approved) return { ids: [], cancelled: true }
   }
-  const { snapshot, ids } = addNodes(await gateway.readDoc(), specs)
+  const { snapshot, ids } = addNodes(await gateway.readDoc(), specs, {
+    assertModelIdentity: (identity) => assertCatalogModelIdentity(listAvailableModels(), identity),
+  })
   await gateway.apply(snapshot)
   return { ids }
 }
@@ -340,6 +341,7 @@ export async function deleteProjectNodes(gateway: ProjectGateway, nodeIds: strin
   if (deleted.length) await gateway.apply(snapshot)
   return { deleted }
 }
+
 
 // ── 生成（复用主进程 runtime.runTask；B 模式落结果回节点）─────────────────
 
@@ -438,6 +440,7 @@ export async function generateOnProject(
       ? referenceModeForIntent(readCatalog(), input.vendor, input.modelKey, intent)
       : null
   const kind = input.kind || derivedRefKind || defaultKindForIntent(intent, references.length > 0)
+  snapshot = bindReferencesToNode(snapshot, nodeId, references)
 
   // 先把节点以「排队中」态写出去——A 模式：节点立即出现在画布（所见即所得）；B 模式：落盘占位。
   snapshot = setNodeStatusInSnapshot(snapshot, nodeId, 'queued')
@@ -517,10 +520,10 @@ export async function generateOnProject(
     // 于是 runFirstHop 判「首帧未产出可用图」→ 每次都降级。主路径（下面那段）一直有轮询，
     // 这条支路漏了（单测的 runTaskFn 桩是同步返图的，桩不会 queued，所以测不出来）。
     let frame = out
-    if (fetchTaskResultFn && frame.status && !TERMINAL_STATUSES.has(frame.status)) {
+    if (fetchTaskResultFn && frame.status && !isTerminalTaskStatus(frame.status)) {
       const startedAt = Date.now()
       let pollFailureStreakStartedAt: number | null = null
-      while (frame.status && !TERMINAL_STATUSES.has(frame.status)) {
+      while (frame.status && !isTerminalTaskStatus(frame.status)) {
         if (Date.now() - startedAt > 240000) break // 首帧是增益，到点就放弃走一跳，不拖垮整镜
         await delay(1500)
         try {
@@ -616,7 +619,7 @@ export async function generateOnProject(
     result = await runTaskFn({ vendor: input.vendor, request })
 
     // 异步 vendor 首调返 queued/processing → 本进程内轮询到终态（视频给更长超时）。无 fetch 注入则不轮询。
-    if (fetchTaskResultFn && result.status && !TERMINAL_STATUSES.has(result.status)) {
+    if (fetchTaskResultFn && result.status && !isTerminalTaskStatus(result.status)) {
       // 慢 vendor（如 APIMart H3 官方资源有限）可经 NOMI_POLL_TIMEOUT_MS 覆盖本进程轮询上限；
       // 视频默认 15 分钟与供应商建议一致，避免 5 分钟时任务仍在上游排队却被本地判失败。
       const timeoutMs = resolveCapabilityPollTimeoutMs(kind)
@@ -624,14 +627,13 @@ export async function generateOnProject(
       // docs/plan/2026-07-31-seedance-api-contract-reconciliation.md §三）。跨进程边界拿不到
       // 渲染层的 resolvePollIntervalMs，故此处是**配对常量，改一处必改另一处**（同 vendorErrorIpc
       // 的 MARKER 约定）。本循环一次只跑一个任务，不存在批量同相位问题，故不叠抖动/退避。
-      const pollIntervalMs = kind === 'text_to_video' || kind === 'image_to_video' ? 3000 : 1500
+      const pollIntervalMs = resolveCapabilityPollIntervalMs(kind, input.vendor)
       const startedAt = Date.now()
       let pollFailureStreakStartedAt: number | null = null
-      while (result.status && !TERMINAL_STATUSES.has(result.status)) {
+      let pollFailureCount = 0
+      while (result.status && !isTerminalTaskStatus(result.status)) {
         if (Date.now() - startedAt > timeoutMs) {
-          // 到点必须落**终态**：旧版直接 break，result 保持 queued/running 且不带 error —— 调用方
-          // （MCP/agent/CLI）拿到一个永远非终态的结果，等同「转圈但没人告诉你出了什么事」。
-          // 超时≠上游一定失败，故文案明说任务可能仍在供应商侧运行。
+          // 查询超时不代表供应商取消了任务，但对 CLI/MCP 必须返回明确终态，避免永久转圈。
           result = {
             ...result,
             status: 'failed',
@@ -642,7 +644,8 @@ export async function generateOnProject(
           }
           break
         }
-        await delay(pollIntervalMs)
+        const backoffMs = Math.min(pollIntervalMs * 2 ** pollFailureCount, 60_000)
+        await delay(backoffMs)
         try {
           const polled = await fetchTaskResultFn({
             taskId: result.id || '',
@@ -653,7 +656,9 @@ export async function generateOnProject(
           })
           result = polled.result
           pollFailureStreakStartedAt = null
+          pollFailureCount = 0
         } catch {
+          pollFailureCount += 1
           // 查结果失败：免费重试，绝不冒泡——任务已提交付费，一次网络抖动不能终止它。
           // 持续失败超 grace → 落失败终态（不重发，文案明说任务可能仍在供应商侧）。
           const now = Date.now()
@@ -711,6 +716,10 @@ export async function generateOnProject(
         basePrompt: prompt,
         params: input.params || {},
         references,
+        confirmJudgeSpend: (judge) => gateway.confirmSpend({
+          projectId: input.projectId, ...(projectName ? { projectName } : {}), nodeId,
+          intent: 'text', vendor: judge.vendor, modelKey: judge.modelKey, prompt: '',
+        }),
       })
       const outcome = await verifyAndMaybeRetry(
         {
@@ -727,7 +736,7 @@ export async function generateOnProject(
             // 对外说三轴、实际只跑了两轴——而「接不接得上」正是短剧最容易崩的那一轴（L3-F1 实测抓出）。
             // 判不出上一镜时返回 undefined → 判分器按「首镜不评 continuity」处理，不拿错参照物硬比。
             ...(() => {
-              const prev = previousShotPromptFor(snapshot.nodes, nodeId)
+              const prev = previousShotPromptFor(snapshot.nodes, nodeId, snapshot.edges)
               return prev ? { previousShotPrompt: prev } : {}
             })(),
             frameSourceUrl: primary!.url as string,

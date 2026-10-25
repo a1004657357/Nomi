@@ -1,0 +1,187 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-agent-beat-wire-and-description-budget",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "导演计划字段丢失与工具说明重复",
+  "symptom": "有效 set_beat 标题被 wire schema 剥离，canonical 校验随即失败；工具说明补齐后略超既有大小上限。",
+  "direct_cause": "canonical 要求 title 而平面协议未声明；多个工具重复展开共同规则。",
+  "class_root": "定制功能主线整合未同步共享合同与可重复验证。",
+  "affected_population": [
+    "当前定制 Nomi 的离线主线整合，不迁移日常项目"
+  ],
+  "scope_paths": [
+    "electron/ai/vibingDirectorTools.ts",
+    "electron/ai/vibingDirectorTools.test.ts",
+    "electron/shared/agentCapabilities/modelFacingTools.ts",
+    "electron/shared/agentCapabilities/verbs/readVerbs.ts",
+    "electron/shared/agentCapabilities/verbs/writeVerbs.ts",
+    "electron/shared/agentCapabilities/verbs/onboardingVerbs.ts",
+    "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+    "electron/capabilityCore/mcpCapabilityProjection.test.ts"
+  ],
+  "entry_points": [
+    "electron/ai/vibingDirectorTools.ts::planActionWireSchema",
+    "electron/shared/agentCapabilities/creativeComponentSchemas.ts::applyVibingDirectorPlanParamsSchema",
+    "electron/shared/agentCapabilities/verbs/readVerbs.ts::READ_GUIDELINES",
+    "electron/shared/agentCapabilities/verbs/writeVerbs.ts::READ_GUIDELINES",
+    "electron/agentLane/laneCreativeTools.ts::parseVibingDirectorPlanRequest",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts::parseVibingDirectorPlanRequest"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "仅使用现有仓库、真实 Git 前后快照和已锁定依赖，没有新的第三方 API 假设。",
+  "invariants": [
+    "wire 传递 title，canonical 仍拒绝缺失或空标题；不新增动作或权限。",
+    "其余动作字段保持；旧 schema 指纹仅单独剥离被明确修复的 title 再比较。",
+    "保留当前会话读取 ID、只报告实际 userSees、生成前确认和密钥不得进入结果/错误/trace 的规则。",
+    "不提高 10000 token 或 MCP 54083 byte 上限；冻结清单变更待用户单独确认。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/ai/vibingDirectorTools.ts",
+    "tests": [
+      "electron/ai/vibingDirectorTools.test.ts",
+      "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+      "electron/capabilityCore/mcpCapabilityProjection.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "symbol": "planActionWireSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "applyVibingDirectorPlanParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/readVerbs.ts",
+      "symbol": "READ_GUIDELINES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/writeVerbs.ts",
+      "symbol": "READ_GUIDELINES"
+    },
+    {
+      "kind": "write",
+      "path": "electron/agentLane/laneCreativeTools.ts",
+      "symbol": "parseVibingDirectorPlanRequest"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+      "symbol": "parseVibingDirectorPlanRequest"
+    }
+  ],
+  "door_reduction": {
+    "before": 6,
+    "after": 6,
+    "why_not": "保留各消费者职责，合并重复定义与旁路，不删除用户入口来降低计数；新增共享引用会增加门数，预算并未放宽。"
+  },
+  "generality_proof": "测试把真实 wire.parse 的输出交给 canonical，覆盖标题保留与缺失标题拒绝；其他字段形状和路由继续受原回归约束，说明只压缩重复措辞，继续运行原大小门岗。",
+  "shared_boundaries": [
+    {
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "symbol": "parseVibingDirectorPlanRequest",
+      "responsibility": "wire 传递 title，canonical 仍拒绝缺失或空标题；不新增动作或权限。"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "entry_point": "planActionWireSchema",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "entry_point": "applyVibingDirectorPlanParamsSchema",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/agentCapabilities/verbs/readVerbs.ts",
+      "entry_point": "READ_GUIDELINES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/shared/agentCapabilities/verbs/writeVerbs.ts",
+      "entry_point": "READ_GUIDELINES",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "electron/agentLane/laneCreativeTools.ts",
+      "entry_point": "parseVibingDirectorPlanRequest",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+      "entry_point": "parseVibingDirectorPlanRequest",
+      "disposition": "enforced",
+      "evidence": "实际 AST 数门可读回；本轮改动由所列类回归覆盖，未改消费者保留原实现并受既有静态门岗约束。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增入口或迁移可能再次脱离共享实现。",
+    "same_class_scan": [
+      "coordinator-closeout-door-evidence.json；before=bb451850747b05499da9d31bc6cc03b5ee4c445e",
+      "src/electron 的 2966 份实际非测试源文件 AST",
+      "electron/ai/vibingDirectorTools.test.ts",
+      "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+      "electron/capabilityCore/mcpCapabilityProjection.test.ts"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/ai/vibingDirectorTools.ts",
+    "invariant": "wire 传递 title，canonical 仍拒绝缺失或空标题；不新增动作或权限。 其余动作字段保持；旧 schema 指纹仅单独剥离被明确修复的 title 再比较。 保留当前会话读取 ID、只报告实际 userSees、生成前确认和密钥不得进入结果/错误/trace 的规则。 不提高 10000 token 或 MCP 54083 byte 上限；冻结清单变更待用户单独确认。",
+    "failure_mode": "成员、线协议、原因或共享报告退化时，聚焦回归和原门岗失败。",
+    "exception_policy": "none",
+    "strategy": "修复已有 owner 与消费者，不另设并行实现或放宽预算。",
+    "artifacts": [
+      "electron/ai/vibingDirectorTools.ts",
+      "electron/ai/vibingDirectorTools.test.ts",
+      "electron/shared/agentCapabilities/modelFacingTools.ts",
+      "electron/shared/agentCapabilities/verbs/readVerbs.ts",
+      "electron/shared/agentCapabilities/verbs/writeVerbs.ts",
+      "electron/shared/agentCapabilities/verbs/onboardingVerbs.ts",
+      "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+      "electron/capabilityCore/mcpCapabilityProjection.test.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/ai/vibingDirectorTools.test.ts",
+    "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+    "electron/capabilityCore/mcpCapabilityProjection.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/ai/vibingDirectorTools.test.ts",
+    "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+    "electron/capabilityCore/mcpCapabilityProjection.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "保留用户功能模块和数据，仅替换重复定义与无消费者实现。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "无新增或升级依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不改日常项目、素材、账号、密钥、Cookie 或共享代理进程。",
+  "residual_risks": [
+    "完整整合树、UI、CI、独立审查和合并 SHA 收据仍待最终验证。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "electron/ai/vibingDirectorTools.test.ts"
+  }
+}

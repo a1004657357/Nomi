@@ -1,6 +1,7 @@
 import { normalizeTimeline } from '../timeline/timelineMath'
 import { normalizeWorkbenchDocument } from '../workbenchPersistence'
 import { createDefaultWorkbenchDocument, type StoryboardDesign, type WorkbenchDocument } from '../workbenchTypes'
+import { logRendererWarn } from '../../desktop/rendererLog'
 import {
   createDefaultWorkbenchProjectPayload,
   workbenchProjectPayloadSchema,
@@ -101,18 +102,40 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     ? payload.storyboardDesignsByDocumentId
     : (() => {
         const migrated: Record<string, StoryboardDesign[]> = {}
+        // Canonical-only output requires accounting for every legacy document.
+        // Reject unreadable input instead of successfully saving a truncated owner.
+        const reportUnreadablePlan = (documentId: string, issues: readonly { path: PropertyKey[]; message: string }[]): void => {
+          logRendererWarn('storyboard-plan-migration-skipped',
+            { documentId, issues: issues.slice(0, 8).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ') })
+        }
+        if (raw[legacyMapKey] != null && (!legacyMap || Array.isArray(legacyMap))) throw new Error(i18n.t('runtime.project.corruptPayload'))
         const legacyEntries = legacyMap
-          ? Object.entries(legacyMap).flatMap(([documentId, value]) => {
-              if (!value || typeof value !== 'object') return []
+          ? Object.entries(legacyMap).map(([documentId, value]) => {
+              if (!documentId || !value || typeof value !== 'object' || Array.isArray(value)) throw new Error(i18n.t('runtime.project.corruptPayload'))
               const entry = value as Record<string, unknown>
               const plan = storyboardPlanSchema.safeParse(entry.plan)
-              if (!plan.success) return []
-              return [[documentId, { plan: plan.data, committed: entry.committed === true }] as const]
+              if (!plan.success) {
+                reportUnreadablePlan(documentId, plan.error.issues)
+                throw new Error(i18n.t('runtime.project.corruptPayload'))
+              }
+              if (entry.committed !== undefined && typeof entry.committed !== 'boolean') throw new Error(i18n.t('runtime.project.corruptPayload'))
+              return [documentId, { plan: plan.data, committed: entry.committed === true }] as const
             })
-          : (() => {
-              const plan = storyboardPlanSchema.safeParse(raw[legacyPlanKey])
-              return plan.success ? [[activeDocumentId, { plan: plan.data, committed: raw[legacyCommittedKey] === true }] as const] : []
-            })()
+          : []
+        const committed = raw[legacyCommittedKey]
+        if (committed !== undefined && typeof committed !== 'boolean') throw new Error(i18n.t('runtime.project.corruptPayload'))
+        if (raw[legacyPlanKey] != null) {
+          const plan = storyboardPlanSchema.safeParse(raw[legacyPlanKey])
+          if (!plan.success) {
+            reportUnreadablePlan(activeDocumentId, plan.error.issues)
+            throw new Error(i18n.t('runtime.project.corruptPayload'))
+          }
+          // A retired map can exist without covering the active document. Fill
+          // that gap only; an existing mapped design remains authoritative.
+          if (!legacyEntries.some(([documentId]) => documentId === activeDocumentId)) {
+            legacyEntries.push([activeDocumentId, { plan: plan.data, committed: committed === true }])
+          }
+        }
         for (const [documentId, entry] of legacyEntries) {
           const document = normalizedDocuments.find((item) => item.id === documentId)
           const now = Date.now()
@@ -137,8 +160,10 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     generationCanvas: payload.generationCanvas,
     categories: normalizeCategories(payload.categories),
     generationCanvasLastSeq: payload.generationCanvasLastSeq,
+    // Gate 1:Film Bible 是项目级唯一真相源；字段重建式 normalizer 必须显式透传。
+    filmBible: payload.filmBible ?? null,
     ...(payload.editingPanelLayout ? { editingPanelLayout: payload.editingPanelLayout } : {}),
-    ...(Object.values(owner).some((designs) => designs.length > 0) ? { storyboardDesignsByDocumentId: owner } : {}),
+    ...(payload.storyboardDesignsByDocumentId || Object.keys(owner).length ? { storyboardDesignsByDocumentId: owner } : {}),
   }
 }
 
@@ -197,7 +222,9 @@ export function normalizeRecord(summary: WorkbenchProjectSummary, raw: unknown):
   if (!legacy) {
     throw new Error(i18n.t('runtime.project.corruptRecord', { id: summary.id }))
   }
-  const payload = normalizePayload(legacy)
+  // Flat legacy records also need the original source: the narrow legacy record
+  // projection omits storyboard migration keys, Film Bible and multi-document state.
+  const payload = normalizePayload(raw)
   return {
     ...summary,
     version: 1,

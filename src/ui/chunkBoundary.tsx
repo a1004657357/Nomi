@@ -7,29 +7,17 @@
 // - 工厂自动重试 2 次（指数退避，吃掉瞬时 IO/网络抖动）；
 // - 「重试」按钮重建 lazy 实例——React 18 的 lazy 一旦 reject 会永久缓存失败，
 //   仅靠 remount 无法恢复，必须换新实例重新 import。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { cn } from '../utils/cn'
 import i18n from '../i18n'
+import { reloadRendererWindow } from '../desktop/bridge'
+import { logRendererCrash } from '../desktop/rendererLog'
 
 const AUTO_RETRIES = 2
 const RETRY_BASE_DELAY_MS = 300
 const CHUNK_AUTO_RELOAD_DELAY_MS = 600
 const CHUNK_AUTO_RELOAD_COOLDOWN_MS = 15_000
 const CHUNK_AUTO_RELOAD_STORAGE_PREFIX = 'nomi.chunk-boundary.auto-reload'
-type DesktopReloadBridge = { nomiDesktop?: { app?: { hardReloadWindow?: () => void } } }
-
-function reloadRendererWindow(): void {
-  try {
-    const hardReloadWindow = (window as unknown as DesktopReloadBridge).nomiDesktop?.app?.hardReloadWindow
-    if (hardReloadWindow) {
-      hardReloadWindow()
-      return
-    }
-  } catch {
-    /* fall back to browser reload */
-  }
-  window.location.reload()
-}
 
 export function importWithRetry<T>(
   factory: () => Promise<T>,
@@ -112,16 +100,7 @@ class ChunkErrorBoundary extends React.Component<BoundaryProps, { error: Error |
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    try {
-      ;(
-        window as unknown as { nomiDesktop?: { logRendererCrash?: (m: string) => void } }
-      ).nomiDesktop?.logRendererCrash?.(
-        `[chunk:${this.props.label}] ${error.name}: ${error.message}\n${error.stack || ''}\n--- componentStack ---\n${info.componentStack || ''}`,
-      )
-    } catch {
-      /* 日志旁路失败不影响降级 UI */
-    }
-    console.error(`[nomi] chunk boundary "${this.props.label}" caught:`, error)
+    logRendererCrash('chunk-boundary', error, info.componentStack, { boundary: this.props.label })
     if (isChunkLoadNetworkError(error) && canAutoReloadChunk(this.props.label)) {
       this.autoReloadTimer = window.setTimeout(reloadRendererWindow, CHUNK_AUTO_RELOAD_DELAY_MS)
     }

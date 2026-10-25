@@ -1,0 +1,124 @@
+/**
+ * 「这次出站请求，到底有没有发出去过？」——**唯一**回答它的地方。
+ *
+ * 一次付费提交失败只有两种性质完全不同的可能：**一个字节都没写出去**（DNS 解不出、连不上、
+ * TLS 握手没完成）——供应商那边什么都没发生；
+ * 或者**写出去了但结果不知道**（写完才断、响应头等超时）——可能已经收下并扣费。
+ * 两者在 `fetch()` 抛出来时长得一模一样（`TypeError: fetch failed`），真相全在 `error.cause` 里。
+ *
+ * 判据**只许拿得出证据才说没写出去**，其余一律 `unknown`：判错成「没写出去」的代价是重复扣一次钱，
+ * 反过来只是多一次人工对账。两边不对称，所以闸门偏向不重发。
+ *
+ * 只用在 `fetch()` **自己抛出**的那条路上（此时根本没有 Response，也就不可能收到过响应头）；
+ * 读响应体读到一半失败已经收到过响应头，永远是 `unknown`。
+ *
+ * 由来与现场证据见 `docs/fixes/2026-09-18-submission-not-dispatched.root-cause.json`。
+ */
+
+export type OutboundDispatchState = 'not-written' | 'unknown';
+
+type ErrorLike = {
+  code?: unknown;
+  syscall?: unknown;
+  cause?: unknown;
+  message?: unknown;
+  name?: unknown;
+  structured?: { retryable?: boolean; category?: string; dispatchState?: OutboundDispatchState };
+};
+
+/** DNS 解析失败：连接从未建立，请求不可能写出去。 */
+const DNS_CODES = new Set(["ENOTFOUND", "EAI_AGAIN"]);
+
+/** undici 建连阶段就超时/失败：同上。 */
+const CONNECT_CODES = new Set(["UND_ERR_CONNECT_TIMEOUT", "ERR_SOCKET_CONNECTION_TIMEOUT"]);
+
+function asErrorLike(value: unknown): ErrorLike | null {
+  return value && typeof value === "object" ? (value as ErrorLike) : null;
+}
+
+/** 把 `error.cause` 链摊平（最多 5 层，防自引用成环）。 */
+function causeChain(error: unknown): ErrorLike[] {
+  const chain: ErrorLike[] = [];
+  let current = asErrorLike(error);
+  while (current && !chain.includes(current) && chain.length < 5) {
+    chain.push(current);
+    current = asErrorLike(current.cause);
+  }
+  return chain;
+}
+
+/** TLS 握手阶段就失败（证书不被信任、主机名对不上）：握手没完成，应用层请求一个字节都没发。 */
+const TLS_HANDSHAKE_CODES = new Set([
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/** 对面在 TLS 握手完成前就把连接复位：同上，请求还没写。 */
+const PRE_TLS_RESET = /before secure TLS connection was established|disconnected before secure TLS/i;
+
+/**
+ * 只有「连上之前」的错误才算证明没写出去：DNS、建连（connect 系统调用 / 连接超时）、TLS 握手前。
+ *
+ * **`UND_ERR_SOCKET` / `ECONNRESET` / `socket hang up` / 头或体超时 / 发出后 abort 一律不在这里**——
+ * 它们既可能是「复用的 keep-alive 连接被对面关了」（没写出去），也可能是「请求已经写出去、
+ * 响应没回来连接就被重置」（供应商可能已经收下并扣费），两者抛出来的码一模一样，判据分不开。
+ * 2026-10-02 真应用复现（D:\tmp\breaker-947 E9）：APIMart 不支持幂等，旧判据把后一种当成前一种
+ * 自动重发，供应商收到的张数多于用户点过的张数。「旧连接」这一种由付费提交每次用新连接
+ * 从构造上消掉（见 `systemProxy.ts` 的 `createFreshConnectionDispatcher`），不再靠猜。
+ */
+function provesNotWritten(node: ErrorLike): boolean {
+  const code = typeof node.code === "string" ? node.code : "";
+  // 建连阶段失败（`syscall: "connect"` 覆盖 ECONNREFUSED / EHOSTUNREACH / ENETUNREACH / 连接 ETIMEDOUT）。
+  if (node.syscall === "connect") return true;
+  if (DNS_CODES.has(code) || CONNECT_CODES.has(code) || TLS_HANDSHAKE_CODES.has(code)) return true;
+  return code === "ECONNRESET" && typeof node.message === "string" && PRE_TLS_RESET.test(node.message);
+}
+
+/**
+ * 这次 `fetch()` 的失败，能不能**证明**请求一个字节都没写出去？证明不了就是 false。
+ */
+export function outboundRequestWasNeverWritten(error: unknown): boolean {
+  return causeChain(error).some((node) => node.structured?.dispatchState === "not-written" || provesNotWritten(node));
+}
+
+const TRANSPORT_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNABORTED"]);
+
+/**
+ * 这次失败是不是**连接层**失败（连接被重置 / 对面关闭 / 头体超时）——而不是供应商给了一个 HTTP 回复。
+ * 只有这种「结果未知」才值得用同一个幂等键重发（且仅限供应商真支持幂等）；供应商明确回了 4xx/5xx
+ * 就是它的答复，重发不会换来不同结果。用户主动取消（AbortError）不算。
+ */
+export function isTransportLevelFailure(error: unknown): boolean {
+  if (causeChain(error).some((node) => node.structured?.retryable === false)) return false;
+  return causeChain(error).some((node) => {
+    const code = typeof node.code === "string" ? node.code : "";
+    if (code.startsWith("UND_ERR_") || TRANSPORT_CODES.has(code)) return true;
+    return typeof node.message === "string" && /socket hang up|other side closed/i.test(node.message);
+  });
+}
+
+/**
+ * 把 cause 链摊成一句可记日志的话。
+ *
+ * 为什么非有不可：undici 外壳永远只说 `fetch failed`，真正的原因全在 cause 里。
+ * 用户看到的、日志里留下的、我们排查时唯一能拿到的那句话，此前就是这四个字——
+ * 2026-09-18 那条红烧掉了整整三轮 CI 才把 cause 挖出来。
+ *
+ * 只取 `name` / `code` / `message`：cause 上还挂着 socket 地址端口这类东西，
+ * 不该进日志（日志脱敏的规矩见 `logging/redact.ts`）。
+ */
+export function describeOutboundFailure(error: unknown): string {
+  return causeChain(error)
+    .map((node) => {
+      const name = typeof node.name === "string" && node.name ? node.name : "Error";
+      const code = typeof node.code === "string" && node.code ? ` ${node.code}` : "";
+      const message = typeof node.message === "string" ? node.message : "";
+      return `${name}${code}${message ? `: ${message}` : ""}`;
+    })
+    .join(" ← ");
+}

@@ -4,9 +4,6 @@ import { evaluateGate } from './gate'
 describe('evaluateGate — 统一求值流(§6.1)', () => {
   it('① policy:只读工具直通 allow', () => {
     expect(evaluateGate({ kind: 'tool-call', toolName: 'read_canvas_state', args: {} })).toEqual({ outcome: 'allow' })
-    for (const toolName of ['get_media', 'inspect_media', 'search_media', 'inspect_source_range', 'read_waveform', 'inspect_export_job', 'verify_render']) {
-      expect(evaluateGate({ kind: 'tool-call', toolName, args: {} })).toEqual({ outcome: 'allow' })
-    }
   })
 
   it('① policy:propose_storyboard_plan 免费可改(不写画布/不花钱)→ allow', () => {
@@ -15,8 +12,38 @@ describe('evaluateGate — 统一求值流(§6.1)', () => {
     })
   })
 
+  it('① policy:能力配方目录只读直通 allow', () => {
+    expect(evaluateGate({ kind: 'tool-call', toolName: 'list_capability_recipes', args: {} })).toEqual({
+      outcome: 'allow',
+    })
+  })
+
+  it('③ ask:执行能力配方会创建节点并调用模型', () => {
+    expect(
+      evaluateGate({
+        kind: 'tool-call',
+        toolName: 'apply_capability_recipe',
+        args: { sourceNodeId: 'n1', recipeId: 'portrait.refine' },
+      }),
+    ).toEqual({ outcome: 'ask' })
+  })
+
+  it('③ ask:保存创作资源会写画布但不花模型额度', () => {
+    expect(evaluateGate({
+      kind: 'tool-call', toolName: 'save_creative_resource',
+      args: { sourceNodeId: 'n1', kind: 'style', label: '胶片' },
+    })).toEqual({ outcome: 'ask' })
+  })
+
+  it('③ ask:3D 模型交接会写导演台但不调用付费模型', () => {
+    expect(evaluateGate({
+      kind: 'tool-call', toolName: 'handoff_model3d',
+      args: { sourceNodeId: 'model-1', target: 'scene3d' },
+    })).toEqual({ outcome: 'ask' })
+  })
+
   it('③ ask:写工具排队等点头', () => {
-    for (const toolName of ['create_canvas_nodes', 'connect_canvas_edges', 'set_node_prompt', 'export_timeline', 'cancel_export_job']) {
+    for (const toolName of ['update_storyboard_shot', 'batch_update_storyboard_shots', 'create_canvas_nodes', 'connect_canvas_edges', 'set_node_prompt', 'attach_external_image_to_node']) {
       expect(evaluateGate({ kind: 'tool-call', toolName, args: {} })).toEqual({ outcome: 'ask' })
     }
   })
@@ -85,6 +112,15 @@ describe('evaluateGate — 统一求值流(§6.1)', () => {
       expect(
         evaluateGate({ kind: 'tool-call', toolName: 'create_canvas_nodes', args: { nodes: [] } }, ctx),
       ).toEqual({ outcome: 'ask' })
+    })
+
+    it('覆盖锁住节点的外部图片结果 → deny', () => {
+      const decision = evaluateGate(
+        { kind: 'tool-call', toolName: 'attach_external_image_to_node', args: { nodeId: 'c1', sourceType: 'url', source: 'https://example.com/out.png' } },
+        ctx,
+      )
+      expect(decision.outcome).toBe('deny')
+      if (decision.outcome === 'deny') expect(decision.reason).toContain('覆盖它的图片结果')
     })
   })
 

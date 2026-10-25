@@ -5,14 +5,11 @@ import type { SkillManifest } from "./skillManifestSchema";
 
 function manifest(partial: Partial<SkillManifest>): SkillManifest {
   return {
-    name: "test.skill",
     version: "1.0.0",
-    description: "d",
     tools: [],
     requiredProviders: [],
-    permissions: ["create"],
     ...partial,
-  } as SkillManifest;
+  };
 }
 
 describe("deriveSkillNeeds", () => {

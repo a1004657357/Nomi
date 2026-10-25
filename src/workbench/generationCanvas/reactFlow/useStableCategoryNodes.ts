@@ -1,3 +1,4 @@
+import { isStoryboardContainedNodeHidden, storyboardContainerNodeId } from '../model/storyboardContainedNodes'
 // Reference-stable category node derivation for the generation canvas
 // (2026-09-01 drag battle · suspect #4 amplification gate + #5 minimap freeze).
 //
@@ -43,10 +44,11 @@ export function useStableCategoryNodes(
   // membership/order is unchanged so an unrelated churn stops cascading here.
   const categoryNodesRef = React.useRef<GenerationCanvasNode[]>([])
   const nodes = React.useMemo(() => {
+    const ownerIds = new Set(allNodes.map(node => node.id))
     const filtered = filterNodesStable(
       categoryNodesRef.current,
       allNodes,
-      (node) => (node.categoryId || 'shots') === activeCategoryId,
+      (node) => (node.categoryId || 'shots') === activeCategoryId && (!isStoryboardContainedNodeHidden(node) || !ownerIds.has(storyboardContainerNodeId(node))),
     )
     categoryNodesRef.current = filtered
     return filtered

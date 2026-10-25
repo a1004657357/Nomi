@@ -7,9 +7,8 @@
  * 右侧浮动抽屉壳已删（2026-07-22 方案一重执行）：`nomi-open-asset-library` 事件全仓无发送方，
  * 是素材库 v1 纯抽屉时代的孤儿面——素材库唯一的门＝侧栏 tab（一个能力一个门）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import i18n from '../../i18n'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IconPhoto, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -19,15 +18,18 @@ import { assetTimeValue, mergeAssetRefs, useAllProjectAssets } from './useAllPro
 import { assetsForFolderScope, folderCountsForAssets, useAssetFolderInteractions, useAssetFolders } from './useAssetFolders'
 import { filterAssets, type AssetRef } from './assetTypes'
 import { ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag } from './assetLibraryDrag'
-import { importAudioFilesToLibrary, type AudioImportResult } from './importAudioToLibrary'
-import type { GenerationAssetImportResult } from '../generationCanvas/adapters/assetImportAdapter'
+import { importAudioFilesToLibrary } from './importAudioToLibrary'
+import { importLocalMediaFilesToGenerationCanvas } from '../generationCanvas/adapters/assetImportAdapter'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
 import { useWorkbenchStore } from '../workbenchStore'
+import { visibleInsertionPoint } from '../generationCanvas/store/canvasVisibleArea'
 import { confirmDialog, DesignEmptyState, NomiLoadingMark, promptDialog, TooltipProvider } from '../../design'
 import { FindReferenceSection } from './FindReferenceSection'
 import type { ReferencePlatform } from '../../../electron/shared/contracts/referenceSearch'
-import { acceptAttrForKinds, mediaKindFromExtension } from '../../../electron/assets/mediaTypes'
+import { acceptAttrForSurface } from '../../../electron/shared/contracts/mediaImportPolicy'
 import { notify } from '../../ui/notificationPolicy'
+import { FeedbackButton } from '../../ui/community/FeedbackButton'
+import { rejectionOf, reportAudioImport, reportMediaImport, unsupportedKindRejection, type AssetImportRejectionReport } from './assetImportRejection'
 import {
   AssetGridCell,
   FolderGridCell,
@@ -39,13 +41,16 @@ import { assetProvenanceOf, countAssetProvenance } from './assetProvenance'
 import { useAssetLibraryFilters } from './useAssetLibraryFilters'
 import { filterCanvasLibraryAssets, filterPlayableAssets } from './assetLibrarySources'
 import { deleteAssetResult } from './deleteAssetResult'
-import { addAssetToTimelineEnd } from '../timeline/addAssetToTimeline'
+import { addAssetToTimelineEnd, assetRefFromDragPayload } from '../timeline/addAssetToTimeline'
+import { materializeAssetLibraryItems } from './assetLibraryMaterialize'
 import { useAssetLibraryLocalImport } from './assetLibraryLocalImport'
+import { logRendererError } from '../../desktop/rendererLog'
 import {
   assetToDragPayload,
   assetsForLibraryDrag,
   assetBelongsToProject,
   canManageAssetFolders,
+  nextAssetSelection,
   resolveAssetLibraryItemAction,
   shouldRunAssetItemAction,
   sourceOptionsForUsage,
@@ -55,57 +60,18 @@ import {
 } from './assetLibraryUsage'
 import { markLibraryUsed, sortByLibraryUsage, useLibraryUsageVersion } from '../library/libraryDiscovery'
 import { runPasteShareLinkImport } from './pasteShareLinkImport'
+import { isProjectExecutionContextCurrent, isProjectImportCancellation, withProjectAction } from '../project/projectCanvasReadSurface'
 
 const DEFAULT_GRID_COLS = 3
 const ESTIMATED_ROW_HEIGHT = 121
 const COMPACT_ESTIMATED_ROW_HEIGHT = 113
 
-// 从媒体类型单一真相源派生（通配 + 显式扩展名，见 mediaTypes.acceptAttrForKinds 注释）。
-// 素材库三类：图 / 视频 / 音频。accept 放行的每个格式下游都接得住（同源,不再漂移）。
-const UPLOAD_ACCEPT = acceptAttrForKinds(['image', 'video', 'audio'])
+// 从准入 owner 派生：这个面收哪些 kind 由 MEDIA_IMPORT_SURFACES 声明（不许自己写 accept 字面量）。
+const UPLOAD_ACCEPT = acceptAttrForSurface('asset-library')
 
-// 上传文件分流（纯函数便于单测）。kind 判定：MIME 优先，缺/不匹配回落扩展名——与音频分支对称，
-// 修「空 MIME 的图/视频被静默丢」(Gap B)。图/视频走画布节点(可拖画布)，音频落项目文件进库。
-export type UploadClassification = {
-  mediaFiles: File[]   // image / video → 画布素材节点
-  audioFiles: File[]   // audio → 项目文件源（音频 tab）
-  unsupported: File[]  // 既非图/视频也非音频 → 跳过并提示
-}
-
-export function classifyUploadFiles(files: File[]): UploadClassification {
-  const mediaFiles: File[] = []
-  const audioFiles: File[] = []
-  const unsupported: File[] = []
-  for (const file of files) {
-    const mime = (file.type || '').toLowerCase()
-    const kind = mime.startsWith('image/') ? 'image'
-      : mime.startsWith('video/') ? 'video'
-      : mime.startsWith('audio/') ? 'audio'
-      : mediaKindFromExtension(file.name) // 空/未知 MIME → 扩展名兜底
-    if (kind === 'image' || kind === 'video') mediaFiles.push(file)
-    else if (kind === 'audio') audioFiles.push(file)
-    else unsupported.push(file)
-  }
-  return { mediaFiles, audioFiles, unsupported }
-}
-
-// 导入结果 → 用户反馈（Gap C：此前计数全被丢弃，超大/重复/失败/超上限零提示）。
-function reportMediaImport(result: GenerationAssetImportResult, present: (message: string) => void): void {
-  const skipped: string[] = []
-  if (result.skippedTooLargeCount) skipped.push(i18n.t('assetLibrary.skippedTooLarge', { count: result.skippedTooLargeCount }))
-  if (result.skippedOverLimitCount) skipped.push(i18n.t('assetLibrary.skippedOverLimit', { count: result.skippedOverLimitCount }))
-  if (result.skippedDuplicateCount) skipped.push(i18n.t('assetLibrary.skippedDuplicate', { count: result.skippedDuplicateCount }))
-  if (result.failedCount) skipped.push(i18n.t('assetLibrary.skippedFailed', { count: result.failedCount }))
-  if (skipped.length) present(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }))
-}
-
-function reportAudioImport(result: AudioImportResult, present: (message: string) => void): void {
-  const skipped: string[] = []
-  if (result.skippedTooLargeCount) skipped.push(i18n.t('assetLibrary.skippedTooLarge', { count: result.skippedTooLargeCount }))
-  if (result.skippedDuplicateCount) skipped.push(i18n.t('assetLibrary.skippedDuplicate', { count: result.skippedDuplicateCount }))
-  if (result.failedCount) skipped.push(i18n.t('assetLibrary.skippedFailed', { count: result.failedCount }))
-  if (skipped.length) present(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }))
-}
+// 上传文件分流住在 ./uploadClassification（R9：面板是壳）；re-export 保住既有 import 面。
+export { classifyUploadFiles, type UploadClassification } from './uploadClassification'
+import { classifyUploadFiles } from './uploadClassification'
 
 type AssetLibraryContentProps = {
   projectId: string | null
@@ -139,6 +105,10 @@ export function AssetLibraryContent({
     setFeedback((current) => ({ ...current, [feedbackOwner]: message
       ? [...new Set([...(current[feedbackOwner] ?? []), message])] : [] }))
   }, [feedbackOwner])
+  // 导入被拒是四个失败面之一；这条内联行是它唯一的常驻落点，所以那颗「反馈」钮挂在这儿，
+  // 而不是把 notify 从 inline 改成 background（那会把安静的内联提示变成飘出来的 toast）。
+  // 码与人话都由 `assetImportRejection.ts` 派生——这里不做第二份判断。
+  const [rejection, setRejection] = React.useState<AssetImportRejectionReport | null>(null)
   const report = React.useCallback((message: string, type: 'info' | 'warning' | 'error' = 'warning') => {
     notify({ identity: `asset-library:${feedbackOwner}`, reason: 'operation', message, type, level: 'inline', present })
   }, [feedbackOwner, present])
@@ -278,43 +248,48 @@ export function AssetLibraryContent({
     const all = Array.from(event.currentTarget.files || [])
     event.currentTarget.value = ''
     const { mediaFiles, audioFiles, unsupported } = classifyUploadFiles(all)
-    if (mediaFiles.length) {
-      void import('../generationCanvas/adapters/assetImportAdapter')
-        .then(({ importLocalMediaFilesToGenerationCanvas }) =>
-          importLocalMediaFilesToGenerationCanvas(mediaFiles, { basePosition: { x: 120, y: 90 } }))
+    if (mediaFiles.length) withProjectAction((projectContext) => {
+      const activeCategoryId = useWorkbenchStore.getState().activeCategoryId
+      void importLocalMediaFilesToGenerationCanvas(mediaFiles, { projectContext, basePosition: visibleInsertionPoint(activeCategoryId) ?? { x: 120, y: 90 } })
         .then((result) => {
+          if (result.cancelled) return
           refreshProjectAssets()
           refreshAllProjectAssets()
-          reportMediaImport(result, report)
-          // 落点可见性（2026-08-07 飞书反馈「上传传到另一个位置没看到」）：选中首个新节点 +
-          // 请求画布 fit 平移视口过去（复用导演台节点同款组合，不造第二套）。
+          reportMediaImport(result, report, setRejection)
+          // 落点可见性（2026-08-07 飞书反馈「上传传到另一个位置没看到」）：以前是写死 (120, 90) 再请求 fit
+          // 把画布挪过去；2026-09-25 起直接落在用户此刻看得见的地方，不挪画布。落不下（整批太大）的部分
+          // 由画布边缘提示告诉用户在哪。选中首个新节点保留——那是「这就是刚导入的」的原地回执。
           const firstNode = result.created[0]?.node
-          if (firstNode) {
-            useGenerationCanvasStore.getState().selectNode(firstNode.id)
-            useWorkbenchStore.getState().requestCanvasFit()
-          }
+          if (firstNode) useGenerationCanvasStore.getState().selectNode(firstNode.id)
         })
         .catch((error) => {
-          console.error('asset library upload failed', error)
+          logRendererError('asset-import-failed', error)
           report(t('assetLibrary.importFailed'), 'error')
+          setRejection(rejectionOf('failed', 1))
         })
-    }
-    if (audioFiles.length) {
-      void importAudioFilesToLibrary(audioFiles, { projectId })
+    })
+    if (audioFiles.length) withProjectAction((project) => {
+      void importAudioFilesToLibrary(audioFiles, project)
         .then((result) => {
+          if (!isProjectExecutionContextCurrent(project)) return
           refreshProjectAssets()
           refreshAllProjectAssets()
-          reportAudioImport(result, report)
+          reportAudioImport(result, report, setRejection)
         })
         .catch((error) => {
-          console.error('asset library audio upload failed', error)
+          if (!isProjectExecutionContextCurrent(project) || isProjectImportCancellation(error)) return
+          logRendererError('asset-audio-import-failed', error)
           report(t('assetLibrary.audioImportFailed'), 'error')
+          setRejection(rejectionOf('failed', 1))
         })
-    }
+    })
     if (unsupported.length) {
-      report(t('assetLibrary.skippedUnsupported', { count: unsupported.length }), 'warning')
+      for (const f of unsupported) report(t('assetLibrary.rejectedUnsupportedUnknown', { name: f.name || t('assetLibrary.unnamedFile') }), 'warning')
+      // 策略拒收：用户想导的那个文件真的没进来，所以给反馈入口（重复素材不给，那份已在库里）。
+      // 摘要用**第一个**被挡住的文件名，与上面那句内联行逐字同源（2026-09-17 W-02）。
+      setRejection(unsupportedKindRejection(unsupported[0]?.name || ''))
     }
-  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, present, report, t])
+  }, [refreshAllProjectAssets, refreshProjectAssets, present, report, t])
 
   /** 工具栏那颗 🔗 = 「找参考」的家（一功能一个家）：开合内嵌面板，不弹层。 */
   const handleToggleFind = React.useCallback(() => {
@@ -382,29 +357,11 @@ export function AssetLibraryContent({
   }, [visibleIds])
 
   const selectAsset = React.useCallback((asset: AssetRef, event: AssetGridActivationEvent): void => {
-    const visibleAssets = visibleAssetsRef.current
-    const additive = event.metaKey || event.ctrlKey
+    const visibleIds = visibleAssetsRef.current.map((candidate) => candidate.id)
     const anchorId = lastSelectedIdRef.current
     setSelectedIds((current) => {
-      if (event.shiftKey && anchorId) {
-        const anchorIndex = visibleAssets.findIndex((candidate) => candidate.id === anchorId)
-        const targetIndex = visibleAssets.findIndex((candidate) => candidate.id === asset.id)
-        if (anchorIndex >= 0 && targetIndex >= 0) {
-          const start = Math.min(anchorIndex, targetIndex)
-          const end = Math.max(anchorIndex, targetIndex)
-          const next = additive ? new Set(current) : new Set<string>()
-          for (let index = start; index <= end; index += 1) next.add(visibleAssets[index].id)
-          return next
-        }
-      }
-      if (additive) {
-        const next = new Set(current)
-        if (next.has(asset.id)) next.delete(asset.id)
-        else next.add(asset.id)
-        return next
-      }
-      if (current.size === 1 && current.has(asset.id)) return current
-      return new Set([asset.id])
+      const next = nextAssetSelection(current, visibleIds, asset.id, anchorId, event)
+      return next === current ? current : new Set(next)
     })
     lastSelectedIdRef.current = asset.id
   }, [])
@@ -412,15 +369,19 @@ export function AssetLibraryContent({
   const activateAsset = React.useCallback((asset: AssetRef, event: AssetGridActivationEvent): void => {
     if (!shouldRunAssetItemAction(itemAction, event.detail)) return
     if (itemAction === 'append') {
-      // The all-project view is intentionally browse-only until a materialized
-      // copy contract exists. Never write another project's URL into this
-      // project's timeline; let the user inspect the source instead.
-      if (!assetBelongsToProject(asset, projectId)) {
-        setPreviewAsset(asset)
-        return
-      }
-      void addAssetToTimelineEnd(asset).then((added) => {
-        if (added) markLibraryUsed('asset', asset.id)
+      // 别的项目的素材先复制进本项目（与拖放同一个关口 materializeAssetLibraryItems），
+      // 时间轴只写本项目自己的地址。
+      withProjectAction((project) => {
+        void materializeAssetLibraryItems([assetToDragPayload(asset)], project).then(({ items }) => {
+          const local = items[0] ? assetRefFromDragPayload(items[0]) : null
+          if (!local) {
+            if (isProjectExecutionContextCurrent(project)) report(t('assetLibrary.copyIntoProjectFailed', { count: 1 }), 'warning')
+            return
+          }
+          return addAssetToTimelineEnd(local, project).then((added) => {
+            if (added) markLibraryUsed('asset', asset.id)
+          })
+        })
       })
       return
     }
@@ -430,17 +391,21 @@ export function AssetLibraryContent({
       return
     }
     selectAsset(asset, event)
-  }, [itemAction, projectId, selectAsset])
+  }, [itemAction, projectId, report, selectAsset, t])
+
+  // 对勾是开关：点一下加进 / 移出选择，不动其它已选——和 ⌘/Ctrl 点同一条选择逻辑（selectAsset 唯一 owner）。
+  // 此前对勾只是装饰，点它等于普通点击＝换选：选不了第二张，也取消不了（2026-09-25 用户反馈）。
+  const toggleAssetSelection = React.useCallback((asset: AssetRef): void => {
+    selectAsset(asset, { metaKey: false, ctrlKey: true, shiftKey: false, detail: 1 })
+  }, [selectAsset])
 
 
+  // 两个 tab 同一份拖拽载荷：落在画布 / 时间轴＝用它（别的项目的先复制进来，见 assetLibraryMaterialize），
+  // 落在文件夹＝归类。不再按 tab 分两种拖拽（此前项目素材 tab 只发归类专用的 MIME，拖到画布没反应）。
   const handleAssetDragStart = React.useCallback((asset: AssetRef, event: React.DragEvent<HTMLDivElement>): void => {
-    if (!assetBelongsToProject(asset, projectId)) {
-      event.preventDefault()
-      return
-    }
+    present('')
     const currentSelection = selectedIdsRef.current
     const selectedForDrag = assetsForLibraryDrag(visibleAssetsRef.current, currentSelection, asset)
-      .filter((candidate) => assetBelongsToProject(candidate, projectId))
     if (!currentSelection.has(asset.id)) {
       setSelectedIds(new Set([asset.id]))
       lastSelectedIdRef.current = asset.id
@@ -456,19 +421,10 @@ export function AssetLibraryContent({
     event.dataTransfer.setData(ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag(payloads))
     event.dataTransfer.effectAllowed = 'copy'
     event.dataTransfer.setData('text/plain', payloads.length > 1 ? `${payloads.length} 个素材` : asset.name)
-  }, [projectId])
+  }, [present])
 
-  // 项目素材 tab 的格子拖拽=归类进夹（独立 MIME,画布 drop 端不认识,不会误建重复节点）。
-  // 三件套 handler 抽在 useAssetFolderInteractions（R9 防巨壳）。
-  const { handleFolderAssignDragStart, handleFolderDropAssets, handleDeleteFolder } = useAssetFolderInteractions({
-    folderApi,
-    visibleAssetsRef,
-    selectedIdsRef,
-    setSelectedIds,
-    lastSelectedIdRef,
-    setActiveFolderId,
-    collectSelection: assetsForLibraryDrag,
-  })
+  // 落夹 / 删夹 handler 抽在 useAssetFolderInteractions（R9 防巨壳）。
+  const { handleFolderDropAssets, handleDeleteFolder } = useAssetFolderInteractions({ folderApi, setActiveFolderId })
   const assetDragHint = usageContext === 'timeline'
     ? t('timelineEditor.dragToTimeline')
     : projectSelectionEnabled
@@ -478,19 +434,10 @@ export function AssetLibraryContent({
     setPreviewAsset(asset)
     if (assetBelongsToProject(asset, projectId)) markLibraryUsed('asset', asset.id)
   } : undefined, [itemAction, projectId])
-  const assetDragStartAction = React.useCallback((asset: AssetRef, event: React.DragEvent<HTMLDivElement>): void => {
-    present('')
-    if (!assetBelongsToProject(asset, projectId)) {
-      event.preventDefault()
-      report(t('assetLibrary.externalAssetHint'), 'info')
-      return
-    }
-    if (projectSelectionEnabled) handleFolderAssignDragStart(asset, event)
-    else handleAssetDragStart(asset, event)
-  }, [handleAssetDragStart, handleFolderAssignDragStart, projectId, projectSelectionEnabled, present, report, t])
 
   const deleteSelectedProjectAssets = React.useCallback(async (): Promise<void> => {
     present('')
+    const loaded = withProjectAction((project) => project) ?? null
     if (!projectId) {
       report(t('assetLibrary.deleteNoProject'), 'warning')
       return
@@ -505,11 +452,11 @@ export function AssetLibraryContent({
       confirmLabel: t('assetLibrary.delete'),
       danger: true,
     })
-    if (!confirmed) return
+    if (!confirmed || (loaded && !isProjectExecutionContextCurrent(loaded))) return
     try {
       // 串行：同一关闭项目的多张结果必须一张张基于最新 record 改，Promise.all 会各读同一旧快照后互相覆盖。
       const outcomes: Awaited<ReturnType<typeof deleteAssetResult>>[] = []
-      for (const asset of selectedProjectAssets) outcomes.push(await deleteAssetResult(asset, projectId))
+      for (const asset of selectedProjectAssets) outcomes.push(await deleteAssetResult(asset, loaded))
       const removedCount = outcomes.reduce((total, outcome) => total + outcome.removedResultCount, 0)
       const deletedFileCount = outcomes.reduce((total, outcome) => total + outcome.deletedFileCount, 0)
       const failedFileCount = outcomes.reduce((total, outcome) => total + outcome.failedFileCount, 0)
@@ -519,15 +466,16 @@ export function AssetLibraryContent({
       if (removedCount === 0 && deletedFileCount === 0 && failedFileCount === 0) report(t('assetLibrary.cannotDeleteSelected'), 'warning')
       if (failedFileCount > 0) report(t('assetLibrary.failedFiles', { count: failedFileCount }), 'warning')
     } catch (error) {
-      console.error('delete project assets failed', error)
+      logRendererError('asset-delete-failed', error)
       report(t('assetLibrary.deleteFailed'), 'error')
     }
   }, [projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets, present, report, t])
 
   const deleteOneAsset = React.useCallback(async (asset: AssetRef): Promise<void> => {
     present('')
+    const loaded = withProjectAction((project) => project) ?? null
     if (!assetBelongsToProject(asset, projectId)) {
-      report(t('assetLibrary.externalAssetHint'), 'info')
+      report(t('assetLibrary.externalAssetNoDelete'), 'info')
       return
     }
     const confirmed = await confirmDialog({
@@ -536,15 +484,15 @@ export function AssetLibraryContent({
       confirmLabel: t('assetLibrary.delete'),
       danger: true,
     })
-    if (!confirmed) return
+    if (!confirmed || (loaded && !isProjectExecutionContextCurrent(loaded))) return
     try {
-      const outcome = await deleteAssetResult(asset, projectId || '')
+      const outcome = await deleteAssetResult(asset, loaded)
       refreshProjectAssets()
       refreshAllProjectAssets()
       setPreviewAsset((current) => current?.id === asset.id ? null : current)
       if (outcome.failedFileCount > 0) report(t('assetLibrary.failedFiles', { count: outcome.failedFileCount }), 'warning')
     } catch (error) {
-      console.error('delete asset result failed', error)
+      logRendererError('asset-result-delete-failed', error)
       report(t('assetLibrary.deleteFailed'), 'error')
     }
   }, [projectId, refreshAllProjectAssets, refreshProjectAssets, present, report, t])
@@ -587,6 +535,11 @@ export function AssetLibraryContent({
         {(feedback[feedbackOwner] ?? []).length > 0 ? (
           <div role="status" aria-live="polite" className="shrink-0 border-b border-nomi-line px-3 py-2 text-caption text-nomi-ink-60" data-asset-library-feedback>
             {feedback[feedbackOwner].map((message) => <p key={message}>{message}</p>)}
+            {rejection ? (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5" data-asset-library-rejection={rejection.errorKind}>
+                <FeedbackButton request={{ intent: 'problem', surface: 'import', stage: 'upload', ...(projectId ? { projectId } : {}), ...rejection }} />
+              </div>
+            ) : null}
           </div>
         ) : null}
         <AssetLibraryToolbar
@@ -740,12 +693,12 @@ export function AssetLibraryContent({
                   asset={asset}
                   compact
                   selectable={projectSelectionEnabled}
-                  draggable={(projectSelectionEnabled || assetBelongsToProject(asset, projectId)) && asset.kind !== 'model3d'}
                   selected={selectedIds.has(asset.id)}
                   dragHint={assetBelongsToProject(asset, projectId) ? assetDragHint : t('assetLibrary.externalAssetHint')}
                   onSelect={activateAsset}
+                  onToggleSelect={projectSelectionEnabled ? toggleAssetSelection : undefined}
                   onPreview={assetPreviewAction}
-                  onDragStartAsset={assetDragStartAction}
+                  onDragStartAsset={handleAssetDragStart}
                   onDelete={usageContext === 'canvas' && sourceFilter === 'all' && assetBelongsToProject(asset, projectId) ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
                 />
               ))}
@@ -775,12 +728,12 @@ export function AssetLibraryContent({
                         key={asset.id}
                         asset={asset}
                         selectable={projectSelectionEnabled}
-                        draggable={(projectSelectionEnabled || assetBelongsToProject(asset, projectId)) && asset.kind !== 'model3d'}
                         selected={selectedIds.has(asset.id)}
                         dragHint={assetBelongsToProject(asset, projectId) ? assetDragHint : t('assetLibrary.externalAssetHint')}
                         onSelect={activateAsset}
+                        onToggleSelect={projectSelectionEnabled ? toggleAssetSelection : undefined}
                         onPreview={assetPreviewAction}
-                        onDragStartAsset={assetDragStartAction}
+                        onDragStartAsset={handleAssetDragStart}
                         onDelete={usageContext === 'canvas' && sourceFilter === 'all' && assetBelongsToProject(asset, projectId) ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
                       />
                     ))}

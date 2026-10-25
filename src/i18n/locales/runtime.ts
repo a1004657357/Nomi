@@ -42,6 +42,12 @@ export const zhRuntime = {
     shot: { menu: '镜头', title: '镜头', placeholder: '记录镜头设计、调度、对白或拍摄说明...' },
     output: { menu: '输出', title: '输出', placeholder: '整理最终输出说明或交付备注...' },
     panorama: { menu: '全景图', title: '全景图', placeholder: '上传或截取全景参考图...' },
+    scene3d: { menu: '3D 场景', title: '3D 场景', placeholder: '在 3D 场景中摆放模型并截图...' },
+    vibingDirector: {
+      menu: 'VIBING Director',
+      title: 'VIBING Director',
+      placeholder: '通过对话描述场景、人物调度和镜头运动...',
+    },
 
     director: { menu: '导演台', title: '导演台', placeholder: '在 3D 导演台里摆位、运镜并出片...' },
     whiteboard: { menu: '画板', title: '画板', placeholder: '在画板里绘制参考，再描述要生成的画面...' },
@@ -83,6 +89,7 @@ export const zhRuntime = {
   project: {
     untitled: '未命名项目',
     untitledWithTime: '未命名项目 {{time}}',
+    untitledWithTimeOrdinal: '未命名项目 {{time}} ({{ordinal}})',
     recordMissing: '本地项目记录缺失：{{id}}',
     corruptPayload: '本地项目记录损坏：payload 缺少必要字段',
     corruptRecord: '本地项目记录损坏：{{id}}',
@@ -110,15 +117,29 @@ export const zhRuntime = {
       fallback: '一个素材',
     },
     newNode: '新节点',
+    // 拆解是用户自己点的那一下：说清「读几段画面」，别用「AI 助手想…」的口气。
+    deconstructTitle: '拆解这条视频',
+    deconstructMessage: '确认后会逐镜读画面、取对白，消耗模型额度。',
+    confirmDeconstruct: '确认拆解',
+    callCount: '调用次数',
     spendTitle: 'AI 助手想生成{{intent}}',
     referenceTitle: 'AI 助手想生成参考图',
     spendMessage: '确认后将消耗模型额度生成。',
     spendMessageWithPrompt: '提示词：「{{prompt}}」。确认后将消耗模型额度生成。',
     // 授权范围必须写在卡上：用户以为批的是「这一张」，实际还批掉了一段免问期（D4 缺口明着标）。
     confirmGenerate: '确认生成',
+    // 凭据验证（）：这家没有免费自检端点，验一次 key 就要发一次可能计费的请求。
+    // 卡上必须说清「这是验证请求、不是生成」，且金额如实（算不出价时显示「未知价」）。
+    credentialProbeTitle: '验证 {{vendor}} 的密钥要发一次付费请求',
+    credentialProbeMessage: '这家没有免费的验证端点。确认后 Nomi 会用你刚填的密钥发一次最小的真实请求来验它是否可用，这一次会消耗模型额度。不确认也能保存密钥，只是标为「未验证」，首次真正调用时再见分晓。',
+    confirmCredentialProbe: '确认并验证',
     generationGateTitle: '允许 Nomi 生成这一镜？',
     generationGateBatchTitle: '允许 Nomi 生成这一批镜头？',
     generationGateMessage: '允许 Nomi 在当前项目使用模型 {{model}}，最多花费 {{cost}}，{{shot}}？',
+    // 目录算不出价：**不印 ¥0**（三种可能里只有它会被读成「这次免费」）。措辞沿用 2026-09-10
+    // 已拍板付费卡的两句话：「暂时算不出价格」与「花多少事后才知道」。
+    generationGateMessageUnknownCost: '允许 Nomi 在当前项目使用模型 {{model}}，{{shot}}？暂时算不出价格——要继续就得接受「花多少事后才知道」。',
+    generationGateCostUnknown: '暂时算不出价格',
     generationGateShotFallback: '生成这一镜',
     generationGateProject: '项目',
     generationGateModel: '模型',
@@ -126,7 +147,7 @@ export const zhRuntime = {
     generationGateCost: '最多花费',
     generationGateExpires: '有效期至',
     planTitle: 'AI 助手想在画布落一套方案',
-    planMessage: 'AI 想创建 {{count}} 个节点，确认后落到画布（可撤销、不花额度）。',
+    planMessage: 'AI 想创建 {{count}} 个节点，确认后落到画布（可撤销）。',
     planConfirm: '落到画布',
     planNodeCount: '节点数',
     planNodeCountValue: '{{count}} 个',
@@ -141,6 +162,8 @@ export const zhRuntime = {
     noProjectOpen: '（没有打开任何项目）',
     unknownOperation: '未知 capability 操作：{{operation}}',
     storyboardPlanMissing: '分镜规划没有返回可审阅的方案',
+
+    projectChanged: "项目已切换，请重新发起操作。",
   },
   export: {
     jobRequiresDesktop: '导出任务需要 Electron 桌面运行时',
@@ -213,6 +236,16 @@ export const enRuntime = {
     shot: { menu: 'Shot', title: 'Shot', placeholder: 'Describe shot design, blocking, dialogue, or filming notes...' },
     output: { menu: 'Output', title: 'Output', placeholder: 'Add final output or delivery notes...' },
     panorama: { menu: 'Panorama', title: 'Panorama', placeholder: 'Upload or capture a panorama reference...' },
+    scene3d: {
+      menu: '3D Scene',
+      title: '3D Scene',
+      placeholder: 'Arrange models in the 3D scene and capture a frame...',
+    },
+    vibingDirector: {
+      menu: 'VIBING Director',
+      title: 'VIBING Director',
+      placeholder: 'Describe the scene, blocking, and camera movement through conversation...',
+    },
     director: { menu: 'Director', title: 'Director', placeholder: 'Block, move the camera and render in the 3D director...' },
     whiteboard: {
       menu: 'Whiteboard',
@@ -257,6 +290,7 @@ export const enRuntime = {
   project: {
     untitled: 'Untitled project',
     untitledWithTime: 'Untitled project {{time}}',
+    untitledWithTimeOrdinal: 'Untitled project {{time}} ({{ordinal}})',
     recordMissing: 'Local project record is missing: {{id}}',
     corruptPayload: 'The local project record is corrupt: required payload fields are missing',
     corruptRecord: 'The local project record is corrupt: {{id}}',
@@ -284,14 +318,23 @@ export const enRuntime = {
       fallback: 'an asset',
     },
     newNode: 'New node',
+    deconstructTitle: 'Deconstruct this video',
+    deconstructMessage: 'Confirm to read every shot and pull the dialogue, spending model credits.',
+    confirmDeconstruct: 'Confirm deconstruction',
+    callCount: 'Calls',
     spendTitle: 'The AI assistant wants to generate {{intent}}',
     referenceTitle: 'The AI assistant wants to generate a reference image',
     spendMessage: 'Confirm to spend model credits and start generation.',
     spendMessageWithPrompt: 'Prompt: “{{prompt}}”. Confirm to spend model credits and start generation.',
     confirmGenerate: 'Confirm generation',
+    credentialProbeTitle: 'Verifying the {{vendor}} key sends one billable request',
+    credentialProbeMessage: 'This provider has no free verification endpoint. Confirm and Nomi sends one minimal real request with the key you just entered to check that it works; that request spends model credits. You can also decline and still save the key — it is then marked unverified, and the first real call is the judge.',
+    confirmCredentialProbe: 'Confirm and verify',
     generationGateTitle: 'Allow Nomi to generate this shot?',
     generationGateBatchTitle: 'Allow Nomi to generate this batch of shots?',
     generationGateMessage: 'Allow Nomi to use {{model}} in the current project, spend up to {{cost}}, and {{shot}}?',
+    generationGateMessageUnknownCost: 'Allow Nomi to use {{model}} in the current project and {{shot}}? Price unavailable right now — continuing means you only learn the cost afterwards.',
+    generationGateCostUnknown: 'Price unavailable right now',
     generationGateShotFallback: 'generate this shot',
     generationGateProject: 'Project',
     generationGateModel: 'Model',
@@ -299,7 +342,7 @@ export const enRuntime = {
     generationGateCost: 'Maximum cost',
     generationGateExpires: 'Valid until',
     planTitle: 'The AI assistant wants to lay out a plan on the canvas',
-    planMessage: 'The AI wants to create {{count}} nodes; confirm to add them to the canvas (undoable, no credits).',
+    planMessage: 'The AI wants to create {{count}} nodes; confirm to add them to the canvas (undoable).',
     planConfirm: 'Add to canvas',
     planNodeCount: 'Nodes',
     planNodeCountValue: '{{count}}',
@@ -314,6 +357,8 @@ export const enRuntime = {
     noProjectOpen: '(no project open)',
     unknownOperation: 'Unknown capability operation: {{operation}}',
     storyboardPlanMissing: 'The storyboard planner did not return a reviewable plan.',
+
+    projectChanged: "The project changed. Start the action again.",
   },
   export: {
     jobRequiresDesktop: 'Export jobs require the Electron desktop runtime',

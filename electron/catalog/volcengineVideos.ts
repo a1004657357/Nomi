@@ -4,12 +4,12 @@ const CREATE_HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type
 const VARIANT_MODEL_REF = "{{request.params.model}}";
 
 const TEXT_CONTENT = { type: "text", text: "{{request.prompt}}" };
-const FIRST_IMAGE_CONTENT = "{{request.params.volcengine_first_image_content}}";
-const FIRST_ROLE_IMAGE_CONTENT = "{{request.params.volcengine_first_role_image_content}}";
-const LAST_ROLE_IMAGE_CONTENT = "{{request.params.volcengine_last_role_image_content}}";
-const IMAGE_REF_CONTENTS = "{{request.params.volcengine_image_contents}}";
-const VIDEO_REF_CONTENTS = "{{request.params.volcengine_video_contents}}";
-const AUDIO_REF_CONTENTS = "{{request.params.volcengine_audio_contents}}";
+// content 项槽（asContentItem 构造层产出整项对象，模板整串透传；键随档案声明走，见 seedanceVolcengine.ts）
+const FIRST_IMAGE_CONTENT = "{{request.params.first_image_content}}";
+const LAST_IMAGE_CONTENT = "{{request.params.last_image_content}}";
+const IMAGE_REF_CONTENTS = "{{request.params.image_contents}}";
+const VIDEO_REF_CONTENTS = "{{request.params.video_contents}}";
+const AUDIO_REF_CONTENTS = "{{request.params.audio_contents}}";
 
 /**
  * Seedance create op（2.0 系列与 2.5 共用形状）。
@@ -46,8 +46,7 @@ function seedanceCreateOp(content: unknown[], extraBody: Record<string, unknown>
 const I2V_CONTENT = [
   TEXT_CONTENT,
   FIRST_IMAGE_CONTENT,
-  FIRST_ROLE_IMAGE_CONTENT,
-  LAST_ROLE_IMAGE_CONTENT,
+  LAST_IMAGE_CONTENT,
   IMAGE_REF_CONTENTS,
   VIDEO_REF_CONTENTS,
   AUDIO_REF_CONTENTS,

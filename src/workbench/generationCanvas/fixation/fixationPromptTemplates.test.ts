@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  buildBasicCharacterFixation,
-  buildBasicSceneFixation,
-  buildFixationPrompt,
-} from './fixationPromptTemplates'
+import { buildBasicCharacterFixation, buildBasicSceneFixation, buildFixationPrompt } from './fixationPromptTemplates'
 
 describe('buildFixationPrompt · 角色（§5.7 十条规律锁回归）', () => {
   const prompt = buildFixationPrompt({
@@ -16,7 +12,14 @@ describe('buildFixationPrompt · 角色（§5.7 十条规律锁回归）', () =>
     props: ['磁吸冲击护臂（左前臂）'],
     silhouettes: 3,
     palette: [{ hex: '#1C1F26', role: '主色' }],
-    idBlock: { code: 'ASHRAIL', role: '反派少年', age: '14 岁', personality: ['克制'], signature: '左眉疤', quote: '平安回家。' },
+    idBlock: {
+      code: 'ASHRAIL',
+      role: '反派少年',
+      age: '14 岁',
+      personality: ['克制'],
+      signature: '左眉疤',
+      quote: '平安回家。',
+    },
   })
 
   it('规律1 人设打底', () => expect(prompt).toContain('概念美术大师'))
@@ -69,6 +72,20 @@ describe('buildFixationPrompt · 场景（结构锁定 + 时段「保持结构�
     expect(prompt).toContain('只改光照')
   })
   it('机位「保持元素只改机位」', () => expect(prompt).toContain('广角 / 俯视'))
+})
+
+describe('buildFixationPrompt · 画幅方向', () => {
+  it('9:16 使用竖向版面，不再和画幅参数冲突', () => {
+    const prompt = buildFixationPrompt({
+      subject: 'character',
+      name: '小苏',
+      style: 'cinematic',
+      aspectRatio: '9:16',
+      turnaround: true,
+    })
+    expect(prompt).toContain('9:16 竖向版面')
+    expect(prompt).not.toContain('横向版面')
+  })
 })
 
 describe('Tier1 基础默认', () => {

@@ -1,0 +1,137 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-storyboard-legacy-fallback-p1",
+  "problem_type": "Legacy map presence is mistaken for complete document coverage during canonical migration",
+  "symptom": "Without a canonical owner, an empty or partial retired map masks a valid active single plan; successful canonical save/reload removes its last active payload copy.",
+  "direct_cause": "The migration chooses old map OR single plan. It never checks whether the parsed map actually contains the active document, and unreadable entries are logged then discarded.",
+  "class_root": "Every legacy document must be accounted for before canonical-only emission: migrate valid data, respect authoritative canonical ownership, or reject destructive normalization. Container existence does not establish per-document migration coverage.",
+  "affected_population": [
+    "Mixed retired per-document map and single-plan projects",
+    "Empty/partial legacy maps with an active plan",
+    "Malformed legacy map/plan/commit fields formerly silently discarded"
+  ],
+  "scope_paths": [
+    "src/workbench/project/projectNormalize.ts",
+    "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts",
+    "src/workbench/project/projectNormalize.test.ts"
+  ],
+  "entry_points": [
+    "normalizePayload",
+    "normalizeRecord",
+    "readLocalProject -> owner hydration -> session writer -> saveLocalProject -> JSON reload"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is an internal persisted-data ownership invariant, confirmed by the independent reviewer and actual repository/source reads. Existing plan schema, canonical owner and storage lifecycle decide it; no external API behavior is assumed.",
+  "invariants": [
+    "Canonical map including explicit empty canonical ownership stays globally authoritative",
+    "Without canonical ownership, preserve all valid old map documents and fill only a missing active document from the valid single plan",
+    "Never overwrite an existing mapped document with the single projection",
+    "Validate legacy map shape, entries, plans and commit flags and single-plan/commit fields before dropping raw projections; malformed required legacy data fails closed",
+    "Only canonical fields are saved; do not restore dual-owner projection output",
+    "Preserve all documents/media results/reference and table source identities/Film Bible/user meta, prompts, false and zero; no input mutation"
+  ],
+  "doors": [
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "normalizePayload"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectRepository.ts",
+      "symbol": "normalizeRecord"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/project/projectRepository.ts",
+      "symbol": "normalizePayload"
+    }
+  ],
+  "door_reduction": {
+    "before": 3,
+    "after": 3,
+    "why_not": "Repository read/save and normalizer record decoding are distinct legitimate entry points. They already share normalizePayload; repair migration coverage there without introducing another writer."
+  },
+  "generality_proof": "The real-store/real-repository round-trip harness executes empty-map and partial-map source through actual write and JSON reload before checking the active plan, with two documents, synthetic image/video results, table links and Film Bible intact. Mapped-active/canonical mixed controls prove no overwrite or resurrection. Negative matrices exercise malformed legacy combinations through normalize and real save and require unchanged original stored bytes.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "normalizePayload",
+      "responsibility": "Account for every legacy document before canonical-only output; reject unrepresentable damaged input"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/project/projectRepository.ts",
+      "entry_point": "readLocalProject / saveLocalProject",
+      "disposition": "enforced",
+      "evidence": "Both real paths normalize raw input; regression executes them with isolated in-memory Web Storage rather than mocking save."
+    },
+    {
+      "path": "src/workbench/project/workbenchProjectSession.ts",
+      "entry_point": "restoreWorkbenchProjectPayload / readCurrentWorkbenchProjectPayload",
+      "disposition": "enforced",
+      "evidence": "Existing full-owner hydration/writer is unchanged and participates in real round trips and receipt checks."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any historical mixed representation can have incomplete map coverage or invalid entries; map existence cannot prove successful migration for the active document.",
+    "same_class_scan": [
+      "Read independent-review-7b52f6529-fresh-20261025.md and verified the a773-related files are unchanged from 09221429e",
+      "Generated normalizePayload/normalizeRecord direct doors and followed repository/session read-write paths",
+      "Extended prior disjoint single/map/canonical fixtures with mixed empty/partial/map-wins/canonical controls",
+      "Checked malformed source handling and tightened the old warning-only unreadable-map expectation to rejection"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/project/projectNormalize.ts",
+    "invariant": "Only a complete validated migration or authoritative canonical source permits canonical-only save.",
+    "failure_mode": "Missing active map coverage uses the validated single plan; malformed legacy data throws before a successful write can replace the original record.",
+    "exception_policy": "none",
+    "strategy": "Replace map-versus-single branching with per-document completion and remove warning-then-skip paths.",
+    "artifacts": [
+      "src/workbench/project/projectNormalize.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts",
+    "src/workbench/project/projectNormalize.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts",
+    "src/workbench/project/projectNormalize.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/project/projectNormalize.ts"
+    ],
+    "rationale": "Remove exclusive old-map/single branching and unreadable-entry skip behavior; do not reintroduce old projection output."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse existing Zod plan parsing and project owner/repository APIs; no dependency or schema relaxation.",
+    "exit_criteria": []
+  },
+  "migration": "Existing load/save performs lazy migration. Valid mapped documents keep their content and single-plan fallback fills only missing active coverage. Damaged legacy input is not guessed or silently rewritten; no daily project is opened.",
+  "residual_risks": [
+    "Malformed legacy data is rejected, not repaired or recovered from backups",
+    "Actual Electron filesystem/App/Provider/PNG/full-suite acceptance remains unrun",
+    "Other four owner tasks are preserved separately in stash c7265c98732202fb0a0ce8d3f8c87c091c5cc4cb and are not included"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/project/projectNormalize.ts",
+    "tests": [
+      "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts",
+      "src/workbench/project/projectNormalize.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/project/workbenchProjectSession.storyboardRoundTrip.test.ts"
+  },
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-24"
+}

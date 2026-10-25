@@ -12,6 +12,8 @@ import {
   trustedLocalOutputOrigin,
   ORIGINAL_URL_TRUST_MS,
   LITTERBOX_INGESTION,
+  UGUU_INGESTION,
+  AGNES_UPLOAD_CHAIN,
   TMPFILES_INGESTION,
   ANON_UPLOAD_CHAIN,
   assertLocalAssetMediaBytes,
@@ -20,6 +22,7 @@ import {
   type LocalAsset,
 } from "./assetLocalization";
 import type { AssetIngestion } from "./types";
+import { matchNomiErrorCode } from "../shared/nomiErrorCodes";
 
 const localUrl = (p: string) => `nomi-local://asset/proj/${p}`;
 // 内联素材（headless/MCP 直接给 data: URI，或落盘失败退回 base64 的兜底路径）。
@@ -251,6 +254,19 @@ describe("resolveLocalAsset (per strategy)", () => {
     await resolveLocalAsset(localUrl("a.png"), ingestion, "", read, vi.fn(), postMultipart);
     const headers = postMultipart.mock.calls[0][1] as Record<string, string>;
     expect("Authorization" in headers).toBe(false);
+  });
+
+  it("upload-multipart reads Uguu's direct image URL for Agnes", async () => {
+    const postMultipart = vi.fn().mockResolvedValue({
+      success: true,
+      files: [{ url: "https://n.uguu.se/frame.png" }],
+    });
+
+    const out = await resolveLocalAsset(localUrl("frame.png"), UGUU_INGESTION, "", read, vi.fn(), postMultipart);
+
+    expect(out).toBe("https://n.uguu.se/frame.png");
+    expect(postMultipart.mock.calls[0][0]).toBe("https://uguu.se/upload.php");
+    expect(postMultipart.mock.calls[0][6]).toBe("files[]");
   });
 
   it("upload-multipart plain-text url (litterbox): no auth header, posts reqtype/time/fileToUpload, returns trimmed body", async () => {
@@ -688,6 +704,21 @@ describe("resolveAssetIngestionWithFallback (跨 vendor 上传优先级链)", ()
     expect(out?.uploadApiKey).toBe("");
   });
 
+  it("Agnes 无专用上传 API 时保留 Relay，匿名兜底使用 Uguu 优先链", () => {
+    const candidates = resolveAssetIngestionWithFallback({ key: "agnes" }, [{ key: "agnes" }], keysOf("agnes"), "image");
+    expect(candidates[0]?.vendorKey).toBe("nomi-relay");
+    const out = candidates.at(-1);
+    expect(out?.ingestion).toBe(AGNES_UPLOAD_CHAIN);
+    expect(out?.uploadApiKey).toBe("");
+    if (out?.ingestion.strategy === "anon-chain") {
+      const endpoints = out.ingestion.chain.map((item) => item.strategy === "upload-multipart" ? item.endpoint : "");
+      expect(endpoints).toEqual([
+        "https://uguu.se/upload.php",
+        "https://litterbox.catbox.moe/resources/internals/api.php",
+      ]);
+    }
+  });
+
   it("配了 KIE 但没填 key → 不选 KIE，落到匿名链（key 缺失视为不可用）", () => {
     // vendor 列表里有 kie，但 getApiKey('kie') 返回 null
     const out = firstIngestion({ key: "openai" }, [{ key: "openai" }, { key: "kie" }], keysOf("openai"));
@@ -749,8 +780,7 @@ describe("resolveAssetIngestionWithFallback (内容类型感知路由)", () => {
 
   it("image asset + apimart present → apimart still wins over litterbox", () => {
     const out = firstIngestion({ key: "apimart" }, [{ key: "apimart" }], keysOf("apimart"), "image");
-    expect(out?.ingestion.strategy).toBe("upload-multipart");
-    expect(out?.ingestion.endpoint).toBe("https://api.apimart.ai/v1/uploads/images");
+    expect(out?.ingestion).toMatchObject({ strategy: "upload-multipart", endpoint: "https://api.apimart.ai/v1/uploads/images" });
     expect(out?.uploadApiKey).toBe("key-apimart");
   });
 
@@ -1038,5 +1068,27 @@ describe("出站前拦截够不着的素材值（blob: / file:）", () => {
     const extras = { prompt: "别用 file:// 这种地址", notes: "/Users/me/a.png" };
     const out = await localizeAssetsForVendor(extras, resolver, read, vi.fn(), noMultipart);
     expect(out.value).toBe(extras);
+  });
+});
+
+describe("local raster metadata validation", () => {
+  it("accepts PNG metadata containing embedded SVG text", () => {
+    const payload = Buffer.from("image/svg+xml <svg width=\"716\" />");
+    const bytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(64), Buffer.from("caBX"), payload,
+    ]);
+    expect(() => assertLocalAssetMediaBytes({ bytes, contentType: "image/png", fileName: "generated.png" })).not.toThrow();
+  });
+
+  it("tags a png-named web page as asset-invalid so the error card does not blame the provider", () => {
+    let message = "";
+    try {
+      assertLocalAssetMediaBytes({ bytes: Buffer.from("<!doctype html><html></html>"), contentType: "image/png", fileName: "page.png" });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(matchNomiErrorCode(message)).toBe("asset-invalid");
+    expect(message).not.toMatch(/视频生成/);
   });
 });

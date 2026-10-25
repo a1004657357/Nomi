@@ -21,7 +21,7 @@ import { projectLaneSnapshot, type LaneModelFacts } from '../../electron/shared/
 import type { LaneToolDescriptor, LaneApprovalOptions } from '../../electron/agentLane/laneRuntimePort.js';
 import { LANE_APPROVAL_NOTE_TYPE, type LaneProjection } from '../../electron/shared/agentLane/laneContracts.js';
 import { LANE_READ_TOOL_TIMEOUT_MS } from '../../electron/shared/agentLane/laneToolContract.js';
-import { createLaneFixture } from './laneFixture.mjs';
+import { createLaneFixture, FIXTURE_DESCRIBE } from './laneFixture.mjs';
 
 /** 「每步问」：让写入必然停下来等人。abort 那条要一个稳定的等待点。 */
 const STEP: LaneApprovalOptions = { hasUserInterface: true, policy: () => ({ mode: 'step', spend: 'confirm' }) };
@@ -42,8 +42,8 @@ function heldTool(name: string) {
     name,
     contractId: 'document.read',
     description: 'Reads the document, but only returns once the test lets it go.',
-    promptSnippet: 'read the document.',
-    effects: { mutates: false, billable: false, reversal: 'none' },
+    promptSnippet: 'read the document.', nextAction: 'none', describe: FIXTURE_DESCRIBE,
+    effect: 'read',
     // 读类预算。这个工具会一直卡到测试放行它，所以预算大小不影响这一族——
     // 但契约要求每个工具都说出自己的上限（3c 的工具级超时），不许留空。
     execution: { timeoutMs: LANE_READ_TOOL_TIMEOUT_MS },
@@ -153,7 +153,7 @@ test('G3e · 撤回排队插话的三态：撤回成功 / 晚了一步 / 根本�
 
 test('G3b② 非空侧 · 按停止：没送出去的那句话回到输入框，不是被丢掉', async (t: TestContext) => {
   const fixture = await createLaneFixture(t, [
-    { type: 'tool', calls: [{ id: 'call-append', name: 'append_to_end', arguments: { content: ' and then she left.' } }] },
+    { type: 'tool', calls: [{ id: 'call-append', name: 'write_script', arguments: { where: 'end', content: ' and then she left.' } }] },
     CLOSING,
   ], STEP);
   const lane = await fixture.openLane(fixture.options);
@@ -210,7 +210,7 @@ test('§1.4 规则三 · 等着落盘的宿主记录不画成排队的用户消�
   const projection = projectLaneSnapshot(snapshotWithQueues([
     // 宿主自己那条审批记录：pi 把操作进行中的 appendCustomEntry 排进**同一个** inbox。
     { entryId: 'w-1', kind: 'write', type: 'custom', customType: LANE_APPROVAL_NOTE_TYPE,
-      data: { toolCallId: 'call-1', toolName: 'append_to_end', decision: 'denied' } },
+      data: { toolCallId: 'call-1', toolName: 'write_script', decision: 'denied' } },
     // 阳性对照：紧挨着的一条真插话。少了它，一个「什么都不画」的实现也能通过上面那句。
     { entryId: 'q-1', kind: 'steer', type: 'message',
       message: { role: 'user', content: [{ type: 'text', text: '横屏' }], timestamp: AT } },

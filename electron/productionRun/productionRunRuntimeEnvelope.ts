@@ -14,6 +14,8 @@ export type ProductionRunRuntimeEnvelope = {
   providerIdempotencyKey: string;
   requestFingerprint: string;
   request: unknown;
+  /** Pixel-only snapshot of the approved outbound payload; absent on legacy/non-exact tasks. */
+  expectedImageSize?: string;
   state: RuntimeEnvelopeState;
   providerTaskId?: string;
   rawReceipt?: unknown;

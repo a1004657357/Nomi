@@ -10,6 +10,7 @@
 // 的切换；前者的消费者全都活着。混住一个文件的后果是：删 `harness/runtime/` 这个动作
 // 会同时删掉二十多个活文件唯一的类型来源。**搬走活的那一半**，旧文件对它们只留 re-export，
 // 旧通路一行逻辑不改（P1：不是第二份定义，是同一份换了住址）。
+import type { MediaImportRejection } from '../contracts/mediaImportPolicy'
 import type { ZodTypeAny } from 'zod'
 
 export interface RuntimeToolDescriptor {
@@ -18,15 +19,24 @@ export interface RuntimeToolDescriptor {
   schema: ZodTypeAny
 }
 
-export interface RuntimeToolCall {
+/**
+ * `args` 默认仍是 `unknown`——传输层大多数路口确实不知道自己在搬什么形状。
+ *
+ * 但它可以在**知道**的那条路上被收窄：`cancel_job` 的导出域那一支已经从宿主契约 schema 派生出了
+ * 模型面（`verbs/verbProjections.ts`），所以那条路上的调用带着推断出来的参数类型走，宿主字段
+ * 改名时是 tsc 红而不是运行期静默。2026-09-18 的交接文档把 `args: unknown` 列为「整个问题的物理
+ * 原因」：类型一旦抹平，两份 schema 就永远不可能在编译期对上账。这个类型参数是把那句话反过来用的
+ * 第一处——**一条路一条路地收**，不是一次改全部（默认值保证其余调用点逐字不变）。
+ */
+export interface RuntimeToolCall<TArgs = unknown> {
   toolCallId: string
   toolName: string
-  args: unknown
+  args: TArgs
 }
 
 export type RuntimeToolDecision =
   | { ok: true; result?: unknown; effectiveArgs?: Record<string, unknown>; overridesDelta?: Record<string, unknown>; silent?: boolean; proposalId?: string; approvalScope?: 'once' | 'session' | 'always' }
-  | { ok: false; message?: string; code?: string; denied?: boolean }
+  | { ok: false; message?: string; code?: string; reason?: MediaImportRejection['reason']; denied?: boolean }
 
 export interface RuntimeToolCallRecord extends RuntimeToolCall {
   status: 'ok' | 'denied' | 'cancelled' | 'error'

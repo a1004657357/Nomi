@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { IconX } from '@tabler/icons-react'
@@ -40,6 +40,12 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
     coverChildren()
     const observer = new MutationObserver(coverChildren)
     if (canvasViewport) observer.observe(canvasViewport, { childList: true })
+    // 遮罩只有 40% 黑：`inert` 只挡得住交互，挡不住「看见」——工具条、导航栈、节点浮条
+    // 会继续浮在大图上面（2026-09-11 迁移等价审计 §③ 行 4；规则被 `903d992f6` 误删）。
+    // 收起哪些由 CSS 一处声明（reactFlow/generationCanvasReactFlow.css 的媒体预览段），
+    // 这里只负责挂/摘这面旗子，关闭后原布局与交互自动恢复。
+    const previousPreviewState = canvasViewport?.getAttribute('data-media-preview-open') ?? null
+    canvasViewport?.setAttribute('data-media-preview-open', 'true')
     closeButtonRef.current?.focus()
 
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -50,6 +56,10 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
       document.removeEventListener('keydown', handleKeyDown)
       observer.disconnect()
       for (const [child, inert] of previousInert) child.inert = inert
+      if (canvasViewport) {
+        if (previousPreviewState === null) canvasViewport.removeAttribute('data-media-preview-open')
+        else canvasViewport.setAttribute('data-media-preview-open', previousPreviewState)
+      }
       previousFocus?.focus()
     }
   }, [canvasViewport, onClose])
@@ -78,7 +88,7 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
       <span
         className={cn(
           'pointer-events-none absolute left-4 top-4 z-[2] max-w-[calc(100%-80px)] truncate rounded-full px-3 py-1.5',
-          'bg-nomi-overlay-chip-strong border border-nomi-paper/20 text-caption font-medium text-nomi-paper shadow-nomi-sm backdrop-blur-sm',
+          'bg-nomi-overlay-chip-strong border border-nomi-media-ink/20 text-caption font-medium text-nomi-media-ink shadow-nomi-sm backdrop-blur-sm',
         )}
       >
         {t('generationCommon.imagePreview.mediaHeader', { type: mediaTypeLabel, title: dialogTitle })}
@@ -88,7 +98,7 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
         type="button"
         className={cn(
           'absolute right-4 top-4 z-[3] grid size-9 place-items-center rounded-full cursor-pointer',
-          'border border-nomi-paper/20 bg-nomi-overlay-chip-strong text-nomi-paper shadow-nomi-md hover:bg-nomi-overlay-chip',
+          'border border-nomi-media-ink/20 bg-nomi-overlay-chip-strong text-nomi-media-ink shadow-nomi-md hover:bg-nomi-overlay-chip',
           'focus-visible:outline-2 focus-visible:outline-nomi-paper focus-visible:outline-offset-2',
         )}
         aria-label={t('generationCommon.imagePreview.closeMedia')}

@@ -1,8 +1,8 @@
-export { buildVideoModelCandidates, sourceBackedVideoProfiles, videoArchetypeIdFromMeta } from "./registry";
+export { buildVideoModelCandidates, sourceBackedVideoProfiles, transportTaskKindForModeId, videoArchetypeIdFromMeta } from "./registry";
 
 // Video archetype definitions live here (canonical home). This barrel is the
 // single public surface the renderer imports from — no re-export shells in
-// src/config/modelArchetypes (P1: 搬家不留转发壳). Keep alphabetized by source module.
+// electron/shared/modelArchetypes (P1: 搬家不留转发壳). Keep alphabetized by source module.
 export { AGNES_VIDEO_ARCHETYPE } from "./agnesVideo";
 export { AGNES_VIDEO_25_ARCHETYPE, AGNES_VIDEO_25_FLASH_ARCHETYPE } from "./agnesVideo25";
 export { DREAMINA_MULTIFRAME_ARCHETYPE } from "./dreaminaMultiframe";
@@ -29,7 +29,6 @@ export { SEEDANCE_2_5_APIMART_ARCHETYPE } from "./seedance25Apimart";
 export { SEEDANCE_2_APIMART_ARCHETYPE } from "./seedanceApimart";
 export { SEEDANCE_VOLCENGINE_ARCHETYPE } from "./seedanceVolcengine";
 export { SEEDANCE_VOLCENGINE_2_5_ARCHETYPE } from "./seedanceVolcengine25";
-export { SORA_2_ARCHETYPE } from "./sora2";
 export { VEO_3_1_ARCHETYPE } from "./veo31";
 export { VIDU_Q3_ARCHETYPE } from "./viduQ3";
 export { WAN_2_7_ARCHETYPE } from "./wan27";
@@ -37,9 +36,11 @@ export { WAN_3_0_ARCHETYPE } from "./wan30";
 export { WAN_3_0_APIMART_ARCHETYPE } from "./wan30Apimart";
 
 export { modeTransportFor } from "./modeTransport";
+export { archetypeModeForModel, combineChannelForMode, referenceCombineChannelFor } from "./referenceChannels";
+export type { ReferenceCombineChannel } from "./referenceChannels";
 export { applyMergeProposal, applySplitProposal, resolveGenerationPlan } from "./planResolver";
 export { GenerationResolveErrorCode } from "./planResolutionContracts";
-export { canonicalVideoVariantId, effectiveVideoModes, recommendVideoGeneration } from "./recommendation";
+export { effectiveVideoModes, recommendVideoGeneration } from "./recommendation";
 export type {
   VideoCatalogModel,
 } from "./registry";

@@ -33,6 +33,8 @@ export type NewNomiEvent = Omit<NomiEvent, "v" | "seq" | "ts">;
 export type AgentEventType =
   | "agent.turn.started" //   { sessionId, skillKey, promptHead }
   | "agent.turn.finished" //  { sessionId, status: "ok"|"error"|"aborted", finalTextHead, finalTextSha256?, stepCount?, usage? }
+  | "agent.turn.configured" // { vendorKey, modelKey, skillKey, allowedTools, playbook? }
+  | "agent.step.finished" //   { sessionId, stepIndex, finishReason }
   | "agent.tool.proposed" //  { toolCallId, toolName, args }
   | "agent.tool.completed" // { toolCallId, toolName, ok, resultHead }
   | "agent.proposal.approved" // { toolCallId, effectiveArgs?, overridesDelta? } —— S6-0 起携对账快照+偏好增量

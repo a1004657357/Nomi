@@ -1,0 +1,33 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-browser-ci-host",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "滚动 CI 主机越过锁定浏览器支持范围",
+  "symptom": "PR #2 的 Unit 和 Linux E2E 在安装 Chromium 时失败，实际测试未启动。",
+  "direct_cause": "ubuntu-latest 已解析为 Ubuntu 26.04，锁定的 Playwright 1.60.0 拒绝 chromium on ubuntu26.04-x64。",
+  "class_root": "浏览器验收主机使用滚动发行版，却没有把宿主发行版和锁定浏览器依赖的支持范围一起约束。",
+  "affected_population": ["Unit 浏览器集成测试", "Linux 桌面、画布、性能及核心冒烟"],
+  "scope_paths": [".github/workflows/quality-gate.yml", "scripts/check-quality-gate-workflow.node-test.mjs"],
+  "entry_points": ["quality-gate 的五类 Linux 浏览器 job"],
+  "external_sources": [],
+  "internal_only_reason": "根因来自本仓真实 CI job 日志及锁定依赖；本次只绑定工作流宿主，不声称新库支持范围。",
+  "invariants": ["浏览器 job 固定在已支持的 Ubuntu 24.04，不依赖 ubuntu-latest 的滚动指向。"],
+  "invariant_owner_layer": {"layer": ".github/workflows/quality-gate.yml", "tests": ["scripts/check-quality-gate-workflow.node-test.mjs"]},
+  "doors": [{"kind": "write", "path": "scripts/check-quality-gate-workflow.node-test.mjs", "symbol": "runCommands"}],
+  "door_reduction": {"before": 1, "after": 1},
+  "generality_proof": "同一断言遍历所有五类浏览器 job，避免只修安装 Chromium 的两条入口而遗留同宿主的其他验收。",
+  "shared_boundaries": [{"path": ".github/workflows/quality-gate.yml", "symbol": "runs-on", "responsibility": "绑定浏览器验收的真实宿主系统。"}],
+  "same_class_entry_points": [
+    {"path": ".github/workflows/quality-gate.yml", "entry_point": "unit", "disposition": "enforced", "evidence": "依赖安装先于单测，两种单测档使用同一固定宿主。"},
+    {"path": ".github/workflows/quality-gate.yml", "entry_point": "desktop-linux", "disposition": "enforced", "evidence": "桌面、画布、核心冒烟等所有 Linux 浏览器 job 使用相同受支持发行版。"}
+  ],
+  "recurrence": {"classification": "recurring", "reason": "任何 PR 都会再次选择同一滚动宿主。", "same_class_scan": ["检查 quality-gate 全部 runs-on、Chromium 安装和 xvfb 命令，定位五类浏览器 job。"]},
+  "prevention": {"kind": "static-gate", "enforcement_path": ".github/workflows/quality-gate.yml", "invariant": "浏览器宿主是 Ubuntu 24.04。", "failure_mode": "任一浏览器 job 改回滚动主机，工作流合同回归报出 job 名。", "exception_policy": "none", "strategy": "锁定宿主，并用跨入口结构回归守住。", "artifacts": [".github/workflows/quality-gate.yml"]},
+  "regression_tests": ["scripts/check-quality-gate-workflow.node-test.mjs"],
+  "class_regression_tests": ["scripts/check-quality-gate-workflow.node-test.mjs"],
+  "legacy_paths": {"status": "not-applicable", "removed_paths": [], "rationale": "直接替换五条原宿主声明，无并行实现。"},
+  "dependency_lifecycle": {"decision": "retain-with-exit", "current": "Playwright 1.60.0 与 Chromium 锁定版本", "target": "当前依赖配合 Ubuntu 24.04；将来升级经验证后再迁移宿主", "rationale": "没有证据要求升级产品依赖，先绑定现有受支持宿主。", "exit_criteria": ["升级后的浏览器明确支持目标新宿主", "在该宿主上安装、单测与桌面走查成功后同步修改结构断言"]},
+  "migration": "仅改变 CI 宿主，不迁移用户数据、Provider 或桌面设置。",
+  "residual_risks": ["最终新提交上的云端全套结果必须重新取得；旧 Mac Package 通过不替代新 SHA。"]
+}

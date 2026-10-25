@@ -1,5 +1,5 @@
 import { IconZoomIn } from '@tabler/icons-react'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { NomiLoadingMark, WorkbenchButton } from '../../../design'
@@ -48,9 +48,10 @@ export function AnchorCheckpointCard({ model, onApprove, onDefer, onRework }: Pr
   }, [])
 
   const reworkMode = selected.size > 0
-  const budgetText = model.approvedBudget === null
-    ? t('generationCommon.production.checkpoint.budgetUnknown')
-    : formatMoney(model.approvedBudget, model.budgetCurrency, i18n.language)
+  // 说明行只在真有已知金额时才提金额；价格未知（今天的常态）就只说「都是你已经确认过的」，不出现预算两个字。
+  const note = model.approvedBudget === null
+    ? t('generationCommon.production.checkpoint.note', { count: model.shotCount })
+    : t('generationCommon.production.checkpoint.noteWithBudget', { budget: formatMoney(model.approvedBudget, model.budgetCurrency, i18n.language), count: model.shotCount })
 
   return (
     <>
@@ -99,7 +100,7 @@ export function AnchorCheckpointCard({ model, onApprove, onDefer, onRework }: Pr
                       <span
                         className={cn(
                           'absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full opacity-0 transition-opacity',
-                          'bg-nomi-overlay-chip text-nomi-paper group-hover:opacity-100',
+                          'bg-nomi-overlay-chip text-nomi-media-ink group-hover:opacity-100',
                         )}
                         aria-hidden
                       >
@@ -154,7 +155,7 @@ export function AnchorCheckpointCard({ model, onApprove, onDefer, onRework }: Pr
 
         {/* 说明行：两句承诺（不新增花费 + 只花重拍那张的钱）。零内部词。 */}
         <p className={cn('m-0 mt-4 text-caption leading-relaxed text-nomi-ink-60')} data-anchor-checkpoint-note>
-          {t('generationCommon.production.checkpoint.note', { budget: budgetText, count: model.shotCount })}
+          {note}
         </p>
       </div>
 

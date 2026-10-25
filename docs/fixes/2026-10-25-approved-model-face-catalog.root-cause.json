@@ -1,0 +1,78 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-approved-model-face-catalog",
+  "change_kind": "structural",
+  "problem_type": "经用户批准的现有定制工具没有进入精确冻结元数据",
+  "symptom": "旧批准internal21与实际27、旧快照28与实际36不等，精确冻结正确拒绝合并。",
+  "direct_cause": "已有6项创意工具与2项MCP工具、可选分镜字段及文案指导没有同步登记。",
+  "class_root": "工具面内容与人工批准的精确清单必须一致；不能用自动接受当前输出或提高容忍度替代批准。",
+  "scope_paths": [
+    "scripts/check-model-face-frozen.mjs",
+    "scripts/model-face-baseline.json",
+    "scripts/check-agent-tool-face-usecases.ts",
+    "scripts/agent-tool-face-usecases.node-test.mjs",
+    "electron/shared/agentCapabilities/registry.test.ts",
+    "electron/shared/agentCapabilities/paidBoundary.test.ts",
+    "README.md",
+    "README.zh-CN.md",
+    "docs/guide/capability-core-cli-mcp.md"
+  ],
+  "affected_population": [
+    "当前已批准集成版本的Agent与MCP工具目录"
+  ],
+  "entry_points": [
+    "check:model-face-frozen",
+    "check:agent-tool-face-usecases",
+    "registry/paidBoundary/nomiMcpProductionRuns契约"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "仅对账已存在仓内声明、共享schema与用户本轮明确批准，不新增运行期路由。",
+  "invariants": [
+    "用户明确批准现有6工具、2MCP、可选分镜字段/title；冻结精确internal27，不从实际装配反推期待数。",
+    "MCP-only仍独立计两族7+2=9；少项、字段、描述和目录顺序的变异检查必须继续失败。",
+    "旧工具没有删除，相对顺序不变；旧effect/nextAction/execution/profiles/权限字段不变。",
+    "只登记draft_shots的15个可选storyboard字段；新增字段不进入required，不改既有必填。",
+    "不改权限、自动生成、并发/请求次数、说明大小上限、付费确认、重试、Cookie或密钥。",
+    "注册表只加精确2个既有契约与别名，保留唯一alias/effectClass和内部隔离、destructiveHint反例。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "scripts/check-model-face-frozen.mjs",
+      "scripts/model-face-baseline.json",
+      "scripts/check-agent-tool-face-usecases.ts",
+      "scripts/agent-tool-face-usecases.node-test.mjs",
+      "electron/shared/agentCapabilities/registry.test.ts",
+      "electron/shared/agentCapabilities/paidBoundary.test.ts",
+      "README.md",
+      "README.zh-CN.md",
+      "docs/guide/capability-core-cli-mcp.md"
+    ],
+    "preserved_exports": [],
+    "behavior_preservation": "用户在call_f4ca.../call_cbf8.../call_7927...三条确认中明确允许更新精确清单。候选独立审计：28→36，8新增、0删除、旧相对顺序不变；10旧工具仅指导/描述更新，draft_shots另有15可选分镜属性。所有生产权限/执行字段逐项不变。正式baseline由原序列化器生成，保留后续逐字节拒绝与变异验红。",
+    "verification_limits": "批准不代表测试已通过；须实际运行冻结变异、tool-face预算与用例/registry/MCP契约，并继续独立验收。"
+  },
+  "regression_tests": [
+    "scripts/check-model-face-frozen.node-test.mjs",
+    "scripts/agent-tool-face-usecases.node-test.mjs",
+    "electron/shared/agentCapabilities/registry.test.ts",
+    "electron/shared/agentCapabilities/paidBoundary.test.ts",
+    "electron/capabilityCore/nomiMcpProductionRuns.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "不删除旧工具、检查或执行路径，只登记明确批准的既有增量。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "不改依赖或投影器，使用现有canonical快照生成方法。",
+    "exit_criteria": []
+  },
+  "migration": "不访问日常项目；更新人工批准的元数据与文档，不迁移账号、模型设置或素材。",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "未批准的未来改动仍应红；此次许可只覆盖当前已审计目录。",
+    "最终全仓、视觉和post-merge收据未完成，不得预先称已解决。"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-r5-director-native-reexport",
+  "change_kind": "structural",
+  "scope_paths": ["electron/ai/vibingDirectorTools.ts", "docs/engineering/self-written.json"],
+  "regression_tests": ["electron/shared/vibingDirectorPlan.test.ts"],
+  "structural_evidence": {
+    "affected_paths": ["electron/ai/vibingDirectorTools.ts", "docs/engineering/self-written.json"],
+    "behavior_preservation": "The native module now re-exports the same wire schemas, parser, tool names and types from the neutral owner. Identity tests and unchanged wire serialization prove no native function wrapper or weaker parser. The existing exact self-written owner path moves, with no new entry, domain root, reason or budget. This pure export shim has no runtime AST use door; the corrective neutral/display contract remains separate and retains its generated door map.",
+    "verification_limits": "Only focused offline tests, compiler key-flow probes and contract shape validation. Full typecheck/boundaries/gates belong to the coordinator after screenshots. No App, screenshot, Provider or final independent author review.",
+    "preserved_exports": [
+      {"path":"electron/ai/vibingDirectorTools.ts","name":"readVibingDirectorParamsSchema"},
+      {"path":"electron/ai/vibingDirectorTools.ts","name":"applyVibingDirectorPlanParamsSchema"},
+      {"path":"electron/ai/vibingDirectorTools.ts","name":"parseVibingDirectorPlanRequest"},
+      {"path":"electron/ai/vibingDirectorTools.ts","name":"vibingDirectorToolNames"},
+      {"path":"electron/ai/vibingDirectorTools.ts","name":"VibingDirectorPlanRequest"},
+      {"path":"electron/ai/vibingDirectorTools.ts","name":"VibingDirectorToolName"}
+    ]
+  }
+}

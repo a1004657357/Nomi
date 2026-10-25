@@ -50,6 +50,51 @@ function isAlive(pid) {
   }
 }
 
+function balancedJsonObjectAt(value, start) {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      continue
+    }
+    if (char === '{') depth += 1
+    else if (char === '}') {
+      depth -= 1
+      if (depth === 0) return value.slice(start, index + 1)
+    }
+  }
+  return ''
+}
+
+/** Electron may log before or after the host response; extract the last complete `{ ok, ... }` object safely. */
+export function extractHostResponse(stdout) {
+  const value = String(stdout || '')
+  const starts = []
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '{') starts.push(index)
+  }
+  for (let index = starts.length - 1; index >= 0; index -= 1) {
+    const candidate = balancedJsonObjectAt(value, starts[index])
+    if (!candidate) continue
+    try {
+      const parsed = JSON.parse(candidate)
+      if (parsed && typeof parsed === 'object' && typeof parsed.ok === 'boolean') return parsed
+    } catch {
+      /* not the host JSON object */
+    }
+  }
+  return null
+}
+
 export function readLiveInstance() {
   let parsed
   try {
@@ -147,8 +192,8 @@ function callViaHost(token, method, params, spawnEnv) {
       settled = true
       clearTimeout(killTimer)
       try {
-        const match = stdout.trim().match(/\{[\s\S]*\}$/)
-        const body = JSON.parse(match ? match[0] : stdout)
+        const body = extractHostResponse(stdout)
+        if (!body) throw new Error('missing host response')
         if (!body.ok) reject(new Error(body.error || 'host 失败'))
         else resolve(body.result)
       } catch {

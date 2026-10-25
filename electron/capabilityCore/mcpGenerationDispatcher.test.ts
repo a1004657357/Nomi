@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { dispatch, RpcError } from './dispatcher'
 import type { McpConnectionContext } from './mcpConnectionContext'
-import { createMcpGenerationPolicy } from './mcpGenerationPolicy'
 import { ProjectBindingStaleError, createProjectLeaseAuthority } from './projectLease'
 import { createProjectLeaseStore } from './projectLeaseStore'
 import { createProjectSessionAuthority } from './projectSessionAuthority'
 import { createApprovalReceiptAuthority } from './approvalReceipt'
+import { MCP_TOOL_RESOLVER } from './mcpToolCatalog'
 
 const tempDirs: string[] = []
 
@@ -71,12 +71,10 @@ async function makeLease(
 
 function makeProjectSession(
   leaseAuthority: ReturnType<typeof createProjectLeaseAuthority>,
-  generationPolicy: ReturnType<typeof createMcpGenerationPolicy>,
 ) {
   return {
     authority: createProjectSessionAuthority({
       leaseAuthority,
-      generationPolicy,
       resolveProjectSelection: async () => ({ ...projectIdentity, manifestDigest: 'manifest-digest-1' }),
     }),
     connection,
@@ -125,17 +123,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
 
-function policy(options: { enabled?: boolean; p0Passed?: boolean; p2Passed?: boolean; p3Passed?: boolean } = {}) {
-  return createMcpGenerationPolicy({
-    env: { NOMI_MCP_GENERATION_SINGLE_SHOT_V1: options.enabled === true ? '1' : '' },
-    checkpoints: {
-      p0Passed: options.p0Passed === true,
-      p2Passed: options.p2Passed === true,
-      p3Passed: options.p3Passed === true,
-    },
-  })
-}
-
 function context(overrides: Record<string, unknown> = {}) {
   const productionRuns = {
     createDraft: vi.fn(async () => ({ runId: 'run-1', status: 'draft' })),
@@ -152,83 +139,175 @@ function context(overrides: Record<string, unknown> = {}) {
       makeGateway: vi.fn(() => { throw new Error('semantic stubs must not resolve a canvas gateway') }),
       productionRuns,
       origin: { host: 'external' as const },
-      generationPolicy: policy({ enabled: true }),
       ...overrides,
     },
   }
 }
 
 describe('generation.single-shot dispatcher policy boundary', () => {
-  it('returns a typed feature_disabled error before any semantic service call', async () => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy() })
-
-    await expect(dispatch('nomi_operation_create', { projectId: 'project-1' }, ctx as never))
-      .rejects.toMatchObject({
-        code: 'feature_disabled',
-        nextAction: expect.any(String),
-        phase: 'schema_only',
-        capability: 'create',
-      })
-    expect(productionRuns.createDraft).not.toHaveBeenCalled()
+  it('keeps the custom batch route local and rejects semantic bindings before any renderer call', async () => {
+    const runGenerationBatch = vi.fn(async () => ({ awaitingConfirmation: true }))
+    const authority = makeAuthority()
+    const leaseHandle = await makeLease(authority, 'project-1', ['generation:plan'])
+    const { ctx } = context({ runGenerationBatch, projectSession: makeProjectSession(authority) })
+    await expect(dispatch('generation.batch', {
+      projectId: 'project-1', nodeIds: ['node-1'], params: { operationId: 'sealed-operation' },
+    }, ctx as never)).rejects.toMatchObject({ code: 'legacy_path_forbidden', capability: 'start' })
+    expect(runGenerationBatch).not.toHaveBeenCalled()
+    await expect(dispatch('generation.batch', {
+      projectId: 'project-1', nodeIds: ['node-1'],
+    }, ctx as never)).rejects.toMatchObject({ code: 'lease_required' })
+    await expect(dispatch('generation.batch', {
+      projectId: 'project-1', leaseHandle, nodeIds: ['node-2', 'node-1', 'node-2', ' node-3 '],
+    }, ctx as never)).resolves.toEqual({ awaitingConfirmation: true })
+    expect(runGenerationBatch).toHaveBeenCalledExactlyOnceWith('project-1', ['node-2', 'node-1', 'node-3'])
     expect(ctx.runTask).not.toHaveBeenCalled()
     expect(ctx.makeGateway).not.toHaveBeenCalled()
   })
 
-  it('returns phase_not_ready for write-like semantic routes before P0/P2', async () => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy({ enabled: true }) })
+  it.each(['director.render', 'generation.batch'])('requires exact project and scope before local %s effects', async (method) => {
+    const authority = makeAuthority()
+    const leaseHandle = await makeLease(authority, 'project-1', ['canvas:read'])
+    const runDirector = vi.fn()
+    const runGenerationBatch = vi.fn()
+    const { ctx } = context({ runDirector, runGenerationBatch, projectSession: makeProjectSession(authority) })
+    const fields = method === 'director.render' ? { sourceNodeId: 'scene-node' } : { nodeIds: ['node-1'] }
+    await expect(dispatch(method, { projectId: 'project-1', leaseHandle, ...fields }, ctx as never))
+      .rejects.toMatchObject({ code: 'project_scope_changed' })
+    await expect(dispatch(method, { projectId: 'project-2', leaseHandle, ...fields }, ctx as never))
+      .rejects.toMatchObject({ httpStatus: 403 })
+    expect(runDirector).not.toHaveBeenCalled()
+    expect(runGenerationBatch).not.toHaveBeenCalled()
+    expect(ctx.makeGateway).not.toHaveBeenCalled()
+  })
 
-    await expect(dispatch('nomi_start_generation', { runId: 'run-1' }, ctx as never))
-      .rejects.toMatchObject({
-        code: 'phase_not_ready',
-        nextAction: expect.any(String),
-        phase: 'schema_only',
-        capability: 'start',
-      })
+  it.each(['preApprovedSpend', 'spendConfirmed', 'approved', 'grantId', 'receiptId', 'operationId'])('never accepts caller-owned %s on a local batch request', async (field) => {
+    const authority = makeAuthority()
+    const leaseHandle = await makeLease(authority, 'project-1', ['generation:plan'])
+    const runGenerationBatch = vi.fn()
+    const { ctx } = context({ runGenerationBatch, projectSession: makeProjectSession(authority) })
+    await expect(dispatch('generation.batch', {
+      projectId: 'project-1', leaseHandle, nodeIds: ['node-1'], [field]: true,
+    }, ctx as never)).rejects.toBeInstanceOf(RpcError)
+    expect(runGenerationBatch).not.toHaveBeenCalled()
+    expect(ctx.runTask).not.toHaveBeenCalled()
+  })
+
+  it.each([[], [''], [1], Array(25).fill('node-1')].map((nodeIds) => ({ nodeIds })))('rejects invalid local batch node IDs $nodeIds before UI admission', async ({ nodeIds }) => {
+    const authority = makeAuthority()
+    const leaseHandle = await makeLease(authority, 'project-1', ['generation:plan'])
+    const runGenerationBatch = vi.fn()
+    const { ctx } = context({ runGenerationBatch, projectSession: makeProjectSession(authority) })
+    await expect(dispatch('generation.batch', { leaseHandle, nodeIds }, ctx as never)).rejects.toMatchObject({ httpStatus: 400 })
+    expect(runGenerationBatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps the consolidated catalog and exposes only lease-scoped custom local operations', () => {
+    expect(MCP_TOOL_RESOLVER.resolve('nomi_read')?.resolveMethod?.({ target: 'canvas' })).toBe('canvas.read')
+    expect(MCP_TOOL_RESOLVER.resolve('nomi_operation_execute')?.method).toBe('nomi_start_generation')
+    for (const name of ['nomi_generate', 'nomi_read_canvas', 'nomi_list_projects', 'nomi_add_nodes']) {
+      expect(MCP_TOOL_RESOLVER.resolve(name)).toBeUndefined()
+    }
+    for (const [name, method] of [['nomi_render_director', 'director.render'], ['nomi_generate_batch', 'generation.batch']]) {
+      const tool = MCP_TOOL_RESOLVER.resolve(name)
+      expect(tool?.method).toBe(method)
+      expect((tool?.inputSchema as { required?: readonly string[] })?.required).toContain('leaseHandle')
+      expect(tool?.inputSchema.additionalProperties).toBe(false)
+      expect(tool?.build({ leaseHandle: 'lease', nodeIds: ['node-2', 'node-1'], sourceNodeId: 'scene', preApprovedSpend: true }))
+        .not.toHaveProperty('preApprovedSpend')
+    }
+    expect(MCP_TOOL_RESOLVER.resolve('nomi_generate_batch')?.annotations).toMatchObject({ destructiveHint: true })
+  })
+
+  it('rechecks the director lease before applying a late local render result', async () => {
+    const authority = makeAuthority()
+    const leaseHandle = await makeLease(authority, 'project-1', ['canvas:write'])
+    const apply = vi.fn()
+    const snapshot = { nodes: [{ id: 'scene-node', kind: 'scene3d', title: 'Scene', position: { x: 0, y: 0 } }], edges: [], groups: [], selectedNodeIds: [] }
+    const runDirector = vi.fn(async () => {
+      authority.revoke(leaseHandle)
+      return { jobId: 'local-preview', preview: { url: 'nomi-local://preview' },
+        blend: { url: 'nomi-local://blend' }, model: { url: 'nomi-local://model' } }
+    })
+    const { ctx } = context({
+      runDirector, projectSession: makeProjectSession(authority),
+      makeGateway: () => ({ readDoc: async () => snapshot, apply }),
+    })
+    await expect(dispatch('director.render', { leaseHandle, sourceNodeId: 'scene-node' }, ctx as never))
+      .rejects.toMatchObject({ code: 'lease_revoked' })
+    expect(runDirector).toHaveBeenCalledOnce()
+    expect(apply).not.toHaveBeenCalled()
+    expect(ctx.runTask).not.toHaveBeenCalled()
+  })
+
+  it.each(['director.render', 'generation.batch'])('reports unavailable desktop hooks for %s without a fallback', async (method) => {
+    const authority = makeAuthority()
+    const leaseHandle = await makeLease(authority, 'project-1', ['canvas:write', 'generation:plan'])
+    const { ctx } = context({ projectSession: makeProjectSession(authority) })
+    await expect(dispatch(method, { leaseHandle,
+      ...(method === 'director.render' ? { sourceNodeId: 'scene-node' } : { nodeIds: ['node-1'] }),
+    }, ctx as never)).rejects.toMatchObject({ httpStatus: 501 })
+    expect(ctx.runTask).not.toHaveBeenCalled()
+    expect(ctx.makeGateway).not.toHaveBeenCalled()
+  })
+
+  // 2026-09-21：这里曾经有两条断言钉住「默认关」——`feature_disabled` 与 `phase_not_ready`。
+  // 两个 env flag 与三段式 rollout 一起删了（用户拍板「这版要开」），于是这两个码不再存在。
+  // 顶替它们的是下面这条：**没有任何环境变量能把语义路打回去**，调用停在真正该停的地方（缺租约）。
+  it('语义路不再被任何环境变量打回；它停在缺租约那一步', async () => {
+    const { ctx, productionRuns } = context({})
+    const before = process.env.NOMI_MCP_GENERATION_SINGLE_SHOT_V1
+    process.env.NOMI_MCP_GENERATION_SINGLE_SHOT_V1 = '0'
+    try {
+      await expect(dispatch('nomi_operation_create', { projectId: 'project-1' }, ctx as never))
+        .rejects.toMatchObject({ code: 'lease_required', capability: 'create' })
+      await expect(dispatch('nomi_start_generation', { runId: 'run-1' }, ctx as never))
+        .rejects.toMatchObject({ code: 'lease_required', capability: 'start' })
+    } finally {
+      if (before === undefined) delete process.env.NOMI_MCP_GENERATION_SINGLE_SHOT_V1
+      else process.env.NOMI_MCP_GENERATION_SINGLE_SHOT_V1 = before
+    }
+    expect(productionRuns.createDraft).not.toHaveBeenCalled()
     expect(productionRuns.command).not.toHaveBeenCalled()
     expect(ctx.runTask).not.toHaveBeenCalled()
     expect(ctx.makeGateway).not.toHaveBeenCalled()
   })
 
-  it('fails closed with not_ready even when the policy phase would allow a write', async () => {
+  it('缺租约就停在缺租约那一步，不会穿到任何生产服务', async () => {
     const { ctx, productionRuns } = context({
-      generationPolicy: policy({ enabled: true, p0Passed: true, p2Passed: true }),
     })
 
     await expect(dispatch('nomi_operation_create', { projectId: 'project-1' }, ctx as never))
       .rejects.toMatchObject({
         code: 'lease_required',
         nextAction: expect.any(String),
-        phase: 'e0_zero_credit',
         capability: 'create',
       })
     expect(productionRuns.createDraft).not.toHaveBeenCalled()
   })
 
   it('allows context/read only through an explicitly supplied handler', async () => {
-    const generationContext = vi.fn(async (params: Record<string, unknown>) => ({ params, phase: 'schema_only' }))
+    const generationContext = vi.fn(async (params: Record<string, unknown>) => ({ params }))
     const { ctx } = context({
-      generationPolicy: policy({ enabled: true, p0Passed: true, p2Passed: true }),
       generationContext,
     })
 
     await expect(dispatch('nomi_get_generation_context', { projectId: 'project-1' }, ctx as never))
-      .rejects.toMatchObject({ code: 'lease_required', capability: 'context', phase: 'e0_zero_credit' })
+      .rejects.toMatchObject({ code: 'lease_required', capability: 'context' })
     expect(generationContext).not.toHaveBeenCalled()
   })
 
   it('accepts only a verified project lease before invoking semantic context/read', async () => {
-    const generationContext = vi.fn(async (params: Record<string, unknown>) => ({ params, phase: 'e0_zero_credit' }))
+    const generationContext = vi.fn(async (params: Record<string, unknown>) => ({ params }))
     const liveAuthority = makeAuthority()
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true })
     const { ctx } = context({
-      generationPolicy,
       generationContext,
-      projectSession: makeProjectSession(liveAuthority, generationPolicy),
+      projectSession: makeProjectSession(liveAuthority),
     })
     const liveLease = await makeLease(liveAuthority)
 
     await expect(dispatch('nomi_get_generation_context', { projectId: 'project-1', leaseHandle: liveLease }, ctx as never))
-      .resolves.toEqual({ params: { projectId: 'project-1', leaseHandle: liveLease }, phase: 'e0_zero_credit' })
+      .resolves.toEqual({ params: { projectId: 'project-1', leaseHandle: liveLease } })
     expect(generationContext).toHaveBeenCalledTimes(1)
     await expect(dispatch('nomi_get_generation_context', { projectId: 'project-2', leaseHandle: liveLease }, ctx as never))
       .rejects.toMatchObject({ code: 'project_scope_changed', capability: 'context' })
@@ -240,10 +319,8 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   it('preserves project_binding_stale from the project-session authority without matching its message', async () => {
     const generationContext = vi.fn()
     const liveAuthority = makeAuthority()
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true })
-    const projectSession = makeProjectSession(liveAuthority, generationPolicy)
+    const projectSession = makeProjectSession(liveAuthority)
     const { ctx } = context({
-      generationPolicy,
       generationContext,
       projectSession: {
         ...projectSession,
@@ -267,7 +344,6 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   it('routes editable semantic planning through one shared handler without touching a provider', async () => {
     const leaseAuthority = makeAuthority()
     const leaseHandle = await makeLease(leaseAuthority, 'project-1', ['generation:create', 'generation:plan', 'generation:preview'])
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true })
     const generationPlanning = vi.fn(async (input: { capability: string; params: Record<string, unknown>; lease: { projectId: string } }) => ({
       capability: input.capability,
       projectId: input.lease.projectId,
@@ -276,8 +352,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
       nextAction: 'preview',
     }))
     const { ctx } = context({
-      generationPolicy,
-      projectSession: makeProjectSession(leaseAuthority, generationPolicy),
+      projectSession: makeProjectSession(leaseAuthority),
       generationPlanning,
     })
 
@@ -300,15 +375,13 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   it('lets the same shared handler serve context/read when no second context owner exists', async () => {
     const leaseAuthority = makeAuthority()
     const leaseHandle = await makeLease(leaseAuthority, 'project-1', ['context:read'])
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true })
     const generationPlanning = vi.fn(async (input: { capability: string; lease: { projectId: string } }) => ({
       capability: input.capability,
       projectId: input.lease.projectId,
       nextAction: 'create',
     }))
     const { ctx } = context({
-      generationPolicy,
-      projectSession: makeProjectSession(leaseAuthority, generationPolicy),
+      projectSession: makeProjectSession(leaseAuthority),
       generationPlanning,
     })
 
@@ -321,10 +394,8 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     const leaseAuthority = makeAuthority()
     const leaseHandle = await makeLease(leaseAuthority, 'project-1', ['generation:gate'])
     const approval = makeApprovalReceipt()
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true, p3Passed: true })
     const { ctx } = context({
-      generationPolicy,
-      projectSession: makeProjectSession(leaseAuthority, generationPolicy),
+      projectSession: makeProjectSession(leaseAuthority),
       approvalReceiptAuthority: approval.authority,
       projectRevisionResolver: () => 1,
     })
@@ -334,7 +405,6 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     }, ctx as never)).rejects.toMatchObject({
       code: 'human_approval_required',
       capability: 'gate_decide',
-      phase: 'e1_paid',
     })
 
     await expect(dispatch('nomi_decide_generation_gate', {
@@ -343,7 +413,6 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     }, ctx as never)).rejects.toMatchObject({
       code: 'not_ready',
       capability: 'gate_decide',
-      phase: 'e1_paid',
     })
     await expect(dispatch('nomi_decide_generation_gate', {
       projectId: 'project-1', leaseHandle, runId: 'run-1', gateId: 'gate-1',
@@ -360,15 +429,13 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     const leaseAuthority = makeAuthority()
     const leaseHandle = await makeLease(leaseAuthority, 'project-1', ['generation:gate'])
     const approval = makeApprovalReceipt()
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true, p3Passed: true })
     const authorizeGeneration = vi.fn(async (input: { lease: unknown; receipt: { receiptId: string }; params: Record<string, unknown> }) => ({
       status: 'authorization_committed',
       receiptId: input.receipt.receiptId,
       projectId: input.params.projectId,
     }))
     const { ctx } = context({
-      generationPolicy,
-      projectSession: makeProjectSession(leaseAuthority, generationPolicy),
+      projectSession: makeProjectSession(leaseAuthority),
       approvalReceiptAuthority: approval.authority,
       projectRevisionResolver: () => 1,
       authorizeGeneration,
@@ -388,8 +455,10 @@ describe('generation.single-shot dispatcher policy boundary', () => {
       projectId: 'project-1',
       scopeSet: expect.arrayContaining(['generation:gate', 'generation:submit']),
     })
+    const authorizedLeaseHandle = authorizeGeneration.mock.calls[0]?.[0].params.leaseHandle
+    if (typeof authorizedLeaseHandle !== 'string') throw new Error('Expected a signed lease handle')
     await expect(leaseAuthority.verifyLease(
-      String(authorizeGeneration.mock.calls[0]?.[0].params.leaseHandle),
+      authorizedLeaseHandle,
       { connection },
     )).resolves.toMatchObject({
       scopeSet: expect.arrayContaining(['generation:submit']),
@@ -401,7 +470,6 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   it('returns one server-owned generation challenge projection before any provider or spend call', async () => {
     const leaseAuthority = makeAuthority()
     const leaseHandle = await makeLease(leaseAuthority, 'project-1', ['generation:gate'])
-    const generationPolicy = policy({ enabled: true, p0Passed: true, p2Passed: true, p3Passed: true })
     const requestGenerationGate = vi.fn(async (input: { lease: { projectId: string }; params: Record<string, unknown> }) => ({
       challengeId: 'challenge-1',
       confirmationText: '允许 Nomi 在当前项目使用模型 X，最多花费 ¥5，生成这一镜吗？',
@@ -410,8 +478,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
       maximumCost: 5,
     }))
     const { ctx } = context({
-      generationPolicy,
-      projectSession: makeProjectSession(leaseAuthority, generationPolicy),
+      projectSession: makeProjectSession(leaseAuthority),
       requestGenerationGate,
     })
 
@@ -427,14 +494,14 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   })
 
   it('returns not_ready for context/read when no handler exists', async () => {
-    const { ctx } = context({ generationPolicy: policy({ enabled: true }) })
+    const { ctx } = context({})
 
     await expect(dispatch('nomi_get_generation_context', {}, ctx as never))
-      .rejects.toMatchObject({ code: 'not_ready', capability: 'context', phase: 'schema_only' })
+      .rejects.toMatchObject({ code: 'not_ready', capability: 'context' })
   })
 
   it('keeps legacy production.start behaviour when no semantic fields are present', async () => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy() })
+    const { ctx, productionRuns } = context({})
 
     await expect(dispatch('production.start', {
       projectId: 'project-1', playbook: 'brand.promo', brief: { goal: 'legacy draft' },
@@ -443,7 +510,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   })
 
   it('firewalls legacy routes carrying P3 semantic bindings before any service call', async () => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy() })
+    const { ctx, productionRuns } = context({})
 
     await expect(dispatch('production.start', {
       projectId: 'project-1', playbook: 'brand.promo', brief: { goal: 'must not route' },
@@ -451,14 +518,13 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     }, ctx as never)).rejects.toMatchObject({
       code: 'legacy_path_forbidden',
       nextAction: expect.any(String),
-      phase: 'schema_only',
       capability: 'create',
     })
     expect(productionRuns.createDraft).not.toHaveBeenCalled()
   })
 
   it('firewalls the actual generate dispatcher method before it can reach the provider path', async () => {
-    const { ctx } = context({ generationPolicy: policy() })
+    const { ctx } = context({})
 
     await expect(dispatch('generate', {
       projectId: 'project-1', vendor: 'provider', modelKey: 'model', intent: 'image', prompt: 'legacy',
@@ -466,7 +532,6 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     }, ctx as never)).rejects.toMatchObject({
       code: 'legacy_path_forbidden',
       capability: 'create',
-      phase: 'schema_only',
     })
     expect(ctx.runTask).not.toHaveBeenCalled()
     expect(ctx.makeGateway).not.toHaveBeenCalled()
@@ -479,7 +544,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     'authorizationEnvelope', 'authorizationDigest', 'authorizationGateId', 'providerWirePayloadHash',
     'pricingSnapshotHash', 'gateId',
   ])('firewalls canonical binding marker %s on generate', async (field) => {
-    const { ctx } = context({ generationPolicy: policy() })
+    const { ctx } = context({})
     await expect(dispatch('generate', {
       projectId: 'project-1', vendor: 'provider', modelKey: 'model', intent: 'image', prompt: 'legacy',
       [field]: 'sealed-value',
@@ -489,7 +554,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   })
 
   it.each(['moduleRef', 'candidate', 'providerId'])('firewalls nested canonical wrapper marker %s inside generate params', async (field) => {
-    const { ctx } = context({ generationPolicy: policy() })
+    const { ctx } = context({})
     await expect(dispatch('generate', {
       projectId: 'project-1', vendor: 'provider', modelKey: 'model', intent: 'image', prompt: 'legacy',
       params: { runtime: { [field]: { runId: 'run-1' } } },
@@ -501,7 +566,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   it('fails closed on excessively deep legacy payloads', async () => {
     let nested: Record<string, unknown> = { leaf: true }
     for (let index = 0; index < 40; index += 1) nested = { nested }
-    const { ctx } = context({ generationPolicy: policy() })
+    const { ctx } = context({})
     await expect(dispatch('generate', {
       projectId: 'project-1', vendor: 'provider', modelKey: 'model', intent: 'image', prompt: 'legacy', params: nested,
     }, ctx as never)).rejects.toMatchObject({ code: 'legacy_path_forbidden' })
@@ -509,13 +574,13 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   })
 
   it('does not change unknown method errors', async () => {
-    const { ctx } = context({ generationPolicy: policy({ enabled: true }) })
+    const { ctx } = context({})
     await expect(dispatch('nomi_unknown_generation_method', {}, ctx as never))
       .rejects.toMatchObject({ httpStatus: 404, message: '未知方法: nomi_unknown_generation_method' })
   })
 
   it('keeps runId-only production.control compatibility while rejecting a semantic binding', async () => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy() })
+    const { ctx, productionRuns } = context({})
     await dispatch('production.control', { projectId: 'project-1', runId: 'run-1', action: 'pause' }, ctx as never)
     expect(productionRuns.command).toHaveBeenCalledTimes(1)
 
@@ -534,7 +599,7 @@ describe('generation.single-shot dispatcher policy boundary', () => {
     'production.artifact.review',
     'production.storyboard.materialize',
   ])('firewalls semantic bindings on legacy %s before read/write services', async (method) => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy() })
+    const { ctx, productionRuns } = context({})
     await expect(dispatch(method, {
       projectId: 'project-1', runId: 'run-1', artifactId: 'artifact-1', leaseHandle: 'lease-1',
     }, ctx as never)).rejects.toMatchObject({
@@ -548,20 +613,20 @@ describe('generation.single-shot dispatcher policy boundary', () => {
   })
 
   it('does not infer a P3 binding from bare legacy identifiers', async () => {
-    const { ctx, productionRuns } = context({ generationPolicy: policy() })
+    const { ctx, productionRuns } = context({})
     await expect(dispatch('production.get', { projectId: 'project-1', runId: 'run-1' }, ctx as never))
       .resolves.toMatchObject({ runId: 'run-1' })
     expect(productionRuns.readProjection).toHaveBeenCalledWith('project-1', 'run-1')
   })
 
   it('exposes policy errors as RpcError instances', async () => {
-    const { ctx } = context({ generationPolicy: policy() })
+    const { ctx } = context({})
     try {
       await dispatch('nomi_operation_create', {}, ctx as never)
       throw new Error('expected dispatch to reject')
     } catch (error) {
       expect(error).toBeInstanceOf(RpcError)
-      expect(error).toMatchObject({ code: 'feature_disabled', capability: 'create' })
+      expect(error).toMatchObject({ code: 'lease_required', capability: 'create' })
     }
   })
 })

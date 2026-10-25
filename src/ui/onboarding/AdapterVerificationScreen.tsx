@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { Group, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconRefresh } from '@tabler/icons-react'
@@ -15,6 +15,7 @@ import {
   shouldShowAdapterModelRecovery,
 } from './adapterVerificationViewModel'
 import { adapterFailureAdvice } from './adapterFailureAdvice'
+import { FeedbackButton } from '../community/FeedbackButton'
 import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 
 const MODE_LABEL_KEYS: Record<string, string> = {
@@ -220,6 +221,7 @@ export function AdapterVerificationScreen({
                   httpStatus: failure.httpStatus,
                   stage: failure.stage,
                   compileFailureReason: failure.compileFailureReason,
+                  selfCheckReason: failure.selfCheckReason,
                 })
                 const status = failure.httpStatus
                   ? String(failure.httpStatus)
@@ -253,6 +255,19 @@ export function AdapterVerificationScreen({
                           {t('onboardingProviders.adapterVerification.action.manualSetup')}
                         </DesignButton>
                       ) : null}
+                      {/* 失败面之一（四处共用同一颗钮 + 同一张卡）。那句人话由**适配器域自己的
+                          owner** 给：`adapterFailureAdvice` 已经把 reasonKey 算出来了，这里直接取它的译文。 */}
+                      <FeedbackButton
+                        request={{
+                          intent: 'problem',
+                          surface: 'model-validation',
+                          stage: 'model',
+                          errorKind: advice.reasonKey,
+                          summary: t(`onboardingProviders.adapterVerification.why.${advice.reasonKey}` as 'onboardingProviders.adapterVerification.why.unknown', { status }),
+                          provider: run.vendorKey,
+                          model: model.modelKey,
+                        }}
+                      />
                     </Group>
                     {failure.error ? (
                       <details className="text-micro text-nomi-ink-40">

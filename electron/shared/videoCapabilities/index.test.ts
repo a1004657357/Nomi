@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { APIMART_VIDEO_MODELS } from "../../catalog/apimartVideos";
 import { applyBuiltinSeeds } from "../../catalog/seedBuiltins";
 import type { CatalogState } from "../../catalog/types";
-import { getArchetypeById } from "../../../src/config/modelArchetypes";
+import { getArchetypeById } from "../modelArchetypes";
 import {
   SEEDANCE_2_APIMART_ARCHETYPE,
   buildVideoModelCandidates,
@@ -13,7 +13,7 @@ import {
 
 describe("shared video capability registry", () => {
   it("does not reject references just because the provider has not published a maximum", () => {
-    const [base] = buildVideoModelCandidates([{ provider: "apimart", modelKey: "sora-2", label: "Sora", archetypeId: "sora-2" }]);
+    const [base] = buildVideoModelCandidates([{ provider: "apimart", modelKey: "kling-v3", label: "可灵 3.0", archetypeId: "kling-3.0" }]);
     const candidate = { ...base!, archetype: { ...base!.archetype,
       modes: base!.archetype.modes.map(mode => ({ ...mode, slots: mode.slots.map(slot => ({ ...slot, max: undefined })) })),
     } };
@@ -35,7 +35,10 @@ describe("shared video capability registry", () => {
       "doubao-seedance-2.0-fast",
       "doubao-seedance-2.0-mini",
     ]);
-    expect(candidates.map((candidate) => candidate.variantId)).toEqual(["standard", "fast", "mini"]);
+    // 基础行 `doubao-seedance-2.0` 是**默认变体**（fast），不是拿模型名反推出的 standard——这条断言以前钉的
+    // 正是那个 bug：卡上显示默认的 Fast，宿主按 standard 派发、扣更贵的那一档（2026-09-26）。
+    // 变体专属行（-fast / -mini）照旧就是那个变体。判定只问 `resolveArchetypeVariant`。
+    expect(candidates.map((candidate) => candidate.variantId)).toEqual(["fast", "fast", "mini"]);
   });
 
   it("recommends from facts without any provider or app dependency", () => {

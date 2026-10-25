@@ -1,6 +1,10 @@
 # docs/plan 索引地图
 - [模型契约跨字段约束](2026-09-08-model-contract-cross-field-limits.md) — Hailuo 1080p/时长与 H3 混合参考总量。
 - [阶段 5b：目录活性 reconcile](2026-09-08-catalog-liveness-reconcile.md) — 自动禁用、保留配置、周探针与明暗样张。
+- [全仓架构治理定稿：单一事实、单向投影、入口收敛](2026-09-26-architecture-single-owner-governance.md) — 生命周期 owner、durable commit、迁移/回滚矩阵、vertical pilot 与真实验收门。
+- [架构方案质量清单与逐条审查](2026-09-26-architecture-solution-quality-checklist.md) — 16 项方案标准与当前方案的逐项结论。
+- [Phase 0：全仓架构账本与迁移准入](2026-09-26-phase-zero-architecture-ledger.md) — 606 份契约卫生、七个结构簇、owner 决策、依赖 DAG 与 Phase 1 放行条件。
+- [Phase -1：真实对象与生命周期账本执行计划](2026-09-26-phase-minus-one-lifecycle-ledger.md) — 入口矩阵、生命周期账本、提交边界、入口对账和恢复探针。
 
 > 方案/执行文档按**主题**分组的查找表。文件本身保持平铺（彼此有大量路径互链，移动会断链），本表负责「按主题/状态秒定位」。
 > 本索引仍有历史存量缺口；查不到时必须继续全量搜索。`check:docs-index` 保证缺口只减不增。
@@ -51,6 +55,7 @@
 
 | 文件 | 一句话 | 状态 |
 |---|---|---|
+| [2026-09-22-vendor-connection-identity.md](2026-09-22-vendor-connection-identity.md) | **连接身份 = 域名 + 连接名**（issue #831）：中转站同一 Base URL 卖三个分组，加第二条连接会把第一条的名字和 Key 当场顶掉。身份派生收成唯一 owner `connectionVendorKey.ts`，「这是不是某个内置家」收进 `builtinVendorIdentity` + `check:builtin-vendor-literals` 棘轮；结构评审见 [`docs/audit/2026-09-22-model-integration-layer-structure.md`](../audit/2026-09-22-model-integration-layer-structure.md) | ✅ |
 | [2026-09-11-comfyui-certification-wiring.md](2026-09-11-comfyui-certification-wiring.md) | **ComfyUI 接入主链阻断**：认证服务的三样运行时依赖被写成 optional、注册处零参构造，于是能力挂得上、真调用必炸且被 catch 洗成中性码 —— ComfyUI 实例永远停在「未启用」；接上依赖后又露出第二跳（上游任务编号被算了两遍，闸问的是没有的那一份）。修法：必填契约 + 装配收口 + 编号只有一个答案；本机真 ComfyUI 验收到真出图（[证据](2026-09-11-comfyui-cert-evidence/)）| 🚧 |
 | [2026-09-11-ai-assisted-onboarding-entry.md](2026-09-11-ai-assisted-onboarding-entry.md) | **「用 AI 帮我接入」入口**：把「让你已经在用的 AI 助手替你接模型」这条路搬到模型设置页顶部，并补上缺的那半——任务提示词 + 标准 frontmatter 的 [`agent-skills/nomi-add-model/SKILL.md`](../../agent-skills/nomi-add-model/SKILL.md)；设计定稿 [2026-09-11-ai-assisted-onboarding-entry.md](../design/2026-09-11-ai-assisted-onboarding-entry.md)、先查别人 [prior-art.md](../research/2026-09-11-ai-assisted-onboarding-entry/prior-art.md) | ✅ |
 | [2026-06-07-model-onboarding-final-plan.md](2026-06-07-model-onboarding-final-plan.md) | **模型接入最终方案**（R7 定稿，审计+设计+计划）— 本簇主文档 | ✅ |
@@ -114,6 +119,9 @@
 
 | 文件 | 一句话 | 状态 |
 |---|---|---|
+| [2026-09-22-deconstruction-node-terminal-state.md](2026-09-22-deconstruction-node-terminal-state.md) | **拆解中断后分镜表节点不再永远停在「进行中」**（ 发版前阻断）：拆到一半关 app 再打开，节点永久停在「本地找切点 / 0 镜」——根因不是没人收敛，是快照那趟收敛完又被事件尾巴重放原样盖回去。终态判定收成唯一 owner `deconstructionLifecycle`（在飞登记与渲染进程同寿命），两条读路径共用同一个收敛且**重放之后再问一次**；状态词表加 `interrupted` / `cancelled`，新增取消入口。真机冷重启走查 `tests/ux/deconstruction-interrupted-recovery.walk.mjs`（零成本） | 🚧 |
+| [2026-09-22-shot-cut-truncation.md](2026-09-22-shot-cut-truncation.md) | **切点超上限不再按时间砍掉后半条片子**：120 刀上限原先按时间 `slice(0,120)`，6 分钟快剪片只拆出前 15% 却看不出来；改成按分数抬阈值压（全片覆盖 14.6% → 96.4%）+ ≤2 帧去重，联系表改按整数 pts 点名选帧、行数收成单一 owner。类根因「给全了没有」提升为 shared 层必填 `ShotCutCoverage`；实测证据 [`docs/evidence/2026-09-22-shot-cut-truncation/`](../evidence/2026-09-22-shot-cut-truncation/README.md)。§9 分镜表节点提示待拍板 | 🚧 |
+| [2026-09-11-canvas-migration-audit.md](2026-09-11-canvas-migration-audit.md) | **React Flow 迁移逐项等价审计**（OLD `8f9365aeb` vs main）：46 项交互逐条对照，列出 6 项无人拍板的改动与 6 项丢失；③ 表按用户影响排序，是各条回填轨的裁决依据 | 📎 |
 | [2026-09-08-canvas-undo-barrier-sweep.md](2026-09-08-canvas-undo-barrier-sweep.md) | 独立边模式、断线、节点锁手势的撤销边界与同族扫描 | 📎 |
 | [2026-09-06-agent-artifact-node.md](2026-09-06-agent-artifact-node.md) | **AI 手艺产物节点（agent-artifact）**：承载 SVG / 动态 HTML / 表格 / Markdown / 3D 摆位等不调模型的产物；meta.artifact 不扩 result 闭集、HTML 沙箱 allow-scripts、动作复用 FloatingToolbarShell；v1 已落地（Agent 交付落盘/渲染/下载/复制/SVG 固化为参考图），3D 视口截图与手艺选择决策树 = 下一刀 | 🚧 |
 | [2026-09-06-depth-video-canvas-node.md](2026-09-06-depth-video-canvas-node.md) | **本机跑深度视频当动作参考**（Depth Anything V2 Small，WebGPU 渲染层推理、ffmpeg 抽帧合成、权重按需下载校验）；2026-09-07 用户两次拍板后收成「选中视频 → 浮条『提取深度』→ 点了直接跑 → 旁边长出一张带出身的普通视频卡」，无面板无参数，骨架链已随 mode 一起删 | ✅ |
@@ -158,6 +166,7 @@
 
 | 文件 | 一句话 | 状态 |
 |---|---|---|
+| [2026-10-02-acp-agent-host.md](2026-10-02-acp-agent-host.md) | **右侧面板做开放宿主**：内置 pi 不动，用户自己的 Codex / Gemini / Claude Agent 经 ACP 接入；session/new 交出 Nomi 的 MCP，外部 Agent 的生成先建节点 + 连线、出付费卡即返回；七片切片与待核实清单 | ⏳ |
 | [2026-09-04-mcp-semantic-operation-matrix.md](2026-09-04-mcp-semantic-operation-matrix.md) | MCP 语义操作矩阵：document/canvas 真实生产链路 H/B/E/T/N、scoped V8 收据与 timeline/media/export blocked evidence | ✅ |
 | [2026-09-05-resident-composer-receipt-fix.md](2026-09-05-resident-composer-receipt-fix.md) | main 红修复：Resident composer 收据旅程改走真实审批流（PR #507） | ✅ |
 | [agent-compaction-runtime-projection.md](agent-compaction-runtime-projection.md) | Agent compaction runtime 元数据的 Host 状态、持久化、恢复与 renderer 投影契约 | 🚧 |
@@ -217,6 +226,7 @@
 | [2026-08-28-editing-engine-uplift.md](2026-08-28-editing-engine-uplift.md) | P0 timeline kernel and Agent editing control plane | 🚧 |
 | [2026-08-28-timeline-visual-feedback.md](2026-08-28-timeline-visual-feedback.md) | Timeline source-window and transition support feedback | 🚧 |
 | [2026-09-05-timeline-placement-strategy.md](2026-09-05-timeline-placement-strategy.md) | 时间轴 P0 落位、默认 fit、轨道滚动与字幕不重叠 | 🚧 |
+| [2026-09-15-generation-layout-timeline-spans-bottom.md](2026-09-15-generation-layout-timeline-spans-bottom.md) | **生成面外壳修回旧设计**（ + ）：时间轴回 `col-span-full` 横贯底部、AI 面板被顶上去右下角不空；收起钮移出滚动区带文案、默认高度由「两条主轨」派生；结构测试 + 四态走查锁住容器关系 | 🚧 |
 
 ## 项目库 / 素材库 / Workspace / 左面板
 
@@ -299,6 +309,8 @@
 
 - [2026-09-08 菜单原语现状清单（刀 1 ①）](2026-09-08-menu-primitive-inventory.md) — 17 文件 / **24 个手写菜单**逐个对账（触发·项·分隔线·禁用·定位·避让·风险）：**方向键 0/24**、点外不关 2 个、定位机制 5 套、六处各猜一遍菜单宽高的硬编码常数；A 建议**先迁时间轴右键菜单**（宿主最小、今天最坏）并把 `CanvasToolbar` 挪出刀 1（hover-open + 无触发元素 + file input 三条边界）；B 从真实用法反推 API（含 checkbox/radio/段名/危险项/项内副标题；**子菜单不做**）；C **19 条形态差异只列不改**等用户拍板；附 `AnchoredPopover` 注释按「浮层里放的是什么」划界的写法。（📋 方案待拍板）
 
+- [2026-09-14 品牌图与预置模型清单收成单一登记处（先查别人报告）](2026-09-14-vendor-logo-registry-prior-art.md) — 四份互不认识的「哪张图代表哪个品牌」收成 `VENDOR_LOGOS` 一张表 + `VendorLogoImage` 一个渲染口（照 `src/design/actions.tsx` 的唯一真相源形状）；接入页的模型清单复用既有 `ModelChipGroups`，不写第二个列表组件，数字与列表同源（✅ 已交付）
+
 ## 🤖 自动收录（待人工归位）
 
 > 这些链接由 `.github/workflows/docs-autosync.yml` 在 main 上自动补登，只保证「能被搜到」，
@@ -315,3 +327,223 @@
 - [2026-09-09 Agent 原生剪辑：Nomi 完整可执行方案（A'–G'）](2026-09-09-agent-native-editing-plan.md) — 时间轴 agent 层施工图；配套竞品回应方案包见 [`2026-09-09-competitive-response-plans/INDEX.md`](2026-09-09-competitive-response-plans/INDEX.md)（P0-P2 分期、开工纪律：#646 未过门前不开新战线）；2026-09-11 从竞品研究方案包归档入库
 - [2026-09-11 卫生 PR：方案包入库 + ARCHITECTURE-NOW 去过时 + 删两个死控制器](2026-09-11-docs-hygiene.md) — 竞品方案包搬入 `docs/{research,plan,product}`（19 篇）；`docs/ARCHITECTURE-NOW.md` 三行过时描述改写为 pi lane 现役状态；删 `canvasTurnController.ts`/`creationTurnController.ts` 两个零生产引用死控制器（✅ 已交付）
 - [2026-09-11 删掉「客户端自报即发放」的付费通道](2026-09-11-remove-legacy-spend-door.md) — 付费放行收敛到主进程收据门一个 owner；删 `gateway.withPreApprovedSpend`、`NOMI_LOOP_SPEND_OK` env 逃生口与线协议上的 `spendConfirmed` 自报位；加源码棘轮测试防复发；根因合同 [`2026-09-11-legacy-spend-door.root-cause.json`](../fixes/2026-09-11-legacy-spend-door.root-cause.json)（✅ 已交付）
+
+- [2026-09-12 接模型验证 run 的失败路径：不许停在中间态](2026-09-12-integration-run-failure-path.md) — 终态写三层保证（同步→退避→errors.jsonl+启动补偿）、deadline 看门狗、certifying 逃生口、逐模型错误原文进 session.read；含 H1/H2 锁审计结论与门表；根因合同 [`2026-09-12-integration-run-failure-path.root-cause.json`](../fixes/2026-09-12-integration-run-failure-path.root-cause.json)，结构评审 [`../audit/2026-09-12-integration-layer-structural-review.md`](../audit/2026-09-12-integration-layer-structural-review.md)（✅ 已交付）
+
+- [2026-09-14 常驻生成面「装没装」收成一个 owner（先查别人报告）](2026-09-14-resident-surface-lifecycle-prior-art.md) — 三份互不知情的 nullable 影子（`main.ts` 的工厂 / `appIntegrationSpendConfirm` 的 `actions` 与 `installFailure`）收成 `residentSurfaceLifecycle` 一个五相 owner；照抄仓内既有「常量派生词表 + 判别联合」形状不造新机制；根因合同 [`2026-09-14-resident-generation-adapter-install.root-cause.json`](../fixes/2026-09-14-resident-generation-adapter-install.root-cause.json)，结构评审 [`../audit/2026-09-14-resident-surface-lifecycle-structure.md`](../audit/2026-09-14-resident-surface-lifecycle-structure.md)（✅ 已交付）
+
+- [2026-09-15 拆解出来的秒数只有一个精度 owner](2026-09-15-shot-seconds-precision.md) — 分镜表时间列显示 `0–1.4681260000000001s` 的类根因：ffmpeg/ffprobe 的原始双精度值一路插值进 i18n，精度三处各发明一套（`0.01` 魔法数 / `toFixed(2)` / `toFixed(1)`）而真正显示的那处一套都没有；新增真相源 `shotTime.ts`（0.1s，理由含与时间轴帧/刻度的核实），在产出边界 `buildShotBoundaries` 与落库读入口 `shotTableFactRowSchema.transform()` 两道边界收口，老项目读取即归一，显示层加响的检测器禁止再写 `toFixed`；根因合同 [`2026-09-15-shot-seconds-precision.root-cause.json`](../fixes/2026-09-15-shot-seconds-precision.root-cause.json)，结构评审 [`../audit/2026-09-15-numeric-contract-structure.md`](../audit/2026-09-15-numeric-contract-structure.md)（✅ 已交付）
+- [2026-09-15 接入验证**会话层**的终态保证：借来的保证一定有边界](2026-09-15-integration-session-terminal-guarantee.md) — 09-12 那版只修了 run 层；会话层拥有 `session.stage` 却把终态保证外包给子 run，于是 ComfyUI 会话 / `startHttp` 未返回的窗口 / run 记录已删三种状态照旧永久停在 `certifying` 且 `cancel` 抛异常。修法：认证 deadline 与开跑意图同一次落盘 + **复用** run 层那只 `TerminalReaper`（不新造看门狗）+ cancel 永不抛 + 终态封口防迟到结果复活 + 旧数据按 `updatedAt` 补 deadline；deadline 从批次超时派生并机检（不拍常量）。含  接续路径；根因合同 [`2026-09-15-integration-session-terminal-guarantee.root-cause.json`](../fixes/2026-09-15-integration-session-terminal-guarantee.root-cause.json)
+- [2026-09-15 用户亲手点的那条技能，为什么比模型自己找到的那条弱](2026-09-15-skill-selected-injection.md) — 选中技能的正文注入收成 `buildSelectedSkillPrompt` 一个 owner（交代四句 + 照抄 pi 的 `<skill>` 信封 + 剥掉 41–82% 的 frontmatter 清单），并给身份层加三句「出片原则」；22 句真实模型题库前后对账（选了技能那 11 句「回复里看得出技能被用」7/11 → 9/11，三轮一致），证据在 [`../evidence/2026-09-15-skill-real-run/prompts.md`](../evidence/2026-09-15-skill-real-run/prompts.md) 与 [`principles-hypothesis.md`](../evidence/2026-09-15-skill-real-run/principles-hypothesis.md)；根因合同 [`2026-09-15-selected-skill-injection.root-cause.json`](../fixes/2026-09-15-selected-skill-injection.root-cause.json)
+- [2026-09-12 付费出口一律带 grantId —— 先查别人](2026-09-12-run-task-grant-class-prior-art.md) — PR #782 的 R27 报告：仓内四份合同已把「付费放行必须有一张主进程铸的令牌」立成不变量，本次只把最后三个没带令牌的出口接上同一条链；依赖里没有现成的（`extras` 是我们自己的传输层形状），判为领域约束但只许一份 + 硬零门岗 `check:run-task-grant`（✅ 已交付，随 PR #804 带入）
+- [2026-09-14 MCP 连接状态必须说真话](2026-09-14-mcp-connection-truthfulness.md) — 读路径零写盘（守卫下沉到唯一写盘门）、NOMI_SETTINGS_DIR 读回校验、按安装痕迹检测客户端（pi 删除、Claude Desktop 补入）、通用配置不带身份、客户端名单唯一 owner `electron/shared/mcpClientRegistry.ts`、可信发起方并进客户端卡；R31 逐家规范对照；根因合同 [`2026-09-14-mcp-connection-truthfulness.root-cause.json`](../fixes/2026-09-14-mcp-connection-truthfulness.root-cause.json)（✅ 已交付）
+- [2026-09-18 投影铺开：从一个动词到二十个](2026-09-18-tool-projection-rollout.md) — 模型面不再手写，改成宿主契约 schema 的投影：11 个动词 + `draft_shots` 一份有损投影，`verbFieldMap.ts`（7 种关系 × 4 档来源的 DSL）与 `verbTransportRoutes.ts` 两份共 596 行整个删掉，整条链上只剩 1 条 rename（双域动词的生成域那一半）；外部 MCP 面那 22 行逐字段手抄一并删，门岗从「可构造」升级成「**可填**」。新门 `check:model-face-frozen` 冻住模型看到的工具面（这一刀模型面**逐字节没变**，sha256 对账见 [证据目录](tool-projection-rollout-evidence/README.md)、[真模型 23 轮走查的数字与读法](tool-projection-rollout-evidence/real-model-walkthrough.md)）。明写投影**覆盖不到**的 8 个动词各归谁管；真模型 23 轮整机走查把「落到画布」那一列第一次变成可重跑的脚本（[`tests/ux/agent-storyboard-real-model.walk.mjs`](../../tests/ux/agent-storyboard-real-model.walk.mjs)）。上游：[原型](2026-09-18-tool-projection-cancel-job-prototype.md) / [裁决](2026-09-18-tool-layer-prior-art-verdict.md)；根因合同 [`2026-09-18-verb-transport-translation-derived.root-cause.json`](../fixes/2026-09-18-verb-transport-translation-derived.root-cause.json)（✅ 已交付）
+- [2026-09-08-agent-lane-legacy-migration](2026-09-08-agent-lane-legacy-migration.md)
+- [2026-09-08-agent-lane-legacy-removal](2026-09-08-agent-lane-legacy-removal.md)
+- [2026-09-08-agent-lane-rollback-rehearsal](2026-09-08-agent-lane-rollback-rehearsal.md)
+- [2026-09-08-agent-lane-stage4-switch](2026-09-08-agent-lane-stage4-switch.md)
+- [2026-09-08-c0-harness](2026-09-08-c0-harness.md)
+- [2026-09-08-c0-real-gate](2026-09-08-c0-real-gate.md)
+- [2026-09-08-canvas-magnetic-handle](2026-09-08-canvas-magnetic-handle.md)
+- [2026-09-08-canvas-three-gestures](2026-09-08-canvas-three-gestures.md)
+- [2026-09-08-lane-desktop-read-contracts](2026-09-08-lane-desktop-read-contracts.md)
+- [2026-09-08-lane-receipt-undo-wiring](2026-09-08-lane-receipt-undo-wiring.md)
+- [2026-09-08-lane-shot-verify-feedback](2026-09-08-lane-shot-verify-feedback.md)
+- [2026-09-08-mcp-guidance-publication](2026-09-08-mcp-guidance-publication.md)
+- [2026-09-08-pd1-deferred-tools-cache-probe](2026-09-08-pd1-deferred-tools-cache-probe.md)
+- [2026-09-08-process-feedback-c1](2026-09-08-process-feedback-c1.md)
+- [2026-09-08-reference-image-chain](2026-09-08-reference-image-chain.md)
+- [2026-09-08-skill-prompt-curation](2026-09-08-skill-prompt-curation.md)
+- [2026-09-08-walkthrough-runtime-diet](2026-09-08-walkthrough-runtime-diet.md)
+- [2026-09-09-agent-lane-b1](2026-09-09-agent-lane-b1.md)
+- [2026-09-09-agent-lane-c0-red-diagnosis](2026-09-09-agent-lane-c0-red-diagnosis.md)
+- [2026-09-09-agent-lane-context-budget](2026-09-09-agent-lane-context-budget.md)
+- [2026-09-09-agent-lane-context-contracts](2026-09-09-agent-lane-context-contracts.md)
+- [2026-09-09-agent-lane-models-block](2026-09-09-agent-lane-models-block.md)
+- [2026-09-09-agent-panel-form](2026-09-09-agent-panel-form.md)
+- [2026-09-09-agent-panel-markdown-audit](2026-09-09-agent-panel-markdown-audit.md)
+- [2026-09-09-agent-panel-mechanics](2026-09-09-agent-panel-mechanics.md)
+- [2026-09-09-agent-process-tone](2026-09-09-agent-process-tone.md)
+- [2026-09-09-agent-thinking-overlap](2026-09-09-agent-thinking-overlap.md)
+- [2026-09-09-attention-cue-ci-journey](2026-09-09-attention-cue-ci-journey.md)
+- [2026-09-09-attention-cue](2026-09-09-attention-cue.md)
+- [2026-09-09-b2c-panel-form](2026-09-09-b2c-panel-form.md)
+- [2026-09-09-b2d-dismissible-dock](2026-09-09-b2d-dismissible-dock.md)
+- [2026-09-09-b2e-streamdown](2026-09-09-b2e-streamdown.md)
+- [2026-09-09-c0-budget-50](2026-09-09-c0-budget-50.md)
+- [2026-09-09-canvas-acceptance-red](2026-09-09-canvas-acceptance-red.md)
+- [2026-09-09-director-chrome-five-clusters](2026-09-09-director-chrome-five-clusters.md)
+- [2026-09-09-focus-feel-rule-proposal](2026-09-09-focus-feel-rule-proposal.md)
+- [2026-09-09-focus-indication-class](2026-09-09-focus-indication-class.md)
+- [2026-09-09-info-density-audit](2026-09-09-info-density-audit.md)
+- [2026-09-09-magnetic-walk-contract](2026-09-09-magnetic-walk-contract.md)
+- [2026-09-09-node-label-outside](2026-09-09-node-label-outside.md)
+- [2026-09-09-notification-inventory](2026-09-09-notification-inventory.md)
+- [2026-09-09-notification-policy](2026-09-09-notification-policy.md)
+- [2026-09-09-packaged-mcp-smoke-capability-dir](2026-09-09-packaged-mcp-smoke-capability-dir.md)
+- [2026-09-09-pr658-ci-repair](2026-09-09-pr658-ci-repair.md)
+- [2026-09-09-pr658-ci-round2](2026-09-09-pr658-ci-round2.md)
+- [2026-09-09-pr658-click-root-investigation](2026-09-09-pr658-click-root-investigation.md)
+- [2026-09-09-pr658-neighbor-placement](2026-09-09-pr658-neighbor-placement.md)
+- [2026-09-09-process-feedback-imgfx](2026-09-09-process-feedback-imgfx.md)
+- [2026-09-09-process-feedback-real-walk](2026-09-09-process-feedback-real-walk.md)
+- [2026-09-09-skill-library-covers-v1](2026-09-09-skill-library-covers-v1.md)
+- [2026-09-09-skill-library-ui](2026-09-09-skill-library-ui.md)
+- [2026-09-09-skill-ui-b](2026-09-09-skill-ui-b.md)
+- [2026-09-09-spend-guard-credentials](2026-09-09-spend-guard-credentials.md)
+- [2026-09-09-stage4-main-integration](2026-09-09-stage4-main-integration.md)
+- [2026-09-09-storyboard-anchor-policy](2026-09-09-storyboard-anchor-policy.md)
+- [README](2026-09-09-storyboard-warning-aggregate-eta/README.md)
+- [2026-09-09-sweep-collect](2026-09-09-sweep-collect.md)
+- [2026-09-09-sweep-ledger-triage](2026-09-09-sweep-ledger-triage.md)
+- [2026-09-09-sweep-state-driven-waits](2026-09-09-sweep-state-driven-waits.md)
+- [2026-09-09-toast-action-layout](2026-09-09-toast-action-layout.md)
+- [2026-09-09-ux-experience-rubric](2026-09-09-ux-experience-rubric.md)
+- [2026-09-09-ux-feel-regression-mechanism](2026-09-09-ux-feel-regression-mechanism.md)
+- [2026-09-09-workbuddy-client-profile](2026-09-09-workbuddy-client-profile.md)
+- [2026-09-10-agent-draft-single-ledger](2026-09-10-agent-draft-single-ledger.md)
+- [2026-09-10-agent-process-thinking-rows](2026-09-10-agent-process-thinking-rows.md)
+- [2026-09-10-agent-transcript-merge-skill-evidence](2026-09-10-agent-transcript-merge-skill-evidence.md)
+- [2026-09-10-anchor-real](2026-09-10-anchor-real.md)
+- [2026-09-10-b1c-fix2-source-tests](2026-09-10-b1c-fix2-source-tests.md)
+- [2026-09-10-b5-ci-composition](2026-09-10-b5-ci-composition.md)
+- [2026-09-10-b5-density-misc](2026-09-10-b5-density-misc.md)
+- [2026-09-10-b6-generation-schema-parity](2026-09-10-b6-generation-schema-parity.md)
+- [2026-09-10-b6-mcp-parity](2026-09-10-b6-mcp-parity.md)
+- [2026-09-10-b6-mcp-skill-content](2026-09-10-b6-mcp-skill-content.md)
+- [2026-09-10-c0-official-planner-gate](2026-09-10-c0-official-planner-gate.md)
+- [2026-09-10-creation-columns-implementation](2026-09-10-creation-columns-implementation.md)
+- [2026-09-10-creation-columns](2026-09-10-creation-columns.md)
+- [2026-09-10-integration-docs-to-compiler](2026-09-10-integration-docs-to-compiler.md)
+- [2026-09-10-mcp-receipt-fail-closed](2026-09-10-mcp-receipt-fail-closed.md)
+- [2026-09-10-node-composer-placement-variants](2026-09-10-node-composer-placement-variants.md)
+- [2026-09-10-permission-model-rework](2026-09-10-permission-model-rework.md)
+- [2026-09-10-pr619-finish](2026-09-10-pr619-finish.md)
+- [2026-09-10-shot-nodes](2026-09-10-shot-nodes.md)
+- [2026-09-10-sidebar-ci-journey](2026-09-10-sidebar-ci-journey.md)
+- [2026-09-10-skillui-composer-cifix](2026-09-10-skillui-composer-cifix.md)
+- [2026-09-10-skillui-fixed-footer](2026-09-10-skillui-fixed-footer.md)
+- [2026-09-10-storyboard-reliability-loop](2026-09-10-storyboard-reliability-loop.md)
+- [2026-09-10-storyboard-reliability-rounds-3-5](2026-09-10-storyboard-reliability-rounds-3-5.md)
+- [2026-09-10-timeline-toolbar-row-collapse](2026-09-10-timeline-toolbar-row-collapse.md)
+- [2026-09-10-trace-log](2026-09-10-trace-log.md)
+- [2026-09-10-ux-feedback-triage](2026-09-10-ux-feedback-triage.md)
+- [2026-09-11-agent-error-surface](2026-09-11-agent-error-surface.md)
+- [2026-09-11-agent-tool-face-implementation](2026-09-11-agent-tool-face-implementation.md)
+- [2026-09-11-audio-first-class-reference](2026-09-11-audio-first-class-reference.md)
+- [2026-09-11-canvas-migration-backfill](2026-09-11-canvas-migration-backfill.md)
+- [2026-09-11-comfyui-dynamic-combo](2026-09-11-comfyui-dynamic-combo.md)
+- [2026-09-11-director-lan-pairing-hardening](2026-09-11-director-lan-pairing-hardening.md)
+- [2026-09-11-lane-live-vs-snapshot-fix](2026-09-11-lane-live-vs-snapshot-fix.md)
+- [2026-09-11-mcp-onboarding-defects](2026-09-11-mcp-onboarding-defects.md)
+- [2026-09-11-model-box-tidy](2026-09-11-model-box-tidy.md)
+- [2026-09-11-model-onboarding-flow](2026-09-11-model-onboarding-flow.md)
+- [2026-09-11-param-panel-flat-options](2026-09-11-param-panel-flat-options.md)
+- [2026-09-11-permission-p1-implementation](2026-09-11-permission-p1-implementation.md)
+- [2026-09-11-ponytail-adaptive-serial-defer](2026-09-11-ponytail-adaptive-serial-defer.md)
+- [2026-09-11-train-tianlinzx](2026-09-11-train-tianlinzx.md)
+- [2026-09-12-canvas-lod-screen-size](2026-09-12-canvas-lod-screen-size.md)
+- [2026-09-12-canvas-perf-s3-s6](2026-09-12-canvas-perf-s3-s6.md)
+- [2026-09-12-gates-risk-tier](2026-09-12-gates-risk-tier.md)
+- [2026-09-12-model-availability-single-owner](2026-09-12-model-availability-single-owner.md)
+- [2026-09-12-pr764-prior-art](2026-09-12-pr764-prior-art.md)
+- [2026-09-12-pr771-prior-art](2026-09-12-pr771-prior-art.md)
+- [2026-09-12-sandbox-runtime-packaging](2026-09-12-sandbox-runtime-packaging.md)
+- [2026-09-12-storyboard-plan-defaults-passthrough](2026-09-12-storyboard-plan-defaults-passthrough.md)
+- [2026-09-12-worktree-pr-census-t01](2026-09-12-worktree-pr-census-t01.md)
+- [2026-09-14-agent-tool-face-v2](2026-09-14-agent-tool-face-v2.md)
+- [2026-09-14-canvas-media-preview-pipeline](2026-09-14-canvas-media-preview-pipeline.md)
+- [2026-09-14-import-progress-reveal](2026-09-14-import-progress-reveal.md)
+- [2026-09-14-media-import-single-owner](2026-09-14-media-import-single-owner.md)
+- [2026-09-14-settings-remove-redundant-sections](2026-09-14-settings-remove-redundant-sections.md)
+- [2026-09-15-feedback-loop](2026-09-15-feedback-loop.md)
+- [2026-09-17-asset-publication-identity](2026-09-17-asset-publication-identity.md)
+- [2026-09-17-interactive-import-project-context](2026-09-17-interactive-import-project-context.md)
+- [2026-09-17-local-transcription](2026-09-17-local-transcription.md)
+- [2026-09-17-mcp-launcher-ownership](2026-09-17-mcp-launcher-ownership.md)
+- [2026-09-17-pr802-root-causes](2026-09-17-pr802-root-causes.md)
+- [2026-09-17-project-surface-session](2026-09-17-project-surface-session.md)
+- [2026-09-17-session-revocation-outcomes](2026-09-17-session-revocation-outcomes.md)
+- [2026-09-18-agent-model-onboarding](2026-09-18-agent-model-onboarding.md)
+- [2026-09-18-agent-storyboard-write-path](2026-09-18-agent-storyboard-write-path.md)
+- [2026-09-18-not-dispatched-vs-unknown-submission](2026-09-18-not-dispatched-vs-unknown-submission.md)
+- [2026-09-18-portable-skill-tool-binding](2026-09-18-portable-skill-tool-binding.md)
+- [2026-09-18-skill-loading-migration](2026-09-18-skill-loading-migration.md)
+- [2026-09-18-tool-layer-findings-inventory](2026-09-18-tool-layer-findings-inventory.md)
+- [2026-09-18-tool-layer-handoff](2026-09-18-tool-layer-handoff.md)
+- [2026-09-18-vendor-upsert-completeness](2026-09-18-vendor-upsert-completeness.md)
+- [2026-09-19-competitive-learning-workflow](2026-09-19-competitive-learning-workflow.md)
+- [2026-09-19-composer-lifecycle](2026-09-19-composer-lifecycle.md)
+- [2026-09-19-core-a-execution](2026-09-19-core-a-execution.md)
+- [2026-09-19-core-canvas-ownership](2026-09-19-core-canvas-ownership.md)
+- [2026-09-19-core-payment](2026-09-19-core-payment.md)
+- [2026-09-19-generation-contract-shapes](2026-09-19-generation-contract-shapes.md)
+- [2026-09-19-pi-history-read-side](2026-09-19-pi-history-read-side.md)
+- [2026-09-19-skill-reach-audit](2026-09-19-skill-reach-audit.md)
+- [2026-09-19-stop-pre-admission](2026-09-19-stop-pre-admission.md)
+- [2026-09-20-anchored-popover-escape](2026-09-20-anchored-popover-escape.md)
+- [2026-09-20-canvas-image-aspect](2026-09-20-canvas-image-aspect.md)
+- [2026-09-20-core-a-restart](2026-09-20-core-a-restart.md)
+- [2026-09-20-materialization-viewport](2026-09-20-materialization-viewport.md)
+- [2026-09-20-node-prompt-presets](2026-09-20-node-prompt-presets.md)
+- [2026-09-20-ponytail-bounded-diff-read](2026-09-20-ponytail-bounded-diff-read.md)
+- [2026-09-20-pr828-review-remediation](2026-09-20-pr828-review-remediation.md)
+- [2026-09-20-process-motion-probe](2026-09-20-process-motion-probe.md)
+- [2026-09-20-shot-number-identity](2026-09-20-shot-number-identity.md)
+- [2026-09-20-storyboard-save-minimal](2026-09-20-storyboard-save-minimal.md)
+- [2026-09-20-t7-resource-recovery-decision](2026-09-20-t7-resource-recovery-decision.md)
+- [2026-09-20-waiting-grid-consistency](2026-09-20-waiting-grid-consistency.md)
+- [2026-09-21-agent-plan-one-home](2026-09-21-agent-plan-one-home.md)
+- [2026-09-21-alt-drag-duplicate](2026-09-21-alt-drag-duplicate.md)
+- [2026-09-21-canvas-shortcut-parity](2026-09-21-canvas-shortcut-parity.md)
+- [2026-09-21-composer-overlap-and-editor-echo](2026-09-21-composer-overlap-and-editor-echo.md)
+- [2026-09-21-config-never-silently-lost](2026-09-21-config-never-silently-lost.md)
+- [2026-09-21-export-text-overlay-cost](2026-09-21-export-text-overlay-cost.md)
+- [2026-09-21-mcp-model-onboarding-floor](2026-09-21-mcp-model-onboarding-floor.md)
+- [2026-09-21-model-spec-parity](2026-09-21-model-spec-parity.md)
+- [2026-09-21-one-generation-engine](2026-09-21-one-generation-engine.md)
+- [2026-09-21-storyboard-model-vendor-pair](2026-09-21-storyboard-model-vendor-pair.md)
+- [2026-09-21-unknown-price-open-gate](2026-09-21-unknown-price-open-gate.md)
+- [2026-09-22-core-flow-smoke-three-defenses](2026-09-22-core-flow-smoke-three-defenses.md)
+- [2026-09-22-credential-probe-free](2026-09-22-credential-probe-free.md)
+- [2026-09-23-integration-branch-completion-taskbook](2026-09-23-integration-branch-completion-taskbook.md)
+- [2026-09-24-comfyui-combo-wire-type](2026-09-24-comfyui-combo-wire-type.md)
+- [2026-09-24-group-connection-rings](2026-09-24-group-connection-rings.md)
+- [2026-09-24-release-followup-and-batch-rc](2026-09-24-release-followup-and-batch-rc.md)
+- [2026-09-24-renderer-failure-log](2026-09-24-renderer-failure-log.md)
+- [2026-09-24-stale-tool-name-lists](2026-09-24-stale-tool-name-lists.md)
+- [2026-09-24-windows-freeze-waiting-shader](2026-09-24-windows-freeze-waiting-shader.md)
+- [2026-09-25-agent-panel-tidy](2026-09-25-agent-panel-tidy.md)
+- [2026-09-25-agent-run-landing-state](2026-09-25-agent-run-landing-state.md)
+- [2026-09-25-asset-library-and-media-load-fixes](2026-09-25-asset-library-and-media-load-fixes.md)
+- [2026-09-25-canvas-follow-hand](2026-09-25-canvas-follow-hand.md)
+- [README](agent-lane-b1-evidence/README.md)
+- [README](agent-lane-b1b-evidence/README.md)
+- [README](agent-lane-b1c-evidence/README.md)
+- [RAW-CAPTURES](agent-panel-markdown-evidence/RAW-CAPTURES.md)
+- [product-sources](agent-panel-markdown-evidence/product-sources.md)
+- [README](agent-panel-mechanics-evidence/README.md)
+- [README](agent-tool-face-v2-evidence/README.md)
+- [r30-summary-before-tool-projection](agent-tool-face-v2-evidence/r30-summary-before-tool-projection.md)
+- [r30-summary-model-spec-parity-20260921](agent-tool-face-v2-evidence/r30-summary-model-spec-parity-20260921.md)
+- [r30-summary](agent-tool-face-v2-evidence/r30-summary.md)
+- [README](anchor-real-evidence/README.md)
+- [input](anchor-real-evidence/official/input.md)
+- [README](attention-cue-evidence/README.md)
+- [README](b2c-form-evidence/README.md)
+- [README](b2d-dock-evidence/README.md)
+- [RAW-CAPTURES](b2e-streamdown-evidence/RAW-CAPTURES.md)
+- [REPORT](b2e-streamdown-evidence/REPORT.md)
+- [README](notification-policy-evidence/README.md)
+- [process-feedback-ci-round5](process-feedback-ci-round5.md)
+- [process-feedback-ci-round6](process-feedback-ci-round6.md)
+- [journey-ci-report](process-feedback-evidence/ci-round2/journey-ci-report.md)
+- [journey-green-report](process-feedback-evidence/ci-round2/journey-green-report.md)
+- [journey-red-report](process-feedback-evidence/ci-round2/journey-red-report.md)
+- [red-green](process-feedback-evidence/red-green.md)
+- [README](shot-nodes-evidence/README.md)
+- [README](skillui-fixed-footer-evidence/README.md)
+- [walkthrough](spend-guard-evidence/walkthrough.md)
+- [README](storyboard-anchor-policy-evidence/README.md)
+- [c0-video-wait-plan](sweep-evidence/c0-video-wait-plan.md)
+- [trace](trace-log-evidence/trace.md)

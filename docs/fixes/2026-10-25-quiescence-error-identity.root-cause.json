@@ -1,0 +1,228 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-quiescence-error-identity",
+  "problem_type": "A shared diagnostic catch overwrites upstream assertion and cancellation errors",
+  "symptom": "App74 reports geometry not settled after 647ms even though its configured wait is 5000ms; the actual failure is FEEL font-size drift 4>0 after waitForFunction succeeds.",
+  "direct_cause": "waitForVisualQuiescence catches every waitForFunction rejection, including the FEEL checkpoint wrapper's ordinary Error, and replaces it with a geometry/animation timeout without cause.",
+  "class_root": "Diagnostic enrichment must require the canonical typed wait timeout; an unrelated rejection must retain its original identity, message, cause and failure state.",
+  "affected_population": [
+    "screenshotSettled Page/Locator consumers",
+    "applyColorSchemeForShot and direct quiescence callers",
+    "FEEL checkpoints, AbortError and other wait wrapper failures"
+  ],
+  "scope_paths": [
+    "tests/ux/_assert.mjs"
+  ],
+  "entry_points": [
+    "waitForVisualQuiescence",
+    "screenshotSettled -> Page or Locator's Page",
+    "applyColorSchemeForShot -> waitForVisualQuiescence"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The failure is internal catch ownership. Installed @playwright/test and playwright TimeoutError exports were checked to be the identical constructor; real FEEL observer code supplies the drift failure in the targeted unit without launching a browser.",
+  "invariants": [
+    "Only an instanceof canonical Playwright TimeoutError rejection receives visual-quiescence diagnostics",
+    "All other rejected values are rethrown unchanged, without diagnostic evaluation or continued settled screenshot",
+    "Typed timeout keeps the existing geometry/animation message and original error as cause",
+    "Success still clears fingerprint before screenshot; 3 stable frames, 5000ms default, polling and screenshot arguments remain unchanged",
+    "Do not change FEEL rules/baselines, visual standards, production code, coordinator tree, PNGs or App behavior"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "tests/ux/_assert.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/_assert.test.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/agent-inflight-shots-reload.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/agent-queued-shots.paid.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/canvas-drag-pan-gestures.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/canvas-handles-alt-drag.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/canvas-magnetic-handle.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/canvas-shortcut-parity.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/canvas-spend-policy.paid.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/core-a-composer.e2e.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/core-a-storyboard-undo.e2e.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/failure-toast-layout.e2e.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/full-walk/actions.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/full-walk/monitor.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/full-walk/playbooks/pb10-node-display-rules.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/i18n-sweep.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/narrowed-mode-guidance.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/node-params-and-version-pill.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/pr720-language-switch-mid-session.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/production-flow-fixes.walk.mjs",
+      "symbol": "waitForVisualQuiescence"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/production-shot-claim.paid.mjs",
+      "symbol": "waitForVisualQuiescence"
+    }
+  ],
+  "door_reduction": {
+    "before": 20,
+    "after": 21,
+    "why_not": "Generated by mapDoors/doorsForTargets for waitForVisualQuiescence over tests/ux and scripts including tests; HEAD test source is the before input. Existing 20 direct consumer-file doors remain legitimate shared-helper consumers; one additional door exercises the same helper in its existing test. The screenshot/theme wrappers are followed one hop in _assert; no per-consumer patch or alternate diagnostic path is introduced."
+  },
+  "generality_proof": "The earliest shared catch checks the actual Playwright error type, not text/name or caller. The actual installFeelObserver wrapper succeeds its original wait then throws a real font-size drift; screenshotSettled must preserve that exact error and skip quiescence diagnostics. AbortError, ordinary Error with timeout wording, spoofed TimeoutError name, TypeError and non-Error rejection controls prove the class boundary. Real TimeoutError instances retain existing animation/geometry diagnostics and cause, even when diagnostic evaluation fails. The actual cleanup callback executes in a Node VM and deletes fingerprint before success screenshot.",
+  "shared_boundaries": [
+    {
+      "path": "tests/ux/_assert.mjs",
+      "symbol": "waitForVisualQuiescence",
+      "responsibility": "Classify the original rejection before optional timeout enrichment and retain causal identity"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "tests/ux/_assert.mjs",
+      "entry_point": "screenshotSettled",
+      "disposition": "enforced",
+      "evidence": "Awaits the shared helper before screenshot, including the real FEEL-wrapped wait regression"
+    },
+    {
+      "path": "tests/ux/_assert.mjs",
+      "entry_point": "applyColorSchemeForShot",
+      "disposition": "enforced",
+      "evidence": "Calls the same shared helper after applying existing theme attributes; no wrapper change is needed"
+    },
+    {
+      "path": "tests/ux/_feel-observer.mjs",
+      "entry_point": "installFeelObserver waitForFunction wrapper",
+      "disposition": "not-affected",
+      "evidence": "The existing checkpoint and strict 4>0 drift remain untouched; the helper no longer mislabels their thrown Error"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any non-timeout failure from a public wait wrapper can be rewritten by the same catch on any page or platform.",
+    "same_class_scan": [
+      "Read complete quiescence catch, success cleanup, screenshot and theme wrappers",
+      "Read FEEL checkpoint drift throw and public wait wrappers",
+      "Read existing _assert and feel-policy tests and Vitest include configuration",
+      "Generated exact direct-call census and followed screenshot/theme wrappers one hop",
+      "Verified canonical Playwright TimeoutError constructor equality with the runtime export"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "tests/ux/_assert.mjs",
+    "invariant": "Only a genuine typed Playwright timeout can be relabeled as visual-quiescence timeout",
+    "failure_mode": "Non-timeout rejection is thrown unchanged; typed timeout remains a rejection with existing diagnostics and original cause",
+    "exception_policy": "none",
+    "strategy": "Guard the earliest shared catch with instanceof canonical errors.TimeoutError and attach the original error using Error cause",
+    "artifacts": [
+      "tests/ux/_assert.mjs"
+    ]
+  },
+  "regression_tests": [
+    "tests/ux/_assert.test.mjs"
+  ],
+  "class_regression_tests": [
+    "tests/ux/_assert.test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "tests/ux/_assert.mjs"
+    ],
+    "rationale": "Remove catch-all rejection-to-quiescence-timeout rewriting; do not remove waits, diagnostics, screenshots or FEEL enforcement."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency or API replacement; reuse the installed Playwright public errors.TimeoutError export, whose runtime identity is explicitly verified.",
+    "exit_criteria": []
+  },
+  "migration": "No project data or caller migration. Existing helper signatures, default timing, polling and success cleanup remain unchanged.",
+  "residual_risks": [
+    "No App/browser/PNG/Provider or heavy gate run; actual App74 rerun and independent D review remain coordination acceptance",
+    "Node protocol fixtures exercise real shared catch and FEEL policy/wrapper but do not claim real DOM settling or actual screenshot pixels",
+    "The root-cause checker's test-path heuristic may classify this executable shared harness as test-only; its real runtime catch is the changed structural prevention, not an exemption or baseline change"
+  ],
+  "invariant_owner_layer": {
+    "layer": "tests/ux/_assert.mjs",
+    "tests": [
+      "tests/ux/_assert.test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "tests/ux/_assert.test.mjs"
+  },
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-24"
+}

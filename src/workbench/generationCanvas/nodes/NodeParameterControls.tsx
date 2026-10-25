@@ -1,10 +1,10 @@
 import { notify } from '../../../ui/notificationPolicy'
 import { normalizeConditionalParameters } from '../../../../electron/shared/videoCapabilities/crossFieldConstraints'
 import { nodeReferenceCapacity } from './controls/nodeCrossFieldConstraints'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
+import { useOpenProjectId } from '../../project/useOpenProjectId'
 import {
   deriveGenerationModelCatalogStatus,
   findModelOptionByIdentifier,
@@ -74,7 +74,7 @@ import NarrowedModeGuidanceNote from './controls/NarrowedModeGuidanceNote'
 import { resolveReferenceSlots, decideArrayReferenceRemoval } from '../runner/referenceSlots'
 import { useChannelCreateBodies } from './controls/useChannelCreateBody'
 import { translateModelDisplayText } from '../../../i18n/modelDisplayText'
-import { modeTransportFor, specializeArchetypeForVariant } from '../../../config/modelArchetypes'
+import { modeTransportFor, specializeArchetypeForVariant } from '../../../../electron/shared/modelArchetypes'
 import ModeBar from './controls/ModeBar'
 import AssetReference, { type AssetSlot } from '../../assets/AssetReference'
 import type { AssetRef } from '../../assets/assetTypes'
@@ -84,10 +84,7 @@ import InlineParameterBar, { type InlineParameterBarParameterLayout } from './In
 import { composerHeadlineSummary } from './composerHeadlineSummary'
 import { useNodeModelAutoSelect } from './useNodeModelAutoSelect'
 import { resolveArchetypeForOption, resolveRenderedControls } from './nodeModelArchetype'
-import {
-  buildAspectRatioNodePatch,
-  type ComposerAttachmentSide,
-} from './nodeSizing'
+import { buildAspectRatioNodePatch } from './nodeSizing'
 import {
   ASPECT_RATIO_KEYS,
   collectInputAspectRatios,
@@ -101,11 +98,9 @@ const ASPECT_RATIO_KEY_SET = new Set<string>(ASPECT_RATIO_KEYS)
 
 type NodeParameterControlsProps = {
   node: GenerationCanvasNode
-  section?: 'all' | 'references' | 'parameters' | 'model' | 'controls'
+  section?: 'all' | 'mode' | 'references' | 'parameters' | 'model' | 'controls'
   /** 点参考 tile → 在描述框光标处插入 @ 引用 chip(主路径,由 composer 注入 editor 命令)。 */
   onInsertMention?: (url: string) => void
-  /** 当前 composer 连在节点哪条边；比例切换用它保持同一连接锚点。 */
-  composerAttachmentSide?: ComposerAttachmentSide
   /**
    * 参数区怎么摆（透传给 InlineParameterBar，那边写着两种形态的判据）。
    * 画布节点**不传** → 默认 `summary`（摘要 pill + 面板，2026-09-11 04:30 用户拍板节点保持原样）；
@@ -130,11 +125,11 @@ export default function NodeParameterControls({
   node,
   section = 'all',
   onInsertMention,
-  composerAttachmentSide = 'bottom',
   parameterLayout,
   inlinePanelTarget,
   inlinePanelSlot,
 }: NodeParameterControlsProps): JSX.Element | null {
+  const openProjectId = useOpenProjectId()
   const reportFeedback = React.useCallback((message: string) => {
     notify({ identity: `NodeParameterControls:${node.id}`, reason: 'interaction', message, level: 'inline', present: setUploadError })
   }, [node.id])
@@ -143,7 +138,7 @@ export default function NodeParameterControls({
   const nodes = useGenerationCanvasStore((state) => state.nodes)
   const edges = useGenerationCanvasStore((state) => state.edges)
   // 写入面由宿主接住（付费确认卡走它自己的草稿账本，确认前不碰画布）——见 nodeWriteAccess。
-  const { updateNode, latestNode } = useNodeWriteAccess()
+  const { updateNode, latestNode, connectNodes: canConnect } = useNodeWriteAccess()
   const storeConnectNodes = useGenerationCanvasStore((state) => state.connectNodes)
   const storeDisconnectEdge = useGenerationCanvasStore((state) => state.disconnectEdge)
   const meta = React.useMemo<Record<string, unknown>>(() => node.meta || {}, [node.meta])
@@ -231,7 +226,7 @@ export default function NodeParameterControls({
     const nextMeta = { ...(latest.meta || {}), ...patch }
     updateNode(
       node.id,
-      buildAspectRatioNodePatch(latest, nextMeta, targetRatio, composerAttachmentSide),
+      buildAspectRatioNodePatch(latest, nextMeta, targetRatio),
     )
   }
 
@@ -601,7 +596,8 @@ export default function NodeParameterControls({
     if (slot.persistAsEdge) {
       const img = imageUrlSlots.find((i) => i.key === slot.key)
       if (!img) return
-      if (asset.source === 'canvas' && asset.origin.source === 'canvas') handleSlotAssignment(img, asset.origin.nodeId)
+      // 连边是改画布，只有握着连边权能的宿主（画布）才建边；付费确认卡只写它自己的参考槽（见 nodeWriteAccess）。
+      if (asset.source === 'canvas' && asset.origin.source === 'canvas' && canConnect) handleSlotAssignment(img, asset.origin.nodeId)
       else setSingleFrameUrlMeta(img, asset.renderUrl)
       return
     }
@@ -689,6 +685,13 @@ export default function NodeParameterControls({
     )
   }
 
+  // section="mode"：「生成方式」分段单独成一行，住在参考区滚动口**之外**（2026-09-21 走查 01/07）。
+  // 它决定下面有哪些参考槽，属于浮框「非收不可」的高度：放在滚动口里，卡片一压到最小高度它就被裁成半截、
+  // 点不中；放在外面，它是卡片的固定内容，不随参考区滚动。
+  if (section === 'mode') {
+    return showModeBar ? <ModeBar choices={modeChoices} activeId={archMode?.id || ''} onSelect={handleModeSwitch} /> : null
+  }
+
   // 模式分段切换要常驻（即便当前模式无参考槽，如纯文生）——有 modeBar / 数组槽 / 源视频槽都不空返回。
   // 变体（型号）已从这里挪到底栏 InlineParameterBar 的小下拉（用户拍板：和模型并排在最下面），不再占顶部一排。
   // 处理类 ComfyUI 工作流（去背景/超分/补帧）图里没有提示词槽——诚实说一句，
@@ -718,7 +721,7 @@ export default function NodeParameterControls({
 
   return (
     <div className={rootClassName} aria-label={t('generationCommon.parameters.referencesAria')}>
-      {showReferences && showModeBar ? (
+      {section === 'all' && showModeBar ? (
         <ModeBar choices={modeChoices} activeId={archMode?.id || ''} onSelect={handleModeSwitch} />
       ) : null}
 
@@ -740,7 +743,7 @@ export default function NodeParameterControls({
           capacityMessage={archMode?.maxTotalReferences === undefined ? undefined : t('generationCommon.parameters.referenceTotal', { max: archMode.maxTotalReferences })}
           valuesByKey={assetValuesByKey}
           occupiedByKey={arrayOccupiedByKey}
-          projectId={getDesktopActiveProjectId() || null}
+          projectId={openProjectId}
           openSlotKey={openSlotKey}
           uploadingSlotKey={uploadingSlotKey || uploadingArrayKey}
           onTogglePicker={(key) => setOpenSlotKey((prev) => (prev === key ? '' : key))}

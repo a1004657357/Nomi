@@ -29,6 +29,7 @@ const harness = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
+  app: { on: vi.fn() },
   BrowserWindow: harness.FakeBrowserWindow,
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => handlers.set(channel, handler),

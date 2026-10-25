@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_READ_CAPABILITY } from "../shared/agentCapabilities/canvasRead";
 import type { WorkspaceProjectIdentity } from "../workspace/workspaceProjectIdentity";
 import { createMcpConnectionContext, type McpConnectionContext } from "./mcpConnectionContext";
-import { createMcpGenerationPolicy } from "./mcpGenerationPolicy";
 import { createCanvasReadSurfaceRegistry, createSurfaceOwnerAuthority } from "./canvasReadSurfaceRegistry";
 import {
   ProjectBindingStaleError,
@@ -106,7 +105,6 @@ function makeSessionHarness() {
     canonicalRootDigest: identity.canonicalRootDigest,
   });
   const runtime = createProjectSessionRuntime({
-    generationPolicy: createMcpGenerationPolicy({ env: {} }),
     leaseFilePath: path.join(dir, "project-leases-v2"),
     leaseMacKey: "verified-invocation-lease-key",
     leaseStoreMacKey: "verified-invocation-store-key",
@@ -527,10 +525,10 @@ describe("VerifiedCapabilityInvocation renderer and internal construction bounda
       projectId: BASE_IDENTITY.projectId,
       suspension,
     });
-    const capturedPort = registry.captureCanvasReadPort(owner, binding);
+    const session = registry.openProjectSession(owner, binding.binding);
     const factory = createRendererCanvasReadVerifiedInvocationFactory({
       registry,
-      capturedPort,
+      session,
       requestId: "request-1",
     });
 
@@ -544,20 +542,20 @@ describe("VerifiedCapabilityInvocation renderer and internal construction bounda
     expect(invocation.binding).toEqual(binding.binding);
     expect(resolveVerifiedCanvasReadExecutionTarget(invocation)).toEqual({
       kind: "surface",
-      capturedPort,
+      session,
     });
     await expect(revalidateVerifiedCapabilityInvocation(invocation)).resolves.toBe(invocation);
     expect(() =>
       createRendererCanvasReadVerifiedInvocationFactory({
         registry: { ...registry },
-        capturedPort,
+        session,
         requestId: "request-2",
       }),
     ).toThrow(expect.objectContaining({ code: "capability_authority_invalid" }));
 
     registry.suspend(owner, { surfaceInstanceId: "surface-1" });
     await expect(revalidateVerifiedCapabilityInvocation(invocation)).rejects.toMatchObject({
-      code: "surface_port_stale",
+      code: "surface_port_suspended",
     });
   });
 

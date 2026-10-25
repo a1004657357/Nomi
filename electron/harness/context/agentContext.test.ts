@@ -1,26 +1,26 @@
-import path from "node:path";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { findSkillRecord, type SkillRecord } from "../../skills/skillStore";
+import { findSkillRecord, readSkillRecords, type SkillRecord } from "../../skills/skillStore";
 import { SKILL_PACKAGE_VERSION } from "../../skills/skillPackage";
 import * as context from "./agentContext";
 
-// Post-cutover SkillRecord gained required audience/packageVersion/contentHash fields;
-// these inline fixtures declare them so the record type-checks (contentHash is any 64-hex placeholder — the prompt-composition assertions never read it).
-const FIXTURE_SKILL_META = {
-  audience: "internal",
-  packageVersion: SKILL_PACKAGE_VERSION,
-  contentHash: "0".repeat(64),
-} as const satisfies Pick<SkillRecord, "audience" | "packageVersion" | "contentHash">;
-
 const FORBIDDEN_OWNER_IMPORT = /(?:from|import\s*\()\s*["'](?:ai|@ai-sdk\/[^"']*|@mariozechner\/[^"']*|@earendil-works\/pi-[^"']*|[^"']*(?:agentChatV2|agentSession|projectMemory|catalogStore))['"]/;
 
-vi.mock("../../skills/skillStore", () => ({ findSkillRecord: vi.fn() }));
+// 目录是 async 的（pi 的加载器在岛上）：`resolveRequestedSkill` 每次都 `await readSkillRecords()` 再查。
+vi.mock("../../skills/skillStore", () => ({ findSkillRecord: vi.fn(), readSkillRecords: vi.fn(async () => []) }));
+
+const skillFixture = (): SkillRecord => ({
+  name: "story-method", directoryName: "story", filePath: "/skills/story/SKILL.md", packageDir: "/skills/story",
+  description: "Story method", content: "# Method", body: "---\nname: story-method\n---\n# Method", manifest: null, origin: "user",
+  audience: "internal", packageVersion: SKILL_PACKAGE_VERSION, contentHash: "0".repeat(64), requiresCodingTools: false,
+});
 
 describe("Nomi agent context ownership", () => {
   beforeEach(() => {
     vi.mocked(findSkillRecord).mockReset();
     vi.mocked(findSkillRecord).mockReturnValue(null);
+    vi.mocked(readSkillRecords).mockReset();
+    vi.mocked(readSkillRecords).mockResolvedValue([]);
   });
 
   it("detects static and dynamic imports from every forbidden SDK prefix", () => {
@@ -49,6 +49,16 @@ describe("Nomi agent context ownership", () => {
     expect(source).not.toMatch(FORBIDDEN_OWNER_IMPORT);
   });
 
+  // 2026-09-18：选中技能进提示词的唯一注入点搬到了岛上（`electron/agentLane/laneSkillPrompt.mts`，
+  // pi 的 `formatSkillInvocation`）。这一层只剩身份 / 语言 / 合成 / 解析用户点了哪条技能，
+  // 所以这里不许再长出一份手拼的 `<skill name=` 信封（S52：拼技能正文的只有一处）。
+  it("no longer assembles the selected-skill prompt itself", () => {
+    const source = readFileSync(new URL("./agentContext.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("<skill name=");
+    expect(source).not.toMatch(/export function buildSelectedSkillPrompt/);
+    expect((context as Record<string, unknown>).buildSelectedSkillPrompt).toBeUndefined();
+  });
+
   it("reads and trims only the canonical nested skill identity", () => {
     expect(context.readRequestedSkill({ chatContext: { skill: { key: " workbench.creation.story ", name: " Story " } }, skillKey: "ignored" }))
       .toEqual({ key: "workbench.creation.story", name: "Story" });
@@ -56,43 +66,18 @@ describe("Nomi agent context ownership", () => {
     expect(context.readRequestedSkill({ chatContext: { skill: { key: 7, name: null } } })).toEqual({ key: "", name: "" });
   });
 
-  it("leaves the skill layer empty when no skill was requested", () => {
-    expect(context.buildSkillSystemPrompt({})).toBe("");
-    expect(findSkillRecord).not.toHaveBeenCalled();
-  });
-
-  it("preserves the honest missing-skill message", () => {
-    expect(context.buildSkillSystemPrompt({ chatContext: { skill: { key: "missing-skill" } } })).toBe([
-      "Nomi 桌面 Agent skill 提示：",
-      "请求的 skill 未在本地 skills 目录找到：missing-skill",
-      "继续按用户请求和当前上下文完成任务；不要声称已经加载不存在的 skill。",
-    ].join("\n"));
-  });
-
-  it("keeps the existing skill lookup and byte-exact local skill layer", () => {
-    const skill: SkillRecord = {
-      name: "story-method", directoryName: "story", filePath: path.join(process.cwd(), "skills/story/SKILL.md"),
-      description: "Story method", body: "# Method\nWrite, review, revise.", manifest: null, origin: "user",
-      ...FIXTURE_SKILL_META,
-    };
-    vi.mocked(findSkillRecord).mockReturnValue(skill);
-    expect(context.buildSkillSystemPrompt({ chatContext: { skill: { key: "workbench.creation.story", name: "Story" } } })).toBe([
-      "Nomi 桌面 Agent 已加载本地 skill。以下内容是本次回复必须参考的领域方法论和输出约束。",
-      "注意：本桌面运行时只把 skill 作为本地知识注入；skill 中提到的外部 CLI、HTTP 或文件工具不会自动执行，除非当前对话/界面明确提供了对应能力。",
-      "skillKey: workbench.creation.story", "skillName: Story", `skillFile: ${path.join("skills", "story", "SKILL.md")}`, "", skill.body,
-    ].join("\n"));
-    expect(findSkillRecord).toHaveBeenCalledWith("workbench.creation.story", "Story");
-  });
-
-  it("falls back to the resolved local skill name without changing the requested lookup", () => {
-    vi.mocked(findSkillRecord).mockReturnValue({
-      name: "story-method", directoryName: "story", filePath: path.join(process.cwd(), "skills/story/SKILL.md"),
-      description: "Story method", body: "Method", manifest: null, origin: "builtin",
-      ...FIXTURE_SKILL_META,
-    });
-    const prompt = context.buildSkillSystemPrompt({ chatContext: { skill: { name: "Story" } } });
-    expect(prompt).toContain("skillKey: story-method\nskillName: Story");
-    expect(findSkillRecord).toHaveBeenCalledWith("", "Story");
+  // S41：用户刚导入的技能这一轮就找得到——目录每次现扫，不拿开 lane 时的快照。
+  it("resolves the requested skill against a freshly read catalog every time", async () => {
+    const record = skillFixture();
+    vi.mocked(readSkillRecords).mockResolvedValue([record]);
+    vi.mocked(findSkillRecord).mockReturnValue(record);
+    expect(await context.resolveRequestedSkill({ chatContext: { skill: { key: "story", name: "" } } })).toBe(record);
+    expect(findSkillRecord).toHaveBeenCalledWith("story", "", [record]);
+    await context.resolveRequestedSkill({ chatContext: { skill: { key: "story", name: "" } } });
+    expect(readSkillRecords).toHaveBeenCalledTimes(2);
+    // 没点技能就不读盘：不为一个空结果扫一遍技能库。
+    expect(await context.resolveRequestedSkill({})).toBeNull();
+    expect(readSkillRecords).toHaveBeenCalledTimes(2);
   });
 
   it("composes four layers in order with memory last, wrapped by the language rule", () => {

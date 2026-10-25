@@ -9,8 +9,42 @@ export type GenerationFeedback = {
   percent?: number
   late: boolean
   saved: boolean
+  /** 回执还剩多久（只在 saved 时有）：状态条据此在最后一小段淡出；开了「减少动态效果」就不淡出，到点直接消失。 */
+  savedRemainingMs?: number
   active: boolean
   previewLabel: string
+}
+
+/**
+ * 「已保存到项目」这句话能待多久。
+ *
+ * 它是一次**落地回执**，不是节点的常驻状态：图已经在画面里了，那才是「保存成功」最强的证据。
+ * 2026-09-11 用户实测反馈——每一个做完的图片节点下面都永久挂着这一条，
+ * 一屏十几个节点就是十几条重复的废话，把真正要读的东西（失败、还在跑的那几个）淹掉。
+ *
+ * 用「完成时刻 + 窗口」而不是一个 `seen` 标记：窗口是**从数据派生**的，
+ * 重开项目、切面、换外壳都不会让一条早就该消失的回执重新冒出来，也不用为它存一份状态。
+ */
+export const SAVED_FEEDBACK_WINDOW_MS = 3000
+
+/** 回执窗口最后这一小段做淡出（系统开了「减少动态效果」则不做，直接消失）。 */
+export const SAVED_FADE_MS = 300
+
+/** 回执还剩多久；不在窗口里（或不是刚落地的成功节点）= undefined。 */
+function savedRemainingMs(node: GenerationCanvasNode, now: number): number | undefined {
+  if (node.status !== 'success') return undefined
+  const run = node.runs?.[0]
+  const at = run?.completedAt ?? run?.updatedAt
+  if (at === undefined) return undefined
+  const elapsed = now - at
+  // 负数 = 完成时间在「现在」之后（时钟回拨/上游时间戳）。回落到不显示：
+  // 这条回执可有可无，而一条赖着不走的回执正是要修的病。
+  return elapsed >= 0 && elapsed < SAVED_FEEDBACK_WINDOW_MS ? SAVED_FEEDBACK_WINDOW_MS - elapsed : undefined
+}
+
+/** 这个节点刚刚落地、回执还在窗口里吗。 */
+export function savedFeedbackWindowOpen(node: GenerationCanvasNode, now: number): boolean {
+  return savedRemainingMs(node, now) !== undefined
 }
 
 /** Cache the exact narration result, so all three surfaces consume one call per node/tick/locale. */
@@ -28,7 +62,8 @@ export function generationFeedback(node: GenerationCanvasNode, now: number, queu
 
 function deriveFeedback(node: GenerationCanvasNode, now: number, queued: boolean, queueAhead?: number): GenerationFeedback | null {
   const active = queued || node.status === 'queued' || node.status === 'running'
-  const saved = !queued && node.status === 'success'
+  const savedRemaining = queued ? undefined : savedRemainingMs(node, now)
+  const saved = savedRemaining !== undefined
   const failed = !queued && node.status === 'error'
   if (!active && !saved && !failed) return null
   const stage = queued ? 'queued' : isGenerationProgressStage(node.progress?.phase)
@@ -47,6 +82,7 @@ function deriveFeedback(node: GenerationCanvasNode, now: number, queued: boolean
     : i18n.t('generationCommon.observability.progress.preview')
   return {
     phase, active, saved, percent, previewLabel,
+    ...(savedRemaining === undefined ? {} : { savedRemainingMs: savedRemaining }),
     late: active && stage === 'still-generating',
     message: failed ? classifyGenerationError(node.error || '').reason
       : saved ? i18n.t('generationCommon.observability.progress.saved')

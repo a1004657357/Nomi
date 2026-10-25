@@ -1,0 +1,123 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-agnes-public-probe-policy",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "公网参考图预检未经过共享目的地策略",
+  "symptom": "完整CI拒绝公网预检裸appFetch；独立复核又发现预检被拒时借用了下载侧已付费取回的稳定码与提示。",
+  "direct_cause": "原预检绕开共享策略；改用共享读取后，refuse固定retrieval而未接收提交前预检的调用阶段。",
+  "class_root": "元数据与完整读取必须共享目的地判据，但是否已提交生成只能由调用方阶段决定，不能由读取模式推断。",
+  "affected_population": [
+    "AGNES图片预检的公网域名、重定向和慢/大响应",
+    "共享hardenedFetch元数据模式与原完整读取模式"
+  ],
+  "scope_paths": [
+    "electron/hardenedFetch.ts",
+    "electron/hardenedFetch.test.ts",
+    "electron/catalog/agnesPublicAssetProbe.ts",
+    "electron/catalog/webBridgeTransportBoundary.test.ts"
+  ],
+  "entry_points": [
+    "assertAgnesPublicImageReachable",
+    "hardenedFetch"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓内已审共享出站策略、DNS固定和清理机制；不接入新外部API。",
+  "invariants": [
+    "默认完整读取行为、字节/超时/内容类型限制保持；新增显式headersOnly只返回零字节元数据并立即取消body。",
+    "headersOnly仍走原DNS/私网/代理/每跳重定向/凭据剥离与连接池清理；不能扩大目的地或变成下载豁免。",
+    "预检保持GET Range bytes=0-0和原请求超时，不追加生成、自动重发或真实网络测试。",
+    "已声明的fetchImpl仅为原隔离测试接口；默认路径必须调用共享hardenedFetch，不再直接appFetch。",
+    "普通下载拒绝默认仍为retrieval；提交前预检显式用既有submit阶段，保留reason/cause且不得归为已付费取回。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/hardenedFetch.ts",
+    "tests": [
+      "electron/hardenedFetch.test.ts",
+      "electron/catalog/webBridgeTransportBoundary.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "write",
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "assertAgnesPublicImageReachable"
+    }
+  ],
+  "door_reduction": {
+    "before": 1,
+    "after": 1,
+    "why_not": "door-map实际扫描2971生产文件，仅profileTaskExecution一个预检调用点；完整与元数据读取共享原出站owner，不新增业务入口。"
+  },
+  "generality_proof": "同一hardenedFetch对任意公网来源均执行策略；以默认完整读取阳性对照、仅头读取取消body、重定向到私网拒绝覆盖不同响应和目的地，不靠AGNES域名白名单。",
+  "shared_boundaries": [
+    {
+      "path": "electron/hardenedFetch.ts",
+      "symbol": "hardenedFetch",
+      "responsibility": "元数据和完整读取共用目的地、重定向与连接清理"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/catalog/agnesPublicAssetProbe.ts",
+      "entry_point": "assertAgnesPublicImageReachable",
+      "disposition": "enforced",
+      "evidence": "默认改走共享owner，保留原GET Range并显式submit；禁止把尚未提交生成的预检拒绝描述成已付费结果。"
+    },
+    {
+      "path": "electron/hardenedFetch.ts",
+      "entry_point": "hardenedFetch",
+      "disposition": "enforced",
+      "evidence": "两种读取共享相同授权及重定向循环；outboundStage只复用既有阶段用于错误投影，不放宽授权或增加重试。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "所有只头探测都可能以直接fetch绕过目的地策略；同类域名、DNS和重定向可复现。",
+    "same_class_scan": [
+      "door-map assertAgnesPublicImageReachable扫描2971文件：1个生产调用点",
+      "检查hardenedFetch完整流与redirect revalidation、abandonResponse、dispatchers cleanup",
+      "定位另两条严格回环桥接，单独登记审批，不混入公网豁免"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/hardenedFetch.ts",
+    "invariant": "读取前统一授权，headersOnly只控制body消费，不控制目的地判据。",
+    "failure_mode": "私网/非法跳转仍在请求前拒绝；正常只头响应取消body，返回零bytes，不声称取得或验证完整资产。",
+    "exception_policy": "none",
+    "strategy": "扩展已有owner只头模式，删除默认公网预检的裸appFetch路径。",
+    "artifacts": [
+      "electron/hardenedFetch.ts",
+      "electron/catalog/agnesPublicAssetProbe.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/hardenedFetch.test.ts",
+    "electron/catalog/webBridgeTransportBoundary.test.ts",
+    "electron/catalog/agnesPublicAssetProbe.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/hardenedFetch.test.ts",
+    "electron/catalog/webBridgeTransportBoundary.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "删除的是同文件内默认裸appFetch调用，不删除整文件；默认路径回归要求只调用共享策略，不提供运行时回退。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "不升级依赖；使用现有undici、原策略与测试seam。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移用户项目或账号，仅调整请求实现。",
+  "residual_risks": [
+    "只头通过不证明图片内容、尺寸或视频生成成功。",
+    "新实现尚须先红后绿、完整owner测试及本轮CI，不预签通过。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "electron/hardenedFetch.test.ts"
+  }
+}

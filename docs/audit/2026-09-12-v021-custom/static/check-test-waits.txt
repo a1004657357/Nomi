@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:test-waits /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-test-waits.mjs
+
+✅ 测试等待门岗通过：0 处私有墙钟等待（硬零，无基线）

@@ -2,9 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { generateText } from "ai";
-import { anthropicBaseUrl, buildAiSdkModel } from "./buildAiSdkModel";
-import { buildLanguageModelForVendor } from "./vendorLanguageModel";
-import type { Model, Vendor } from "../catalog/types";
+import { adaptToolSchemasForProfile, anthropicBaseUrl, buildAiSdkModel } from "./buildAiSdkModel";
+import { getModelProfile } from "./modelProfiles";
+import { buildLanguageModelForVendor, selectTextModelCandidates } from "./vendorLanguageModel";
+import { composeAgentSystemPrompt } from "../harness/context/agentContext";
+import type { CatalogState, Model, Vendor } from "../catalog/types";
 
 let noAuthServer: http.Server;
 let noAuthBaseUrl = "";
@@ -106,6 +108,25 @@ describe("buildAiSdkModel", () => {
     const result = await generateText({ model: buildLanguageModelForVendor(vendor, model, "test-key"), prompt: "ping", maxRetries: 0 });
     expect(result.text).toBe("pong");
     expect(observedUrl).toBe(expectedPath);
+  });
+
+  it.each([
+    ["", "", "/chat/completions"],
+    ["/api/coding/paas/v4", "", "/api/coding/paas/v4/chat/completions"],
+    ["/root", "/openai/v1", "/root/openai/v1/chat/completions"],
+  ])("keeps custom metadata base paths for %s + %s", async (suffix, basePath, expectedPath) => {
+    const vendor: Vendor = {
+      key: "custom-base", name: "Custom base", enabled: true, authType: "none",
+      providerKind: "openai-compatible", baseUrlHint: `${noAuthBaseUrl}${suffix}`,
+      meta: { openAiCompatibleBasePath: basePath }, createdAt: "", updatedAt: "",
+    };
+    const model: Model = {
+      vendorKey: vendor.key, modelKey: "local-model", labelZh: "Local", kind: "text",
+      enabled: true, createdAt: "", updatedAt: "",
+    };
+    await generateText({ model: buildLanguageModelForVendor(vendor, model, ""), prompt: "ping", maxRetries: 0 });
+    expect(observedUrl).toBe(expectedPath);
+    expect(observedAuthorization).toBeUndefined();
   });
 
   it("returns an openai-compatible language model for kind=openai-compatible", () => {
@@ -222,5 +243,61 @@ describe("buildAiSdkModel", () => {
       modelId: "gpt-4o-mini",
     });
     expect(model.modelId).toBe("gpt-4o-mini");
+  });
+
+  it("removes only JSON Schema dialect metadata for GLM tool calls", () => {
+    const body = {
+      tools: [{
+        type: "function",
+        function: {
+          name: "read_stage",
+          parameters: {
+            type: "object",
+            $schema: "http://json-schema.org/draft-07/schema#",
+            properties: {
+              nested: {
+                type: "object",
+                $schema: "https://json-schema.org/draft/2020-12/schema",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      }],
+    };
+
+    const adapted = adaptToolSchemasForProfile(body, getModelProfile("glm-5-turbo"));
+    const parameters = (adapted.tools as Array<{ function: { parameters: Record<string, unknown> } }>)[0].function.parameters;
+    expect(parameters.$schema).toBeUndefined();
+    expect((parameters.properties as Record<string, Record<string, unknown>>).nested.$schema).toBeUndefined();
+    expect(parameters.additionalProperties).toBe(false);
+    expect((body.tools[0].function.parameters as Record<string, unknown>).$schema).toContain("draft-07");
+  });
+});
+
+describe("merged agent model compatibility", () => {
+  it("allows explicit no-tool replies without weakening the default assistant tool gate", () => {
+    const vendor: Vendor = {
+      key: "local", name: "Local", enabled: true, authType: "none",
+      providerKind: "openai-compatible", createdAt: "", updatedAt: "",
+    };
+    const model: Model = {
+      vendorKey: vendor.key, modelKey: "plain-text", labelZh: "Plain", kind: "text",
+      enabled: true, meta: { supportsToolCalls: false }, createdAt: "", updatedAt: "",
+    };
+    const state: CatalogState = { version: 5, vendors: [vendor], models: [model], mappings: [], apiKeysByVendor: {} };
+    const preference = { vendorKey: vendor.key, modelKey: model.modelKey };
+    expect(() => selectTextModelCandidates(state, preference)).toThrow("tools");
+    expect(selectTextModelCandidates(state, preference, false, false)).toEqual([{ vendor, model }]);
+    expect(selectTextModelCandidates({ ...state, models: [{ ...model, meta: { promptRefineOnly: true } }] }, preference, false, false)).toEqual([]);
+  });
+
+  it("keeps stable prompt layers before changing project memory on the current harness API", () => {
+    const parts = composeAgentSystemPrompt({
+      identity: "identity", panelSystemPrompt: "panel", skillSystemPrompt: "playbook",
+      memoryBlock: "memory",
+    })?.split("\n\n");
+    expect(parts).toEqual([expect.any(String), "identity", "panel", "playbook", "memory", expect.any(String)]);
+    expect(parts?.[0]).toBe(parts?.at(-1));
   });
 });

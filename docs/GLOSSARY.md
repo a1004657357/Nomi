@@ -35,8 +35,8 @@
 | 你可能搜的词 | 规范名 | 去哪找 |
 |---|---|---|
 | agent 引擎 · runAgentChatV2 · streamText 循环 | **pi runtime**（pi SDK 0.85.1）。`runAgentChatV2` 是**已被取代**的旧名 | `electron/harness/runtime/pi/` |
-| 工具组 · toolset · skillKey 选工具 | **capability**（工具组按 capability 选，**不按 skillKey**） | `electron/harness/agentChatPolicy.ts:35` |
-| 工具定义 · tool schema · descriptor | **模型可见工具清单**（`modelToolSurfaceManifest.ts`；`canvasDescriptors.ts` / `documentDescriptors.ts` 是**已删**的旧名） | `electron/harness/tools/` |
+| 工具组 · toolset · skillKey 选工具 | **内部 profile 全量 + 延迟组**（#646 后不再按 capability 裁剪；工具组按 `internalGroup` 延迟披露） | `electron/agentLane/laneToolCatalog.ts` |
+| 工具定义 · tool schema · descriptor · 说明书 | **动词声明 `VerbDeclaration`**（唯一 owner；`modelToolSurfaceManifest.ts` / `agentToolCatalog.ts` / `*ModelTools.ts` / 契约 `projections` 都是 2026-09-11 **已删**的旧名） | `electron/shared/agentCapabilities/verbDeclarations.ts` |
 | 统一 agent · 跨区 agent · 常驻助手 | **R2-U1 项目级统一 Agent**（未交付） | `docs/plan/2026-08-26-pi-agent-loop-file-migration.md` §7 |
 | 会话 · 线程 · session · thread | **`{sessionKey, threadId}` 二元组**；area 仅 `creation \| generation` | `src/workbench/ai/agentSessionKey.ts:3` |
 | 幻影工具 · phantom tool | 后端有 schema、前端未实现的工具（历史问题，已修） | `docs/plan/agent-merge-architecture.md`（⛔ 已过期） |
@@ -78,6 +78,23 @@
 | **取消** | 算了 · 不要 · 不用 · 放弃 · 不了 | Cancel | `common.cancel`；否定动作统一样式（§1.8 规则 4） |
 | **生成** | 去生成 · 开始生成 · 生成一下 · 出图 | Generate | 生成主动作；带后果时写成「生成 ¥1.20」 |
 | **确认** | 确定 · 好的 · 知道了 · 我知道了 · 没问题 | Confirm | `common.confirm`；花钱确认（§3.5 `SpendConfirmDialog`） |
+| **谢绝一次邀请**（用动作动词的否定式：不分享 · 不导入 · 不开启…） | 不用 · 不要 · 算了 · 不了 · 暂不 · 以后再说 · 稍后再说 | Decline | 首次询问卡（`agentPanelV4.consent.decline`）等「邀请你开一个可选能力」的面 |
+
+> **「谢绝一次邀请」和「取消」是两个动作，所以各占一行。**
+> `取消` 中止的是**已经在跑的操作**（生成、导出、上传）；谢绝邀请拒绝的是**还没开始的一件事**
+> ——用户此刻并没有「进行中的操作」可中止，把它写成「取消」会让人以为自己在撤销什么。
+>
+> 规范写法是**把被拒绝的那个动作本身否定掉**（分享 → `不分享`，导入 → `不导入`），
+> 而不是写一句口语否定（`不用了` / `算了`）。这么定的三个理由：
+> ① 它诚实——用户看得见自己拒的到底是哪件事；
+> ② 它可逆且不暗示「以后再说」——`暂不` / `稍后再说` 会让用户以为这张卡还会再弹，
+>    而首次询问卡的拍板恰恰是**只问一次**（2026-09-15）；
+> ③ 它仍然是一个动词开头的短词，不违反 §1.8「否定动作收敛成统一样式」。
+>
+> 这一行的由来：2026-09-15 反馈回路那张同意卡上，样张写的 `不用了` 被 `check:controls` 拦下
+> （`不用` 是「取消」的替代说法），两条拍板撞在同一颗按钮上。裁决是**给这个动作立自己的词**，
+> 而不是删掉 `不用` 的禁用登记——那条禁用解决的是真问题（同一个否定动作在三个面上
+> 分别叫「不要」「算了」「取消」）。判据来自本表自己那句：「先确认它真是同一个动作」。
 
 ## 对外接口
 

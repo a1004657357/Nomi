@@ -1,0 +1,37 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-custom-validation-coverage",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "定制入口没有接入共享验证策略",
+  "symptom": "新增 quality/skills 目录未归档，六个定制走查绕过机器锁，旧生成物检查又与已生效的自动同步路线冲突。",
+  "direct_cause": "合并保留了自定义入口，但没有同步官方验证策略和派生代码的现有 owner。",
+  "class_root": "新增功能入口与公共验证边界之间缺少完整接线，运行命令、风险目录和自动生成物各自留了旧配置。",
+  "affected_population": ["定制能力的离线验证", "机器上的并行桌面测试", "画布质量与技能修改的选测"],
+  "scope_paths": ["package.json", "scripts/validation-policy.mjs", "scripts/validation-policy.node-test.mjs", "scripts/gate-slimming.node-test.mjs", "scripts/with-gates-lock.node-test.mjs"],
+  "entry_points": ["package scripts 的定制走查", "classifyValidationPolicy 的所有调用方"],
+  "external_sources": [],
+  "internal_only_reason": "采用仓库现有机器锁和 archetype-autosync 工作流，不引入外部行为假设。",
+  "invariants": ["所有重型走查都经同一个机器锁。", "产出画布显示的 quality 和 skills 目录选择 full 画布验收。", "生成默认表仍由现有自动同步工作流拥有，不重新引入已移除的手动门岗。"],
+  "invariant_owner_layer": {"layer": "scripts/validation-policy.mjs", "tests": ["scripts/validation-policy.node-test.mjs", "scripts/with-gates-lock.node-test.mjs", "scripts/gate-slimming.node-test.mjs"]},
+  "doors": [
+    {"kind": "write", "path": "scripts/git-delivery.mjs", "symbol": "classifyValidationPolicy"},
+    {"kind": "write", "path": "scripts/run-gates-tests.mjs", "symbol": "classifyValidationPolicy"},
+    {"kind": "write", "path": "scripts/select-quality-gate-profile.mjs", "symbol": "classifyValidationPolicy"}
+  ],
+  "door_reduction": {"before": 3, "after": 3, "why_not": "本地选测、CI 选测和交付收据是不同消费者，统一调用同一策略函数，不复制策略。"},
+  "generality_proof": "重型入口回归遍历全部 package scripts，目录回归遍历全部真实子目录，缺任何入口都会失败。",
+  "shared_boundaries": [{"path": "scripts/validation-policy.mjs", "symbol": "classifyValidationPolicy", "responsibility": "以同一风险策略决定本地和 CI 的验证面。"}],
+  "same_class_entry_points": [
+    {"path": "scripts/run-gates-tests.mjs", "entry_point": "classifyValidationPolicy", "disposition": "enforced", "evidence": "本地分层门读取同一份目录规则。"},
+    {"path": "scripts/select-quality-gate-profile.mjs", "entry_point": "classifyValidationPolicy", "disposition": "enforced", "evidence": "CI 在相同规则下给 quality 和 skills 选择 full。"}
+  ],
+  "recurrence": {"classification": "recurring", "reason": "任何自定义能力新增目录或走查都可能再次漏接。", "same_class_scan": ["遍历 generationCanvas 全部子目录与所有重型 package 脚本", "核对 archetype-autosync 的生成器、写入范围和原始迁移提交"]},
+  "prevention": {"kind": "centralized-boundary", "enforcement_path": "scripts/validation-policy.mjs", "invariant": "所有定制入口进入既有验证 owner。", "failure_mode": "未声明目录或绕锁脚本分别在目录和锁回归失败。", "exception_policy": "none", "strategy": "补齐接线而非新增绕过或提升失败基线。", "artifacts": ["scripts/validation-policy.mjs", "package.json"]},
+  "regression_tests": ["scripts/validation-policy.node-test.mjs", "scripts/with-gates-lock.node-test.mjs", "scripts/gate-slimming.node-test.mjs"],
+  "class_regression_tests": ["scripts/validation-policy.node-test.mjs"],
+  "legacy_paths": {"status": "not-applicable", "removed_paths": [], "rationale": "删除的是过期 package 脚本别名和重复挂载，不删除生成器或用户功能文件。"},
+  "dependency_lifecycle": {"decision": "not-applicable", "rationale": "复用现有脚本和策略，没有第三方依赖变更。", "exit_criteria": []},
+  "migration": "用户项目和内容不迁移，现有走查命令名称保留，仅补共享锁。",
+  "residual_risks": ["全仓门岗和云端选测结果需要在最终整合树上重新验证。"]
+}

@@ -56,17 +56,8 @@ function makeApprovalReceipt(clock: () => string = () => '2026-08-23T00:00:00.00
  * 逐镜确认一次性拿掉——付费放行，所以要收据。逐镜价目/合计/上限全部来自这个信封（唯一价格真相源）。
  */
 function trustGrantRun(): ProductionRun {
-  return {
-    ...run,
-    policy: { ...run.policy, trustLevel: 'confirm_all' },
-    generationPlan: {
-      operationId: 'run-1',
-      state: 'sealed',
-      candidate: {} as never,
-      costCertainty: 'known',
-      authorizationDigest: 'digest-trust',
-      authorizationGateId: 'gate-1',
-      authorizationEnvelope: {
+  // 授权住在它自己那道门上（2026-09-30）：信封摆在一道付费门上，计划上不留。
+  const authorizationEnvelope = {
         schemaVersion: 1,
         immutableProjectUuid: 'uuid-1',
         projectGeneration: 1,
@@ -82,7 +73,18 @@ function trustGrantRun(): ProductionRun {
           { jobId: 'job-1', shotId: 'shot-1', providerId: 'apimart', modelId: 'kling-v2', mode: 'i2v', price: { currency: 'CNY', maximum: 4 } },
           { jobId: 'job-2', shotId: 'shot-2', providerId: 'apimart', modelId: 'kling-v2', mode: 'i2v', price: { currency: 'CNY', maximum: 5 } },
         ],
-      } as never,
+      } as never
+  return {
+    ...run,
+    policy: { ...run.policy, trustLevel: 'confirm_all' },
+    gates: [...run.gates, { gateId: 'gate-trust', scope: 'budget_envelope', status: 'waiting', planHash: 'digest-trust',
+      authorizationDigest: 'digest-trust', authorizationEnvelope, jobIds: ['job-1', 'job-2'], title: '', summary: '',
+      createdAt: '2026-08-08T10:00:00.000Z', expiresAt: '2026-08-24T00:00:00.000Z' }],
+    generationPlan: {
+      operationId: 'run-1',
+      state: 'sealed',
+      candidate: {} as never,
+      costCertainty: 'known',
       updatedAt: '2026-08-08T10:00:00.000Z',
     },
   }
@@ -128,8 +130,8 @@ const run: ProductionRun = {
   stageId: 'storyboard',
   playbook: { name: 'brand.promo', version: '1.0.0' },
   origin: { host: 'external', actorId: 'codex' },
-  policy: { mode: 'balanced', trustedHosts: ['codex'], allowedProviders: ['secret-provider'], allowedModels: ['secret-model'], maxSpend: 20, maxAttemptsPerJob: 2, minimizeUploads: true },
-  budget: { currency: 'CNY', authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+  policy: { trustedHosts: ['codex'], allowedProviders: ['secret-provider'], allowedModels: ['secret-model'], maxSpend: 20, maxAttemptsPerJob: 2, minimizeUploads: true },
+  budget: { currency: 'CNY', authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
   planVersion: 1,
   snapshotCursor: 3,
   stages: [{ stageId: 'storyboard', title: '分镜', status: 'running', order: 1 }],
@@ -159,19 +161,6 @@ describe('production run service projection boundary', () => {
     expect(repository.execute).not.toHaveBeenCalled()
   })
 
-  it('keeps listFull read-only and leaves restart recovery explicit', () => {
-    const repository = {
-      read: vi.fn(() => run),
-      readEvents: vi.fn(() => []),
-      list: vi.fn(() => [{ runId: run.runId }]),
-      execute: vi.fn(),
-    }
-    const service = createProductionRunService({ repository: repository as never, projectRootResolver: () => null })
-
-    expect(service.listFull('project-1')).toHaveLength(1)
-    expect(repository.execute).not.toHaveBeenCalled()
-  })
-
   it('does not let legacy restart recovery rewrite a semantic single-shot job', async () => {
     const semanticRun = {
       ...run,
@@ -196,6 +185,38 @@ describe('production run service projection boundary', () => {
     await service.resumeUnfinishedRuns('project-1')
 
     expect(repository.execute).not.toHaveBeenCalled()
+  })
+
+  it('restart finds a semantic job stuck in submitting without a task id: marks the outcome unknown, never resubmits', async () => {
+    const semanticRun = {
+      ...run,
+      playbook: { name: 'generation.single-shot', version: '1.0.0' },
+      generationPlan: { operationId: run.runId } as ProductionRun['generationPlan'],
+      jobs: [{
+        ...run.jobs[0],
+        jobId: 'generation-run-1-contract-attempt-1',
+        status: 'submitting' as const,
+        providerTaskId: undefined,
+        executionBinding: { runId: run.runId, contractHash: 'contract', providerNamespace: run.jobs[0].provider } as never,
+      }],
+    } satisfies ProductionRun
+    const repository = {
+      read: vi.fn(() => semanticRun),
+      readEvents: vi.fn(() => []),
+      list: vi.fn(() => [{ runId: semanticRun.runId }]),
+      readBudgetLedger: vi.fn(() => ({ reservations: {} })),
+      execute: vi.fn((..._args: unknown[]) => ({ run: semanticRun })),
+    }
+    const service = createProductionRunService({ repository: repository as never, projectRootResolver: () => null })
+
+    await service.resumeUnfinishedRuns('project-1')
+
+    const types = repository.execute.mock.calls.map((call) => (call[2] as unknown as { type: string; payload: Record<string, unknown> }))
+    const unknown = types.find((command) => command.type === 'job.status')
+    expect(unknown?.payload).toMatchObject({ status: 'submission_unknown' })
+    expect(String((unknown?.payload.patch as { errorMessage: string }).errorMessage)).toContain('NOMI_ERR::submission-unknown::')
+    // 绝不重发：没有任何命令把 job 推回 authorized / submit_intent_persisted。
+    expect(types.some((command) => command.type === 'job.status' && ['authorized', 'submit_intent_persisted'].includes(String(command.payload.status)))).toBe(false)
   })
 
   it('keeps actionable submission identity while redacting policy, credentials and paths', () => {

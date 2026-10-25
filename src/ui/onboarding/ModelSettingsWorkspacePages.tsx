@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { IconArrowLeft, IconCheck, IconChevronDown, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import type { Mapping } from '../../../electron/catalog/types'
@@ -98,7 +98,7 @@ export function ConnectionWorkspacePage({
             size="md"
             leftSection={<IconPlus size={16} stroke={1.8} aria-hidden="true" />}
           >
-            <span className="hidden sm:inline">{t('onboardingProviders.workspace.addOtherModels')}</span>
+            {t('onboardingProviders.workspace.addOtherModels')}
           </DesignButton>
         ) : null}
       />

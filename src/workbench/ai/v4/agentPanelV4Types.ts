@@ -10,6 +10,8 @@
 // 既违反 R15（可见文字必须走 i18n），又凭空多了一份要和合同对齐的词表。
 import type { ProjectAgentApprovalPolicy } from '../../../../electron/shared/agentCapabilities/capabilityApprovalPolicy';
 import type { LaneTaskCandidate, LaneTaskStatus } from '../../../../electron/shared/agentLane/laneContracts'
+import type { V4AskQuestion } from './agentPanelV4AskModel'
+import type { V4QuestionOption } from './agentPanelV4Question'
 
 /** AI Elements Tool 的七态协议（vendor/aiElementsContract.ts 是它的外部参照）。 */
 export type V4ToolStatus =
@@ -45,6 +47,15 @@ export type V4InterventionKind =
   | 'plan'
   | 'credential'
   | 'deviation'
+  /**
+   * 「本该出现一张确认卡，但它没有渲染出来」（2026-09-12）。
+   *
+   * 它不是一种审批档，是**那条链断了的样子**。宿主投影、工具结果、系统提示词里那句
+   * 「此动作会向用户确认」——任何一处**声称**有一张卡在等用户，而槽里什么都没画出来，
+   * 就渲这一张，把断在哪里写在脸上。以前那些地方一律 `return undefined`，于是用户
+   * 看到的是「模型说请在确认卡里批准」+ 一片空白，只能去猜是不是坏了（2026-09-11 真实反馈）。
+   */
+  | 'missing-card'
 
 /**
  * 一行收据 / 任务卡 / 思考行的 icon 家族（定稿 Process 板「icon ↔ 动词」表）。
@@ -81,7 +92,7 @@ export type PermissionTier = ProjectAgentApprovalPolicy['mode']
 export type ComposerPopover = 'model' | 'skill' | 'permission'
 
 export type V4ChipKind = 'file' | 'skill' | 'clip'
-export type V4Chip = Readonly<{ kind: V4ChipKind; label: string; description?: string; cover?: string; preview?: { url: string; type: 'image' | 'video' } }>
+export type V4Chip = Readonly<{ id?: string; kind: V4ChipKind; label: string; description?: string; cover?: string; preview?: { url: string; type: 'image' | 'video' } }>
 
 export type ToolReceipt = Readonly<{
   /** Exact call identity for row actions; never an authorization record. */
@@ -96,12 +107,20 @@ export type ToolReceipt = Readonly<{
   summary?: string
   /** 行尾用时或原因。 */
   trailing?: string
-  /** 展开体：输入 / 输出。只有「还有内容可看」才带 ›。 */
-  input?: string
+  /** 展开体：给人看的回包正文（没有原始入参 / JSON，见 laneViewModel）。只有「还有内容可看」才带 ›。 */
   output?: string
   expanded?: boolean
   /** 可撤销的改动在行尾多一个「撤销」。 */
   undoable?: boolean
+  /**
+   * 这一行是**答完的反问**（`laneViewModel` 是唯一产地）。
+   *
+   * 协议上它仍然是 `output-denied`（lane 只有准 / 不准，带话的 deny 是今天唯一能把一句话
+   * 原样送回模型的路），但用户没有拒绝任何东西——他回答了一个问题。所以这一行不红、
+   * 不打 ×，读作「已回答 · <他的答案>」。加一个 `V4ToolStatus` 成员会让那个 union 偏离
+   * 它登记在案的外部参照（AI Elements 七态），而这一行要改的本来就只是**怎么读**。
+   */
+  answered?: true
 }>
 
 export type TaskCandidate = Readonly<{ tag: string; pending?: boolean } & Partial<LaneTaskCandidate>>
@@ -137,9 +156,39 @@ export type InterventionData = Readonly<{
   badge?: string
   summary?: string
   scope?: string
+  /**
+   * 这一叠还没决定的镜一共要花多少（「2 张 · 合计 ¥0.60」，单位跟标题同一条规则），只在多镜且报得出价时有。
+   *
+   * 住在**翻页那一行的右端**（2026-10-01 用户看样张后拍板）：那一行说的是「这一叠」——第几页、一共多少；
+   * 动作行只放动作。为什么不复用 `price.total`：`price` 那一格是**算式**（怎么算出来的、逐镜多少），
+   * 它住在卡体里；这一格是**结论**。
+   */
+  totalLead?: string
   params?: readonly string[]
-  options?: readonly string[]
+  /**
+   * 反问的选项。**模型自己写**（标签 + 一句说明 + 可标推荐），形状与解析在
+   * `agentPanelV4Question.ts`——那是这条交互的对外契约，不为某一种问题写死。
+   */
+  options?: readonly V4QuestionOption[]
+  /**
+   * 多题时的题目表（Approval Card 的「一张卡、若干题、一次一题」）。
+   *
+   * **缺席 = 一题**，由 `askCardQuestions()` 从 `title` / `options` / `summary` 摊成长度 1，
+   * 页码因此自动不显示。今天永远缺席：对外契约（`electron/shared/agentCapabilities/askUser.ts`
+   * 的 `askUserInputSchema`）一次只收一题，没有生产者写得出第二题。留着这个字段是因为
+   * 卡的整件里本来就有多题，把它从组件里砍掉等于下次要多题时重拼一张卡。
+   */
+  questions?: readonly V4AskQuestion[]
   selectedOption?: number
+  /**
+   * 卡挂载时那一行里已经有的字。**缺席 = 空**，这也是生产侧唯一的取值。
+   *
+   * 它存在是为了让「正在打字」这一态在设计实验室里**画得出来**：那一行的值是组件自己的
+   * state（它还没提交，不该进 store），而实验室是静态取景，没有手去敲键盘。同一个理由下
+   * `reject-reason` 早就是一个独立 kind（把渐进披露的第二步固定下来），这一条是同一套做法。
+   * 不拿它给用户预填答案——替他把话写好，他就只能顺着改（D1）。
+   */
+  answerDraft?: string
   plan?: readonly PlanRow[]
   /**
    * 付费卡的**价格行**（形态 9 · B-02「逐项单价 + 合计」）。
@@ -185,20 +234,6 @@ export type InterventionData = Readonly<{
     index: number
     total: number
     /**
-     * 范围切换：这一镜，还是全部。
-     *
-     * v2 把「全部生成 ¥1.20」做成动作行上的**第二颗文字按钮**，v3 拿掉了——
-     * 2026-09-10 拍板的按钮规则是「一屏一个主动作、批量不是第二颗文字按钮」。
-     * 批量本来也不是第二个决定，它是同一个决定（生成）的**范围**；
-     * 范围该长成一个切换，切完主按钮自己改口。缺省 = 单镜卡，不渲染。
-     */
-    scope?: Readonly<{
-      value: 'each' | 'all'
-      eachLabel: string
-      allLabel: string
-      ariaLabel: string
-    }>
-    /**
      * 键盘翻页提示（「←→」这种极小字）。
      *
      * 卡聚焦时左右方向键翻页；提示只用两个箭头字符，占不到 20px——
@@ -220,22 +255,37 @@ export type InterventionData = Readonly<{
   confirmLabel?: string
   /** 第二动作（「改一下」「换模型」「去配置」）。 */
   alternateLabel?: string
+  /**
+   * 整叠的动作（付费卡上是「生成剩下 N 张 / 段」，2026-10-01 用户拍板）：动作行**最左**，
+   * 右边那两颗只管这一张。没有它（只剩 1 张、或不是付费卡）就不画。
+   */
+  batchLabel?: string
+  /**
+   * 卡上的动作已经交出去、正在一张一张走（付费卡「生成剩下 N 张」在跑，2026-10-02）：动作行不再摆按钮，
+   * 只印这一句（怎么停下）；标题说进度，右上那颗 × 照旧在，就是停下。有它时卡不能装成还在等人点。
+   */
+  progress?: Readonly<{ hint: string }>
+  /**
+   * 卡上有一下动作正在路上（付费卡「生成这张」「去掉这张」还没回来，2026-10-02）：动作行那几颗置灰——
+   * 这一两秒里再点它们本来就不会生效，置灰是让「不生效」看得见，而不是点了没反应。右上那颗 × 不在其中：它任何时候都能停。
+   */
+  actionsDisabled?: true
 }>
 
 /**
  * 对话流里的一条 = 一个积木。壳不认识内容，只按 `kind` 派发。
  *
- * `suggestion` 是**缺参数**那一档的家（2026-09-06 拍板 ④）：它不是第九个积木，
- * 而是「助手文本 + 一排选项 chip」两件已有件的组合——缺参数不该占用介入槽，
- * 那个槽是给「要不要让我做」这类问题的，而缺参数只是 Nomi 少问了一句话。
- * 用户点 chip 或直接在 composer 里回答，两条路都回填同一个参数。
+ * 这里**没有** `suggestion`（2026-09-21 按 P1 删）：它曾是「缺参数」想象中的第二个家
+ * ——助手文本 + 一排 chip，长在对话流里。但缺参数 2026-09-12 起就走介入槽的反问卡了
+ * （`interventionKindOf`），这一支从此**零生产者**：类型在、组件在、`AgentPanelV4Panel`
+ * 里的分支也在，只是全仓没有任何一行代码构造得出它。反问已经有家了，这是第二份。
  */
-export type V4FlowItem =
+export type V4FlowItem = { readonly identity?: string } & (
   | { kind: 'user'; text: string; chips?: readonly V4Chip[] }
   // 一回合**一个**气泡：模型一轮回复在传输上是「一条消息里的若干块」（text / tool-call / text…），
   // 一块一个气泡等于把一个人说的一段话切成三句话（`laneViewModel.mergeAssistantTextPerTurn` 是唯一产地）。
   // `skill` = 这一轮挂着的技能名，印在气泡头上当凭据；缺席 = 这一轮没挂技能，不是「不知道」。
-  | { kind: 'assistant'; text: string; status: V4AssistantStatus; continuationEntryId?: string; skill?: string }
+  | { kind: 'assistant'; text: string; status: V4AssistantStatus; continuationEntryId?: string; retryInputEntryId?: string; skill?: string }
   | { kind: 'thinking'; label: string; meta: string; text?: string; streaming?: boolean }
   | { kind: 'tool'; receipt: ToolReceipt }
   // 同一个工具连着调 N 次时，N 行收据折成的那一行（`agentPanelV4Collapse.ts` 是唯一产地）。
@@ -253,16 +303,25 @@ export type V4FlowItem =
       receipts: readonly ToolReceipt[]
     }
   // 反复试的过程里，模型说给自己听的那几段。收起态就是助手文本的一个状态。
-  | { kind: 'process'; label: string; segments: readonly string[]; running?: boolean; toolCount?: number; retries?: number; elapsed?: string; details?: readonly { item: V4FlowItem; index: number }[] }
+  | {
+      kind: 'process'; label: string; segments: readonly string[]; running?: boolean; toolCount?: number; retries?: number; elapsed?: string
+      /** 这一段里有**还没解决**的失败（只在回合落定后才为真）。带它的过程行默认展开——
+       *  定稿要求「错误留在它那一行」，而收起的过程行会把那一行连同红条一起藏掉。 */
+      failed?: true
+      /** 回合**进行中**、这一步正在重来时，展开过程行才看见的那句灰字。 */
+      retryNote?: string
+      details?: readonly { item: V4FlowItem; index: number }[]
+    }
   | { kind: 'task'; task: TaskCardData }
-  | { kind: 'suggestion'; text: string; options: readonly string[] }
   | { kind: 'error'; reason: string; action?: string }
+)
 
 export type QueueRowData = Readonly<{
   title: string
-  status: 'queued' | 'running' | 'complete'
+  status: 'queued' | 'running' | 'complete' | 'draft'
   /** 行尾动作（插队 / 删 / 立即中断）。 */
   actions?: readonly string[]
+  actionsDisabled?: boolean
   destructiveAction?: string
 }>
 

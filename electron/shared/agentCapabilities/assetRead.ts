@@ -195,29 +195,14 @@ export function assetReadInputForAlias(alias: string, value: unknown): AssetRead
   return assetReadSemanticInputSchema.parse({ operation: alias, ...schema.parse(value) });
 }
 
-export function assetReadPiDescriptionForAlias(alias: string): string | undefined {
-  switch (alias) {
-    case ASSET_READ_ALIASES.get:
-      return "Read one active-project media record by stable asset id without returning any path or URL.";
-    case ASSET_READ_ALIASES.inspect:
-      return "Inspect bounded technical metadata without claiming semantic visual or audio understanding.";
-    case ASSET_READ_ALIASES.search:
-      return "Search active-project media and return bounded path-free records.";
-    case ASSET_READ_ALIASES.inspectRange:
-      return "Validate one source-frame range and list its bounded structural timeline usages.";
-    case ASSET_READ_ALIASES.waveform:
-      return "Read bounded peak and RMS waveform buckets without exposing media bytes or local paths.";
-    default:
-      return undefined;
-  }
-}
 
 export const ASSET_READ_CAPABILITY = {
   id: "asset.read",
   version: 1,
-  aliases: { pi: ASSET_READ_ALIASES.get, mcp: "nomi_media_query" },
+  // 模型可见动词只有 `look_at_media`；五个 operation 名字是传输层的方法词表。
+  aliases: { pi: "look_at_media", mcp: "nomi_media_query", method: ASSET_READ_ALIASES.get },
   additionalAliases: {
-    pi: Object.freeze([
+    method: Object.freeze([
       ASSET_READ_ALIASES.inspect,
       ASSET_READ_ALIASES.search,
       ASSET_READ_ALIASES.inspectRange,
@@ -232,8 +217,4 @@ export const ASSET_READ_CAPABILITY = {
   exposure: "mcp_safe",
   requiredScope: "asset:read",
   targetKind: "asset",
-  projections: {
-    pi: { description: "Read bounded technical facts about active-project media." },
-    mcp: { description: "Query project media, metadata, sources, or waveforms." },
-  },
 } as const satisfies CapabilityContract<AssetReadInput, AssetReadResult>;

@@ -104,7 +104,7 @@ describe("runtime export job IPC functions", () => {
     const main = fs.readFileSync(path.join(process.cwd(), "electron", "main.ts"), "utf8");
     const bridge = fs.readFileSync(path.join(process.cwd(), "src", "desktop", "bridge.ts"), "utf8");
 
-    const exportsBridge = preload.match(/\n  exports: \{[\s\S]*?\n  \},\n  tasks:/)?.[0] ?? "";
+    const exportsBridge = preload.match(/\n {2}exports: \{[\s\S]*?\n {2}\},\n {2}tasks:/)?.[0] ?? "";
 
     expect(preload).not.toMatch(/ipcRenderer\.invoke\(["']nomi:exports:start["']/);
     expect(exportsBridge).not.toMatch(/\bstart:\s*\(/);
@@ -133,7 +133,9 @@ describe("runtime export job IPC functions", () => {
       }),
     });
     await cancelExportJob(identity, result.jobId);
-  }, 15_000);
+  // Importing the full runtime graph can exceed 15s when all 678 test files
+  // transform concurrently; the isolated behavior completes in about 3s.
+  }, 30_000);
 
   it("returns status and can cancel a job", async () => {
     const { cancelExportJob, createProject, getExportJobStatus, startExportJob } = await import("../runtime");

@@ -184,6 +184,7 @@ type IntersectionObserverCapableWindow = Window & {
 export function observeDeferredNodeMediaVisibility(
   element: Element | null,
   onVisibilityChange: (visible: boolean) => void,
+  options: { root?: Element | null } = {},
 ): () => void {
   const win = typeof window === 'undefined' ? null : (window as IntersectionObserverCapableWindow)
   if (!element || !win?.IntersectionObserver) {
@@ -196,7 +197,7 @@ export function observeDeferredNodeMediaVisibility(
       onVisibilityChange(entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0))
     },
     {
-      root: null,
+      root: options.root ?? null,
       rootMargin: MEDIA_INTERSECTION_ROOT_MARGIN,
       threshold: 0,
     },
@@ -207,16 +208,34 @@ export function observeDeferredNodeMediaVisibility(
   }
 }
 
+/**
+ * 「这块区域现在在视口里吗」——等待层用它决定要不要真的跑 WebGL。
+ * 复用上面同一个观察器，不为等待层另写一套 IntersectionObserver。
+ */
+export function useDeferredNodeMediaVisibility(): { ref: (element: HTMLElement | null) => void; visible: boolean } {
+  const [visible, setVisible] = React.useState(true)
+  const detach = React.useRef<(() => void) | undefined>(undefined)
+  const ref = React.useCallback((element: HTMLElement | null) => {
+    detach.current?.()
+    detach.current = element ? observeDeferredNodeMediaVisibility(element, setVisible) : undefined
+  }, [])
+  React.useEffect(() => () => detach.current?.(), [])
+  return { ref, visible }
+}
+
 export type DeferredNodeMediaState = 'idle' | 'queued' | 'loading' | 'ready' | 'error' | 'timeout'
 
 export function useDeferredNodeMediaSrc({
   src,
   kind,
   priority = false,
+  visibilityRoot,
 }: {
   src?: string
   kind: DeferredNodeMediaKind
   priority?: boolean
+  /** undefined = viewport; null = wait until a scroll root is available. */
+  visibilityRoot?: Element | null
 }): {
   activeSrc: string | null
   readySrc: string | null
@@ -263,12 +282,12 @@ export function useDeferredNodeMediaSrc({
   }, [kind, releaseSlot, src, transitionTo])
 
   React.useEffect(() => {
-    if (!src || !placeholderElement) {
+    if (!src || !placeholderElement || visibilityRoot === null) {
       setIsVisible(false)
       return undefined
     }
-    return observeDeferredNodeMediaVisibility(placeholderElement, setIsVisible)
-  }, [placeholderElement, src])
+    return observeDeferredNodeMediaVisibility(placeholderElement, setIsVisible, { root: visibilityRoot })
+  }, [placeholderElement, src, visibilityRoot])
 
   React.useEffect(() => {
     requestRef.current?.setPriority(priority)

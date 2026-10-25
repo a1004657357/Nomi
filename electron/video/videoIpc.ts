@@ -7,12 +7,28 @@
 import { ipcMain } from "electron";
 import { assertTrustedSender } from "../ipcSenderGuard";
 import { registerVideoDepthIpc } from "./depthVideoIpc";
+import type { ProjectInteractionCapture } from "../assets/projectInteractionCapture";
 
-export function registerVideoIpc(): void {
+export function registerVideoIpc(captureInteraction: ProjectInteractionCapture): void {
+  ipcMain.handle('nomi:video:extract-frames', async (event, payload) => {
+    assertTrustedSender(event);
+    const assertCurrent = captureInteraction(event, payload);
+    const { extractVideoFramesToAssets } = await import('./extractVideoFrame');
+    return extractVideoFramesToAssets(payload, { assertCurrent });
+  });
   ipcMain.handle("nomi:video:extract-frame", async (event, payload) => {
     assertTrustedSender(event);
+    // 交互抽帧带着动作起点签发的原项目绑定：在任何 await 之前固定会话，落盘前复验，换项目即不发布。
+    const assertCurrent = captureInteraction(event, payload);
     const { extractVideoFrameToAsset } = await import("./extractVideoFrame");
-    return extractVideoFrameToAsset(payload);
+    return extractVideoFrameToAsset(payload, { assertCurrent });
+  });
+  // 导演台出片（帧序列 → mp4）：同一族视频原语，同样在 await 前按发起动作的绑定加入可信会话。
+  ipcMain.handle("nomi:scene3d:frames-to-video", async (event, payload) => {
+    assertTrustedSender(event);
+    const assertCurrent = captureInteraction(event, payload);
+    const { framesToVideoAsset } = await import("./framesToVideo");
+    return framesToVideoAsset(payload, { assertCurrent });
   });
   ipcMain.handle("nomi:video:extract-filmstrip", async (event, payload) => {
     assertTrustedSender(event);
@@ -29,10 +45,16 @@ export function registerVideoIpc(): void {
   ipcMain.handle("nomi:video:deconstruct", async (event, payload) => {
     assertTrustedSender(event);
     const { deconstructVideo } = await import("./deconstructVideo");
-    return deconstructVideo(payload, (phase) => {
-      if (!event.sender.isDestroyed() && typeof payload?.requestId === "string") {
-        event.sender.send("nomi:video:deconstruction-progress", { requestId: payload.requestId, projectId: payload.projectId, phase });
-      }
+    const { authorizeDeconstructSpend } = await import("./deconstructSpend");
+    return deconstructVideo(payload, {
+      // 钱的闸：切点/抽帧跑完、镜数已知之后，一次报价、一次确认、一颗令牌覆盖整批
+      // （`spendConfirmGrant.ts` 是「问人 + 铸令牌」的唯一那条链，与外部 agent 生成同源）。
+      authorizeSpend: (plan) => authorizeDeconstructSpend(plan),
+      onPhase: (phase, detail) => {
+        if (!event.sender.isDestroyed() && typeof payload?.requestId === "string") {
+          event.sender.send("nomi:video:deconstruction-progress", { requestId: payload.requestId, projectId: payload.projectId, phase, ...(detail ? { detail } : {}) });
+        }
+      },
     });
   });
 

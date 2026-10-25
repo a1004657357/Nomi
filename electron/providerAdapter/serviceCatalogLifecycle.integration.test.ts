@@ -186,14 +186,13 @@ function serviceDependencies(
     }),
     resolveLanguageModels: () => [{} as LanguageModelV1],
     compile: async () => ({ draft: candidateDraft(), failures: [] }),
-    repair: async () => candidateDraft(),
     verify: async ({ mode }) => ({
       ok: false,
       taskKind: mode.taskKind,
-      stage: "create",
+      stage: "credential" as const,
+      selfCheckReason: "credential_rejected" as const,
       error: "provider rejected candidate",
     }),
-    maxRepairs: 0,
     now: () => now,
     id: () => "run-real-failure",
     ...overrides,
@@ -307,7 +306,7 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
       new ProviderAdapterStore(path.join(userDataRoot, "provider-adapters.json")),
       serviceDependencies({
         id: () => "run-real-text-failed",
-        verify: async ({ mode }) => ({ ok: false, taskKind: mode.taskKind, stage: "create", error: "provider rejected" }),
+        verify: async ({ mode }) => ({ ok: false, taskKind: mode.taskKind, stage: "credential" as const, selfCheckReason: "credential_rejected" as const, error: "provider rejected" }),
       }),
     );
 
@@ -381,7 +380,8 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
         verify: (async ({ mode }) => ({
           ok: ++verification > 1,
           taskKind: mode.taskKind,
-          stage: "create",
+          stage: "credential",
+          selfCheckReason: "credential_rejected",
           ...(verification > 1
             ? { artifactUrl: "https://result.example.test/image.png" }
             : { error: "first revision failed" }),
@@ -431,7 +431,11 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
     expectOnlyActiveSourceRemains(sourceBefore, started.vendorKey);
   });
 
-  it("keeps a timed-out in-flight candidate disabled for reconciliation instead of deleting uncertain work", async () => {
+  // 自检不向上游提交任何东西，所以卡住的自检**不再是「不知道有没有落地」**（没有一分钱在外面）——
+  // 它就是超时，按失败清理即可。仍然保住的那条边界：清掉的只有这次的候选克隆，
+  // **用户原来那条连接一个字节都不动**。
+  it("cleans a timed-out candidate without touching the active source", async () => {
+    const sourceBefore = readCatalog();
     const service = new ProviderAdapterService(
       new ProviderAdapterStore(path.join(userDataRoot, "provider-adapters.json")),
       serviceDependencies({
@@ -445,14 +449,8 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
 
     await service.executeRun(started.id);
 
-    expect(service.getRun(started.id)).toMatchObject({
-      stage: "reconciling",
-      recovery: { reasonCode: "submission_reconcile_unavailable" },
-    });
-    expect(readCatalog().vendors.find((vendor) => vendor.key === started.vendorKey)).toMatchObject({ enabled: false });
-    expect(
-      listModelCatalogMappings({ vendorKey: started.vendorKey }).every((mapping) => mapping.enabled === false),
-    ).toBe(true);
+    expect(service.getRun(started.id)).toMatchObject({ stage: "timed_out" });
+    expectOnlyActiveSourceRemains(sourceBefore, started.vendorKey);
   });
 
   it("cancels and cleans a staged candidate idempotently before provider execution", async () => {
@@ -471,15 +469,18 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
 
   it("blocks a competing lineage revision after provider create may have been accepted", async () => {
     let sequence = 0;
-    let oldVerifySignal: AbortSignal | undefined;
     let providerCreates = 0;
+    // 等「旧候选真的走到 verify」用它自己发的信号，不轮询：vi.waitFor 默认 1s 预算在满载 CI 上不够
+    // （2026-09-24 RC 36010368891 第 1 次运行在全量 14,804 条测试下红过一次）。上限由 testTimeout 兜。
+    let reachedVerify!: (signal: AbortSignal | undefined) => void;
+    const verifyReached = new Promise<AbortSignal | undefined>((resolve) => { reachedVerify = resolve; });
     const service = new ProviderAdapterService(
       new ProviderAdapterStore(path.join(userDataRoot, "provider-adapters.json")),
       serviceDependencies({
         id: () => `run-real-${++sequence}`,
         verify: ({ signal }) => {
           providerCreates += 1;
-          oldVerifySignal = signal;
+          reachedVerify(signal);
           return new Promise(() => {});
         },
         verifyTimeoutMs: 60_000,
@@ -487,7 +488,7 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
     );
     const older = await startCandidate(service);
     const olderWork = service.executeRun(older.id);
-    await vi.waitFor(() => expect(oldVerifySignal).toBeDefined());
+    const oldVerifySignal = await verifyReached;
 
     await expect(
       service.start({
@@ -557,8 +558,8 @@ describe("ProviderAdapterService real catalog candidate lifecycle", () => {
         compile: async () => ({ draft: partialDraft, failures: [] }),
         verify: async ({ mode }) =>
           mode.taskKind === "text_to_image"
-            ? { ok: true, taskKind: mode.taskKind }
-            : { ok: false, taskKind: mode.taskKind, stage: "create", error: "edit rejected" },
+            ? { ok: true as const, taskKind: mode.taskKind }
+            : { ok: false as const, taskKind: mode.taskKind, stage: "credential" as const, selfCheckReason: "credential_rejected" as const, error: "edit rejected" },
       }),
     );
     const started = await startCandidate(service);

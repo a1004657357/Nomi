@@ -19,7 +19,6 @@ import { __resetCanvasUndoJournalForTests } from '../events/canvasUndoJournal'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { readGenerationCanvasSnapshot } from './generationCanvasTools'
 import { captureCanvasWriteRawEvidence } from './canvasWriteTarget'
-import { applyCanvasToolCall } from './applyCanvasToolCall'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { readCurrentWorkbenchProjectPayload, restoreWorkbenchProjectPayload } from '../../project/workbenchProjectSession'
 import type { StoryboardPlan } from './storyboardPlan'
@@ -154,7 +153,7 @@ describe('canonical storyboard patch production transaction', () => {
     expect(outcome).toMatchObject({ status: 'committed', proposalId: 'receipt-canonical-patch' })
     expect(useWorkbenchStore.getState().storyboardDesignsByDocumentId['storyboard-doc']?.[0]?.plan.shots).toEqual([
       plan.shots[0],
-      { ...plan.shots[1], prompt: '跟拍，雨天', params: { aspect_ratio: '9:16', quality: 'high' } },
+      { ...plan.shots[1], prompt: '跟拍，雨天', videoPrompt: '跟拍，雨天', params: { aspect_ratio: '9:16', quality: 'high' } },
       plan.shots[2],
     ])
     expect(service.read()).toMatchObject({ lifecycle: 'committed', proposalId: 'receipt-canonical-patch' })

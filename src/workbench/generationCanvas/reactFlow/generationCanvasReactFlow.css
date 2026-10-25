@@ -11,6 +11,13 @@
   cursor: grabbing !important;
 }
 
+/* 中键 / 右键 / 空格+左键平移：`:active` 只跟主键走，认不出这三种入口，光标会停在 grab 上
+   ——手已经在拖，画面还在说「可以拖」。属性由 useGenerationCanvasReactFlowPointer 在平移
+   起止写/清（裸左键不写，它归上面那条 `:active`）。 */
+.generation-canvas-react-flow[data-panning] {
+  cursor: grabbing;
+}
+
 .generation-canvas-react-flow .react-flow {
   width: 100%;
   height: 100%;
@@ -76,8 +83,8 @@
   min-height: 1px;
 }
 
-/* Existing node cards still contain their legacy canvas positioning and handles.
- * React Flow owns the outer transform and connection ports in this experiment. */
+/* Existing node cards still contain their legacy canvas positioning and resize zones.
+ * React Flow owns the outer transform and the connection ports (GenerationFlowConnectionHandle). */
 .generation-canvas-react-flow .generation-canvas-v2-node {
   position: relative !important;
   inset: auto !important;
@@ -86,8 +93,17 @@
   height: 100% !important;
 }
 
-.generation-canvas-react-flow .generation-canvas-react-flow__node-shell .generation-canvas-v2-node__magnetic-handle,
-.generation-canvas-react-flow .generation-canvas-react-flow__node-shell .generation-canvas-v2-node__handle,
+/* 卡面与自己把手的上下层，按把手档位分（档位唯一 owner：generationCanvasReactFlowVisualContract.ts）：
+ * - 磁吸档（唯一主选中）：卡面压在自己的磁吸带之上。伸出卡外的版本胶囊（「2 版」）/ 版本托盘落在带子的
+ *   命中区里，带子（z 8）若在上面，点「2 版」会变成起一条线，托盘也点不动（2026-09-21 走查发现，带子常驻后必现）。
+ *   磁吸带在卡外侧，起线入口是卡外那颗常驻「+」圈，抬高卡面不吃它。
+ * - 小圆点档（多选里的每一张、未选中、起线进行中的起点）：卡面**不**抬。圆点骑在卡边上、一半在卡内，
+ *   卡面若压上来，点圆点中心会变成拖卡/选卡——2026-09-22 回归：#833 曾按 data-selected 抬卡面，
+ *   多选时每张卡的圆点内半边都被吞掉（docs/fixes/2026-09-22-card-face-over-own-ports.root-cause.json）。 */
+.generation-canvas-react-flow .generation-canvas-react-flow__node-shell[data-connection-affordance='magnetic'] .generation-canvas-v2-node {
+  z-index: 9;
+}
+
 .generation-canvas-react-flow .generation-canvas-react-flow__node-shell .generation-canvas-v2-node__resize-zone {
   display: none !important;
 }
@@ -171,7 +187,6 @@
 }
 
 .generation-canvas-react-flow .generation-canvas-react-flow__handle--magnetic .generation-canvas-react-flow__handle-icon {
-  --connection-handle-reveal-x: 0px;
   position: absolute;
   top: var(--connection-handle-y);
   left: var(--connection-handle-x);
@@ -179,7 +194,7 @@
   width: 29px;
   height: 29px;
   place-items: center;
-  transform: translate(calc(-50% + var(--connection-handle-reveal-x)), -50%) scale(0.86);
+  transform: translate(-50%, -50%);
   border: 2px solid color-mix(in srgb, var(--workbench-muted-soft) 72%, transparent);
   border-radius: 999px;
   background: color-mix(in oklab, var(--nomi-paper) 82%, transparent);
@@ -187,26 +202,12 @@
   box-shadow:
     0 10px 26px rgba(18, 24, 38, 0.18),
     0 0 0 1px color-mix(in srgb, var(--nomi-ink) 8%, transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: left 180ms cubic-bezier(0.16, 1, 0.3, 1), top 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms cubic-bezier(0.16, 1, 0.3, 1), transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms cubic-bezier(0.16, 1, 0.3, 1), color 180ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.generation-canvas-react-flow .generation-canvas-react-flow__handle--magnetic[data-side='left'] .generation-canvas-react-flow__handle-icon {
-  --connection-handle-reveal-x: 28px;
-}
-
-.generation-canvas-react-flow .generation-canvas-react-flow__handle--magnetic[data-side='right'] .generation-canvas-react-flow__handle-icon {
-  --connection-handle-reveal-x: -28px;
-}
-
-.generation-canvas-react-flow .generation-canvas-react-flow__node-shell:hover .generation-canvas-react-flow__handle--magnetic .generation-canvas-react-flow__handle-icon,
-.generation-canvas-react-flow .generation-canvas-react-flow__node-shell:focus-within .generation-canvas-react-flow__handle--magnetic .generation-canvas-react-flow__handle-icon,
-.generation-canvas-react-flow .generation-canvas-react-flow__handle--magnetic[data-active='true'] .generation-canvas-react-flow__handle-icon,
-.generation-canvas-react-flow .generation-canvas-react-flow__handle--magnetic .generation-canvas-react-flow__handle-hit[data-following='true'] .generation-canvas-react-flow__handle-icon {
-  --connection-handle-reveal-x: 0px;
-  transform: translate(-50%, -50%) scale(1);
+  /* 2026-09-21 拍板：选中即常驻可见，不再要求指针悬停在卡上（旧版 opacity:0 → hover 才露）。
+   * 磁吸带只会出现在唯一主选中的那张卡上（generationCanvasReactFlowVisualContract.ts），所以常驻不会铺满画布。 */
   opacity: 0.82;
+  pointer-events: none;
+  /* 2026-09-25 画布跟手（用户拍板）：位置直接跟光标，不缓动——180ms 追光标就是「鼠标到了反馈才来」。颜色 / 透明度保留缓动。 */
+  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms cubic-bezier(0.16, 1, 0.3, 1), color 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .generation-canvas-react-flow .generation-canvas-react-flow__handle--magnetic:hover .generation-canvas-react-flow__handle-icon,
@@ -311,4 +312,24 @@
 
 .generation-canvas-react-flow .react-flow__attribution {
   display: none;
+}
+
+/* 媒体预览（图片/视频灯箱）打开时收起画布 chrome。
+ *
+ * 遮罩只有 40% 黑，所有浮层都能透过它继续露脸；旗子由 nodes/NodeMediaPreviewDialog.tsx 挂在
+ * 画布宿主 `.workbench-generation__canvas` 上，关闭时摘掉，布局与交互自动恢复。
+ * 用 `visibility` 不用 `display`：不卸载、不触发重排，按钮忙态和滚动位置原样回来。
+ *
+ * 这条规则迁移前住在 styles/generationCanvas.css:24-31，被 `903d992f6`（Agent 面板折叠修复）
+ * 连带删掉；2026-09-11 迁移等价审计 §③ 行 4 按当前类名恢复。
+ * 与旧版的唯一有意差别：旧版还收 `.workbench-generation__ai`。该类名今天已不存在，
+ * 且灯箱只覆盖画布区（见对话框里「never inert the uncovered Agent/sidebar region」的裁决），
+ * Agent 面板不在收起之列。 */
+.workbench-generation__canvas[data-media-preview-open='true'] .generation-canvas-v2-toolbar,
+.workbench-generation__canvas[data-media-preview-open='true'] .generation-canvas-v2__navigation-stack,
+.workbench-generation__canvas[data-media-preview-open='true'] .generation-canvas-v2__selection-toolbar,
+.workbench-generation__canvas[data-media-preview-open='true'] .generation-canvas-v2-node__composer,
+.workbench-generation__canvas[data-media-preview-open='true'] [data-node-floating-toolbar],
+.workbench-generation__canvas[data-media-preview-open='true'] .workbench-generation__timeline-handle {
+  visibility: hidden;
 }

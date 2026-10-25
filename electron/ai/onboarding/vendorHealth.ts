@@ -24,6 +24,8 @@ import { readCatalog, normalizeProviderKind, mutateCatalog } from "../../catalog
 import { decryptApiKeyRecord } from "../../catalog/secrets";
 import { isJsonRecord, mergeHeadersCaseInsensitive } from "../../jsonUtils";
 import { authHeaders, authQueryParams } from "../requestPipeline";
+import { userVendorBaseUrl } from "../../catalog/userVendorBase";
+import { vendorAuthSpec } from "../../catalog/vendorAuthSpec";
 import { fetchModelList, readExtraHeaders, type ModelListFailureKind } from "./modelListProbe";
 import { modelListReconciliation } from "../../catalog/modelListReconcile";
 import { modelListErrorRedactor } from "./modelListSafety";
@@ -79,7 +81,7 @@ function resolveTarget(vendorKey: string): Target | null {
   if (vendor.authType === "none") return null;
   // hasApiKey 由 readCatalog 统一算（存在 + 未禁用），别在这儿另立一套判据。
   if (!vendor.hasApiKey) return null;
-  const baseUrl = String(vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
+  const baseUrl = userVendorBaseUrl(vendor);
   if (!/^https?:\/\//i.test(baseUrl)) return null;
   const record = state.apiKeysByVendor[vendorKey];
   const apiKey = decryptApiKeyRecord(record) || "";
@@ -88,10 +90,10 @@ function resolveTarget(vendorKey: string): Target | null {
   const authType = vendor.authType || (providerKind === "anthropic" ? "x-api-key" : "bearer");
   const headers = mergeHeadersCaseInsensitive(
     providerKind === "anthropic" ? { "anthropic-version": "2023-06-01" } : {},
-    authHeaders(authType, apiKey, vendor.authHeader ?? undefined),
+    authHeaders({ ...vendorAuthSpec(vendor), authType }, apiKey),
     readExtraHeaders(isJsonRecord(vendor.meta) ? vendor.meta.extraHeaders : undefined),
   );
-  const query = authQueryParams(authType, apiKey, vendor.authQueryParam ?? undefined);
+  const query = authQueryParams({ ...vendorAuthSpec(vendor), authType }, apiKey);
   return {
     baseUrl,
     proxyUrl: providerProxyUrl(vendor),

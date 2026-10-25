@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { createDefaultTimeline, normalizeTimeline, resolveActiveTextClipsAtFrame, computeTimelineDuration } from './timelineMath'
-import { addTextClip, moveTextClip, removeTextClip, resizeTextClip, updateTextClipText, updateTextClipTransform, updateTextClipFont } from './timelineTextEdit'
+import {
+  createDefaultTimeline,
+  normalizeTimeline,
+  resolveActiveTextClipsAtFrame,
+  computeTimelineDuration,
+} from './timelineMath'
+import {
+  addTextClip,
+  moveTextClip,
+  removeTextClip,
+  resizeTextClip,
+  updateTextClipText,
+  updateTextClipTransform,
+  updateTextClipFont,
+} from './timelineTextEdit'
 import { resolveTextBox } from './textLayout'
 import { resolveFontStack, normalizeTextFontId } from './textFonts'
 
@@ -98,8 +111,8 @@ describe('timeline 文字 clip 编辑', () => {
     const { timeline } = addTextClip(createDefaultTimeline(), 'caption', 0)
     const clip = timeline.textClips[0]
     const base = resolveTextBox(clip, 1000, 1000)
-    expect(base.centerX).toBe(500)        // 预设 x=0.5
-    expect(base.centerY).toBe(860)        // caption 预设 y=0.86
+    expect(base.centerX).toBe(500) // 预设 x=0.5
+    expect(base.centerY).toBe(860) // caption 预设 y=0.86
     const moved = resolveTextBox({ ...clip, position: { x: 0.2, y: 0.3 }, scale: 2 }, 1000, 1000)
     expect(moved.centerX).toBe(200)
     expect(moved.centerY).toBe(300)
@@ -125,14 +138,24 @@ describe('timeline 文字 clip 编辑', () => {
   })
 
   it('normalizeTimeline 迁移 fontFamily', () => {
-    const persisted = { version: 1, fps: 30, scale: 1, playheadFrame: 0, tracks: [],
-      textClips: [{ id: 'a', text: 'x', style: 'caption', startFrame: 0, endFrame: 30, fontFamily: 'kaiti' }] }
+    const persisted = {
+      version: 1,
+      fps: 30,
+      scale: 1,
+      playheadFrame: 0,
+      tracks: [],
+      textClips: [{ id: 'a', text: 'x', style: 'caption', startFrame: 0, endFrame: 30, fontFamily: 'kaiti' }],
+    }
     expect(normalizeTimeline(persisted).textClips[0].fontFamily).toBe('kaiti')
   })
 
   it('normalizeTimeline 迁移 position/scale（旧 clip 无 → 缺省）', () => {
     const persisted = {
-      version: 1, fps: 30, scale: 1, playheadFrame: 0, tracks: [],
+      version: 1,
+      fps: 30,
+      scale: 1,
+      playheadFrame: 0,
+      tracks: [],
       textClips: [
         { id: 'a', text: '甲', style: 'title', startFrame: 0, endFrame: 30, position: { x: 0.2, y: 0.8 }, scale: 1.5 },
         { id: 'b', text: '乙', style: 'caption', startFrame: 0, endFrame: 30 }, // 无变换
@@ -146,7 +169,11 @@ describe('timeline 文字 clip 编辑', () => {
 
   it('normalizeTimeline 读回并清洗 textClips', () => {
     const persisted = {
-      version: 1, fps: 30, scale: 1, playheadFrame: 0, tracks: [],
+      version: 1,
+      fps: 30,
+      scale: 1,
+      playheadFrame: 0,
+      tracks: [],
       textClips: [
         { id: 'a', text: '甲', style: 'title', startFrame: 50, endFrame: 80 },
         { id: 'b', text: '乙', style: 'caption', startFrame: 0, endFrame: 30 },

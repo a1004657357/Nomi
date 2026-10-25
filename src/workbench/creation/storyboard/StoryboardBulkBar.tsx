@@ -1,9 +1,11 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconStack2 } from '@tabler/icons-react'
 import { NomiSelect } from '../../../design'
 import type { ModelOption } from '../../../config/models'
 import BulkModelPicker from '../../common/BulkModelPicker'
+import { useVendorPreferenceOrder } from '../../common/useVendorPreference'
+import { findModelOptionByIdentifier } from '../../../config/modelOptionResolvers'
 import type { StoryboardPlan } from '../../generationCanvas/agent/storyboardPlan'
 import {
   DURATION_OPTIONS_SEC,
@@ -21,7 +23,9 @@ import {
   overriddenAspectCount,
   planDefaultAspect,
   setPlanDefaultAspect,
-} from '../../generationCanvas/agent/storyboardAspectScope'
+  unsupportedFilmDefaultKeys,
+} from '../../generationCanvas/agent/storyboardShotScope'
+import { resolveShotArchetypeMode } from './shotRow/shotRowModel'
 
 /**
  * 「全部镜头」批量条（样张 A 拍板 2026-08-17）。
@@ -62,16 +66,30 @@ export default function StoryboardBulkBar({ plan, imageModelOptions, videoModelO
 
   // 批量选模型：走 BulkModelPicker（与画布框选工具条同一份实现，P1 无并行版），选项厂商明确。
   //
-  // ⚠️ 已知缺口（2026-08-18 实查，不假装修好）：PlanShot 没有 vendor 字段，applyModelToAll 也只写
-  // modelKey。所以这里选的「哪一家」在落画布时**不被保留**——storyboardPlanToCreateNodesArgs 只把
-  // modelKey 透传给 PlanCreatedNode，buildPlannedNodeMeta 再用 entryByKey.get(modelKey) 反查厂商，
-  // 而 buildAgentModelEntries 按 modelKey 首次出现去重（首家胜出）。落地厂商 = 目录里第一家，
-  // 与用户所选无关。要真正贯通须给 PlanShot/PlanCreatedNode 加 vendor 字段（见 storyboardPlan.test.ts
-  // 的「厂商在 plan→canvas 落地路径上被丢弃」用例，那条测试就是这个缺口的固化记录）。
+  // 2026-09-12 补齐：这里以前把 BulkModelPicker 回调的第二个参数（vendor）丢掉，只写 modelKey——
+  // 落画布时 buildPlannedNodeMeta 按 modelKey 反查厂商，而目录按 modelKey 首次出现去重，
+  // 于是落地厂商 = 目录里第一家，与用户所选无关（「选 A 家发去 B 家」）。现在 vendor 与 key 成对写进
+  // 每一镜（PlanShot.modelVendor 一直就有这个字段），与镜卡逐镜选模型同口径。
+  const orderedVendorKeys = useVendorPreferenceOrder()
   const onBulkModelPick = React.useCallback(
-    (value: string) => onChange(applyModelToAll(plan, value)),
+    (value: string, vendor?: string) => onChange(applyModelToAll(plan, value, vendor)),
     [plan, onChange],
   )
+
+  // 整片画幅设了，但有几镜的模型根本没有画幅参数（如只吃参考图的首帧路）——那几镜发出去时
+  // 不会带画幅。界面必须如实说出来，而不是继续把它们画成竖的假装设上了（显示 ≡ 请求）。
+  const unsupportedAspectRows = React.useMemo(() => {
+    const optionsByKind = { image: imageModelOptions, video: videoModelOptions }
+    return plan.shots.filter((shot) => {
+      if (!shot.modelKey) return false // 默认模型：此刻无契约可判，不瞎报。
+      const pool = optionsByKind[shot.shotKind === 'image' ? 'image' : 'video']
+      const option = findModelOptionByIdentifier(pool, shot.modelKey, shot.modelVendor, orderedVendorKeys)
+      const resolved = resolveShotArchetypeMode(option, shot.modeId)
+      if (!resolved) return false
+      // 判据与执行侧完全一致：buildPlannedNodeMeta 按 control.key 匹配，键不在这份表里就发不出去。
+      return unsupportedFilmDefaultKeys(plan, shot, resolved.mode.params).length > 0
+    }).length
+  }, [plan, imageModelOptions, videoModelOptions, orderedVendorKeys])
 
   if (plan.shots.length === 0) return null
 
@@ -136,7 +154,9 @@ export default function StoryboardBulkBar({ plan, imageModelOptions, videoModelO
         // 触发上只显得出固定项（「混合」/「默认模型」）——摊平项的 value 是厂商寻址串，
         // 而 plan 只存 modelKey，对不上；选过具体模型后回落占位「统一模型」（它本就是一次性命令）。
         value={bulkModelKey === null ? MIXED_VALUE : ''}
-        onPick={(value) => onBulkModelPick(value)}
+        // vendor 必须一路带到 applyModelToAll：这里曾经是 `(value) => onBulkModelPick(value)`，把第二个参数丢了，
+        // 于是每一镜都按名字落到「同名里排第一的那家」（2026-09-21：选 APIMart、钱花在自定义中转）。
+        onPick={onBulkModelPick}
         onPickLeadingOption={(value) => applyIfReal(value, () => onBulkModelPick(''))}
       />
       {!isImageKind ? (
@@ -160,9 +180,13 @@ export default function StoryboardBulkBar({ plan, imageModelOptions, videoModelO
         />
       </span>
 
-      <span className="ml-auto shrink-0 text-micro text-nomi-ink-40">
+      {/* 这句提示是行尾附属信息：它**跟着内容走**，不许贴死在右缘（用户 2026-09-09 拍板，
+          门岗 check:tokens「行尾贴边」）。原来的 `ml-auto shrink-0` 在窄列里就是
+          「宁可冲出去也不换行」——W-03 里被切掉的就是它。 */}
+      <span className="min-w-0 text-micro text-nomi-ink-40">
         {t('storyboardEditor.bulk.hint', { count: plan.shots.length })}
         {overriddenRows > 0 ? ` · ${t('storyboardEditor.aspectScope.bulkHint', { count: overriddenRows })}` : ''}
+        {unsupportedAspectRows > 0 ? ` · ${t('storyboardEditor.aspectScope.unsupportedHint', { count: unsupportedAspectRows })}` : ''}
       </span>
     </div>
   )

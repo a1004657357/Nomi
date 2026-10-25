@@ -1,12 +1,13 @@
-import type { SpendQuoteLine } from '../../../electron/shared/contracts/spendQuote'
+import { confirmSpendFromMainProcess, type SpendConfirmPayload } from './capabilitySpendConfirm'
+import { activateProjectForCapability, queueGenerationBatchConfirmation, type GenerationBatchPayload } from './capabilityLegacyActions'
+import { executeCreativeTool } from './creativeToolExecute'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
-import { getActiveWorkbenchProjectId } from '../project/workbenchProjectSession'
 import {
   MCP_PROJECT_ADDRESSABLE_CAPABILITY_OPS,
   MCP_REALTIME_SURFACE_CAPABILITY_OPS,
   capabilityProjectBindingError,
 } from './capabilityProjectBinding'
-import { spendQuoteDetail, useSpendConfirmStore } from '../generationCanvas/spend/spendConfirm'
+import { useSpendConfirmStore } from '../generationCanvas/spend/spendConfirm'
 import { buildMultiShotContractView, type MultiShotGatePayload } from '../generationCanvas/spend/productionContractView'
 import { getDesktopBridge } from '../../desktop/bridge'
 import i18n from '../../i18n'
@@ -22,6 +23,7 @@ import { verifyShotsAndReport, isShotVerifyEnabled } from '../generationCanvas/a
 import { isAnchorFrozen, isVisualAnchorNode } from '../generationCanvas/model/anchorBibleKeys'
 import { assertDraftFilmReady, draftFilmTimelineFromState } from '../preview/timelineSubtitleTransitionContract'
 import { storyboardPlanToCreateNodesArgs } from '../generationCanvas/agent/storyboardPlan'
+import { projectPlanShotsOntoCreatedNodes } from '../creation/storyboard/exec/storyboardProjection'
 import { parseStoryboardPlan } from '../generationCanvas/agent/storyboardPlanSchema'
 import { resolveStoryboardImageDefault, resolveStoryboardVideoDefault } from '../generationCanvas/agent/availableModels'
 import { applyCanvasToolCall, resolveCanvasToolNodeId } from '../generationCanvas/agent/applyCanvasToolCall'
@@ -29,8 +31,12 @@ import { readGenerationCanvasSnapshot } from '../generationCanvas/agent/generati
 import { captureCanvasReadResult } from '../generationCanvas/agent/canvasReadResultSeal'
 import {
   captureCurrentProjectCanvasReadSurfaceBinding,
+  isProjectExecutionContextCurrent,
+  withProjectAction,
   sealCurrentProjectCanvasReadSnapshot,
+  type ProjectExecutionContext,
 } from '../project/projectCanvasReadSurface'
+import { getDocumentSessionPort } from '../project/documentSessionPort'
 import {
   SurfacePortWireError,
   type CapturedCanvasReadSnapshotHandleWire,
@@ -40,23 +46,8 @@ import { executeTimelineReadTarget, executeTimelineWriteTarget } from '../timeli
 import { executeAssetReadTarget, executeExportReadTarget } from '../timeline/agent/phase4CapabilityTargets'
 import { executeCanonicalCanvasPlanPatch } from './canonicalCanvasPlanPatch'
 import { handleMcpHostSurfaceOp } from './mcpHostSurfaceOps'
-
-// 能力核 A 模式实时桥 · 渲染层处理器。
-// 主进程把外部 MCP 的画布读/写/付费确认转发到这里（只在该项目正打开时路由），处理后回结果。
-// 单一真相源：画布读写复用 store 现成动作（readDocumentSnapshot / applyExternalGraph），
-// 付费确认复用全仓唯一的 useSpendConfirmStore（不另造并行 UI，P1）。
-
-type SpendConfirmPayload = {
-  projectId?: string
-  projectName?: string
-  nodeId?: string
-  intent?: string
-  vendor?: string
-  modelKey?: string
-  prompt?: string
-  /** 主进程带上：这次确认还会换来「本会话该项目后续生成免问」→ 卡上多写一句授权范围。 */
-  quote?: SpendQuoteLine
-}
+import { presentStoryboard } from './storyboardPresent'
+import { patchAgentStoryboardDesign, upsertAgentStoryboardDesign } from '../creation/storyboard/agentStoryboardDesign'
 
 // 方案门（Phase B）：外部 agent 批量落节点前的确认。projectId 由主进程网关带上（可能非当前项目）。
 type PlanConfirmPayload = {
@@ -71,7 +62,10 @@ type GenerationGateConfirmPayload = {
   shotSummary?: string
   model?: string
   referenceCount?: number
-  maximumCost?: number
+  /** `null`/缺席 = 目录算不出价。绝不是 0 元。 */
+  maximumCost?: number | null
+  /** 这批里价格未知的镜数（> 0 时卡上如实说出来）。 */
+  unknownShotCount?: number
   currency?: string
   expiresAt?: string
   /**
@@ -79,14 +73,6 @@ type GenerationGateConfirmPayload = {
    * 不造并行卡，P1）；无它 → 走今日扁平单镜卡（字节不动，单镜 E2E 是回归门）。
    */
   shots?: MultiShotGatePayload
-}
-
-function describeIntent(intent: string | undefined): string {
-  const normalized = String(intent || '')
-  if (normalized === 'image' || normalized === 'video' || normalized === 'audio' || normalized === 'text') {
-    return i18n.t(`runtime.capability.intent.${normalized}`)
-  }
-  return i18n.t('runtime.capability.intent.fallback')
 }
 
 async function runProductionTextPlanner(input: {
@@ -102,7 +88,8 @@ async function runProductionTextPlanner(input: {
       ? [
           '你是分镜规划师。请根据下面的原分镜方案和修改要求，输出一份完整、可执行的 StoryboardPlan JSON。',
           '只输出 JSON，不要 Markdown、解释或代码围栏。必须包含 title、anchors、shots；每个 shot 必须包含 index、durationSec、anchorIds、prompt。',
-          '允许的 shot 字段：shotId、shotKind(image|video)、durationSec、anchorIds、prompt、modelKey、modeId、params、ffDesc、motionDesc、variationType(large|medium|small)、camIdx、continuity、keyframe。',
+          '允许的 shot 字段：shotId、shotKind(image|video)、durationSec、anchorIds、prompt、modelKey、modelVendor、modeId、params、ffDesc、motionDesc、variationType(large|medium|small)、camIdx、continuity、keyframe。',
+          'modelKey 与 modelVendor 是同一个模型身份的两半：原样保留就两个都保留；改 modelKey 必须同时给出新模型的 modelVendor，给不出就两个都删掉（交给默认模型），绝不能只改其中一个。',
           `修改要求：${input.instruction || '保持原方案，只修正明显问题。'}`,
           '原分镜方案：',
           input.source || '',
@@ -132,48 +119,6 @@ async function runProductionTextPlanner(input: {
   const text = response.text?.trim()
   if (!text) throw new Error('剧本规划没有返回可审阅内容')
   return text
-}
-
-/** 外部 MCP 付费确认：弹全仓唯一的确认对话框（agent 来源 + 明细），真人点了才回 confirmed——卡不超时。 */
-async function confirmSpendForAgent(info: SpendConfirmPayload): Promise<{ confirmed: boolean }> {
-  const store = useGenerationCanvasStore.getState()
-  const node = store.nodes.find((item) => item.id === info.nodeId)
-  const nodeLabel =
-    node?.title?.trim() ||
-    (typeof node?.prompt === 'string' && node.prompt.trim()
-      ? node.prompt.trim().slice(0, 24)
-      : i18n.t('runtime.capability.newNode'))
-  // 参考图门 vs 生成门（Phase B）：定妆/场景卡（meta.referenceSheet）= 参考图门（相机图标+措辞），否则生成门。
-  const isReference = Boolean(node?.meta && (node.meta as Record<string, unknown>).referenceSheet === true)
-  const promptPreview = typeof info.prompt === 'string' && info.prompt.trim() ? info.prompt.trim().slice(0, 60) : ''
-  const projectName = typeof info.projectName === 'string' ? info.projectName.trim() : ''
-  const ok = await useSpendConfirmStore.getState().requestConfirm({
-    kind: isReference ? 'reference' : 'generation',
-    title: isReference
-      ? i18n.t('runtime.capability.referenceTitle')
-      : i18n.t('runtime.capability.spendTitle', { intent: describeIntent(info.intent) }),
-    message: [
-      promptPreview
-        ? i18n.t('runtime.capability.spendMessageWithPrompt', {
-            prompt: `${promptPreview}${info.prompt && info.prompt.length > 60 ? '…' : ''}`,
-          })
-        : i18n.t('runtime.capability.spendMessage'),
-    ].join('\n'),
-    confirmLabel: i18n.t('runtime.capability.confirmGenerate'),
-    source: 'agent',
-    details: [
-      spendQuoteDetail(info.quote ?? { amount: null }),
-      // 项目行放第一位：用户可能不在这个项目里，先让他知道花在哪个项目。
-      ...(projectName ? [{ label: i18n.t('runtime.capability.project'), value: projectName }] : []),
-      { label: i18n.t('runtime.capability.node'), value: nodeLabel },
-      {
-        label: i18n.t('runtime.capability.model'),
-        value: [info.vendor, info.modelKey].filter(Boolean).join(' · ') || i18n.t('runtime.capability.defaultModel'),
-      },
-      { label: i18n.t('runtime.capability.output'), value: describeIntent(info.intent) },
-    ],
-  })
-  return { confirmed: Boolean(ok) }
 }
 
 /**
@@ -232,12 +177,18 @@ async function confirmGenerationGateForAgent(
     typeof info.shotSummary === 'string' && info.shotSummary.trim()
       ? info.shotSummary.trim()
       : i18n.t('runtime.capability.generationGateShotFallback')
-  const maximumCost = Number.isFinite(info.maximumCost) ? Number(info.maximumCost) : 0
-  const cost = `${typeof info.currency === 'string' ? info.currency : ''}${maximumCost}`
+  // 「算不出价」和「0 元」是两件事：只有后者才该印出一个数。缺席/非数 → 走未知那一档的文案，
+  // 绝不落成 ¥0（2026-09-21 未知价开闸；三种可能里只有 0 会被读成「这次免费」）。
+  const costKnown = typeof info.maximumCost === 'number' && Number.isFinite(info.maximumCost)
+  const cost = costKnown
+    ? `${typeof info.currency === 'string' ? info.currency : ''}${Number(info.maximumCost)}`
+    : i18n.t('runtime.capability.generationGateCostUnknown')
   const ok = await useSpendConfirmStore.getState().requestConfirm({
     kind: 'generation',
     title: i18n.t('runtime.capability.generationGateTitle'),
-    message: i18n.t('runtime.capability.generationGateMessage', { model, cost, shot }),
+    message: costKnown
+      ? i18n.t('runtime.capability.generationGateMessage', { model, cost, shot })
+      : i18n.t('runtime.capability.generationGateMessageUnknownCost', { model, shot }),
     confirmLabel: i18n.t('runtime.capability.confirmGenerate'),
     source: 'agent',
     details: [
@@ -262,7 +213,7 @@ async function confirmPlanForAgent(info: PlanConfirmPayload): Promise<{ confirme
   const preview = titles.slice(0, 5).join('、') + (titles.length > 5 ? '…' : '')
   const projectName = (() => {
     if (!info.projectId) return ''
-    const active = getActiveWorkbenchProjectId()
+    const active = withProjectAction((project) => project.binding.projectId) ?? null
     return info.projectId === active ? '' : info.projectId // 非当前项目才显 id 提示（当前项目无需重复）
   })()
   const ok = await useSpendConfirmStore.getState().requestConfirm({
@@ -298,14 +249,15 @@ function scoreFromDeviationActual(actual: unknown): number | undefined {
  * 判决 = content 偏差（每条 kind:'content' 回指 shotNodeId + 维度 field + 档位 actual + reason）；
  * 被审但无偏差的镜头 = 过检。verify 关闭 / 无镜头 → skipped（driver 据此落「审片跳过」）。
  */
-async function verifyShotsForProduction(shotNodeIds: readonly string[]): Promise<unknown> {
+async function verifyShotsForProduction(shotNodeIds: readonly string[], loaded: ProjectExecutionContext | null): Promise<unknown> {
   if (!isShotVerifyEnabled()) return { skipped: true, skipReason: '画面审片已在设置中关闭' }
+  if (!loaded) return { skipped: true, skipReason: '当前项目里找不到本次生成的镜头节点' }
   const knownNodeIds = new Set(useGenerationCanvasStore.getState().nodes.map((node) => node.id))
   const reviewedShotIds = shotNodeIds.filter((id) => knownNodeIds.has(id))
   if (reviewedShotIds.length === 0) return { skipped: true, skipReason: '当前项目里找不到本次生成的镜头节点' }
   // 现成闭环：内部 gather → 判分 → 写 shotVerify store。直接使用「本次」返回值，不能在 await
   // 后读全局 store——同项目另一轮审片可能已经后发先至，读到的会是另一次结果。
-  const deviations = await verifyShotsAndReport(reviewedShotIds)
+  const deviations = await verifyShotsAndReport(reviewedShotIds, loaded)
   const flaggedByShot = new Map<string, Array<{ dimensionName?: string; score?: number; reason?: string }>>()
   for (const deviation of deviations) {
     if (deviation.kind !== 'content' || !deviation.shotNodeId) continue
@@ -333,9 +285,13 @@ async function verifyShotsForProduction(shotNodeIds: readonly string[]): Promise
 
 /** 处理一条主进程转发来的能力操作。未知操作抛错（主进程会把错误透传给 agent）。 */
 export async function handleCapabilityApply(op: string, payload: unknown): Promise<unknown> {
+  if (op === 'creative.tool.execute') return executeCreativeTool(payload)
   const data = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>
+  if (op === 'production.generate-node') throw new SurfacePortWireError('capability_input_invalid')
   const projectId = typeof data.projectId === 'string' ? data.projectId : ''
-  const activeId = getActiveWorkbenchProjectId()
+  // 处理这条能力操作即动作起点：签发此刻打开的项目；实时面的项目闸与之后的写入只认它。
+  const loaded = withProjectAction((project) => project) ?? null
+  const activeId = loaded ? loaded.binding.projectId : null
   // 画布读写**只能**作用于当前打开的项目（动 store → 必须是活动项目，否则串台）；目标≠活动 → 拒。
   // 确认门（spend.confirm / plan.confirm）不在此限：AI 想在「非当前项目」生成/落方案时也弹全局卡，
   // 卡里标明项目名，确认后走盘落地（不动非活动 store）。这正是治静默黑洞的关键放开。
@@ -371,10 +327,13 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
     plannerCapturedCanvasReadSnapshot = await sealCurrentProjectCanvasReadSnapshot(plannerBinding, plannerSnapshot)
   }
 
-  // P4 S5 画布落地（materialize-shots / attach-shot-result）——受上面的活动项目守卫约束（只动当前项目 store），
+  // P4 S5 画布落地（materialize-shots：建占位 + 每一镜的运行状态 / 结果）——受上面的活动项目守卫约束（只动当前项目 store），
   // 落点住在 multiShotCanvasLanding（保持本 handler 精简）。未处理返回 null → 继续走下方 switch。
   const landed = await handleMultiShotCanvasLandingOp(op, data)
   if (landed !== null) return landed
+  if (op === 'storyboard.present') return presentStoryboard(data)
+  if (op === 'storyboard.upsert-design') return upsertAgentStoryboardDesign(data)
+  if (op === 'storyboard.patch-design') return patchAgentStoryboardDesign(data)
 
   // 外部 MCP 宿主触发的纯渲染层副作用（打开凭据页 / 宿主配置已修复提示），落点住在 mcpHostSurfaceOps。
   const hostSurface = handleMcpHostSurfaceOp(op, data)
@@ -382,13 +341,14 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
 
   switch (op) {
     case 'document.write': {
-      const tools = useWorkbenchStore.getState().creationDocumentTools
+      // 文稿端口由项目会话层 owner 提供（基线永远在，编辑器挂载时是增强版），这里不再探「有没有编辑器」。
+      const tools = getDocumentSessionPort()
       const operation = data.operation === 'insert' || data.operation === 'replace' || data.operation === 'append'
         ? data.operation
         : null
       const content = typeof data.content === 'string' ? data.content : ''
       const documentId = useWorkbenchStore.getState().activeDocumentId
-      if (!tools || !operation || !content || !documentId) {
+      if (!operation || !content || !documentId) {
         throw new SurfacePortWireError('surface_port_unavailable')
       }
       const current = tools.readState()
@@ -406,7 +366,7 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
         receiptProposalId: typeof data.receiptProposalId === 'string' ? data.receiptProposalId : 'mcp-canvas-plan:renderer',
         approvalId: typeof data.approvalId === 'string' ? data.approvalId : 'mcp-canvas-plan:renderer',
         ...(typeof data.actionHash === 'string' ? { actionHash: data.actionHash } : {}),
-        readActiveProjectId: getActiveWorkbenchProjectId,
+        loaded,
       })
     case 'canvas.read-doc':
       return useGenerationCanvasStore.getState().readDocumentSnapshot()
@@ -414,7 +374,11 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
       useGenerationCanvasStore.getState().applyExternalGraph(data.snapshot)
       return { ok: true }
     case 'spend.confirm':
-      return confirmSpendForAgent(data as SpendConfirmPayload)
+      return confirmSpendFromMainProcess(data as SpendConfirmPayload)
+    case 'generation.batch':
+      return queueGenerationBatchConfirmation(data as GenerationBatchPayload)
+    case 'project.activate':
+      return activateProjectForCapability(projectId)
     case 'generation.gate.confirm':
       return confirmGenerationGateForAgent(data as GenerationGateConfirmPayload)
     case 'plan.confirm':
@@ -448,7 +412,7 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
         ? data.expectedRevision
         : typeof plan.baseRevision === 'string' ? plan.baseRevision : ''
       return executeTimelineWriteTarget({
-        ...(projectId ? { projectId } : {}),
+        projectId: projectId || activeId || '',
         input: input as Parameters<typeof executeTimelineWriteTarget>[0]['input'],
         target: { kind: 'timeline', clipIds: [] },
         preconditions: { timeline: { revision } },
@@ -456,7 +420,7 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
         approvalId: typeof data.approvalId === 'string' ? data.approvalId : 'mcp-host:renderer',
         actionHash: typeof data.actionHash === 'string' ? data.actionHash : 'mcp-action:renderer',
         signal,
-        assertCurrent: () => undefined,
+        assertCurrent: () => { if (!loaded || !isProjectExecutionContextCurrent(loaded)) throw new SurfacePortWireError('surface_port_stale') },
       })
     }
     case 'layout.read': {
@@ -500,14 +464,14 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
                 ...(data.limit === undefined ? {} : { limit: data.limit }),
               }
       return executeAssetReadTarget({
-        ...(projectId ? { projectId } : {}),
+        projectId: projectId || activeId || '',
         input,
         target: { kind: 'asset', assetIds: assetId ? [assetId] : [] },
       })
     }
     case 'export.read': {
       const operation = data.operation === 'verify' ? 'verify_render' : 'inspect_export_job'
-      return executeExportReadTarget({ ...(projectId ? { projectId } : {}), input: { operation, jobId: data.jobId }, target: { kind: 'export', jobId: data.jobId } })
+      return executeExportReadTarget({ projectId: projectId || activeId || '', input: { operation, jobId: data.jobId }, target: { kind: 'export', jobId: data.jobId } })
     }
     case 'production.plan-directions': {
       // B1 方向门：driver 停在 awaiting_direction 时让渲染层拟 2-3 个「创意方向」候选（三选一）。
@@ -634,6 +598,8 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
         if (typeof nodeId === 'string' && nodeId.trim()) out[clientId] = nodeId
         return out
       }, {})
+      // 落地后按各镜当前模式投影「行上的提示词 + 参考图」进节点：与分镜表点生成同一个投影（对等测试 shotOutbound.parity）。
+      projectPlanShotsOntoCreatedNodes(plan, (id) => clientIdToNodeId[id] || resolveCanvasToolNodeId(id), useGenerationCanvasStore.getState())
       const nodeById = new Map(useGenerationCanvasStore.getState().nodes.map((node) => [node.id, node]))
       const bindings = args.nodes
         .map((created) => {
@@ -685,7 +651,7 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
       const shotNodeIds = Array.isArray(data.shotNodeIds)
         ? data.shotNodeIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
         : []
-      return verifyShotsForProduction(shotNodeIds)
+      return verifyShotsForProduction(shotNodeIds, loaded)
     }
     case 'production.check-frozen': {
       // W2 冻结门：driver 提交任何镜头前，问渲染层「本 run 的画布上有哪些视觉锚（角色/场景/道具卡）还没冻结」。
@@ -708,7 +674,7 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
         assertDraftFilmReady(draftFilmTimelineFromState(state.timeline))
       }
       const { manifest } = createTimelineExportManifest({
-        projectId: project,
+        projectId: project || activeId || '',
         timeline: state.timeline,
         aspectRatio: state.previewAspectRatio,
         generationNodes: useGenerationCanvasStore.getState().nodes,
@@ -722,7 +688,7 @@ export async function handleCapabilityApply(op: string, payload: unknown): Promi
         assertDraftFilmReady(draftFilmTimelineFromState(state.timeline))
       }
       const { timeline } = createTimelineExportManifest({
-        projectId: project,
+        projectId: project || activeId || '',
         timeline: state.timeline,
         aspectRatio: state.previewAspectRatio,
         generationNodes: useGenerationCanvasStore.getState().nodes,

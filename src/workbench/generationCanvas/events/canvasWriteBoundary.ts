@@ -10,10 +10,10 @@ type ActionName = {
 // their state or opening an Undo barrier. Runtime result attachment is a write;
 // status/progress is not a new edit. Previously accepted jobs are never cancelled.
 const documentActions = {
-  markReady: false, captureHistory: true, setCanvasTransform: false, setCanvasZoom: false,
+  captureHistory: true,
   setGenerationAiDraft: false, setGenerationAiMessages: false, setGenerationAiCollapsed: false,
   resetGenerationAiConversation: false, copySelectedNodes: false, cutSelectedNodes: true,
-  duplicateNodesForDrag: true, pasteNodes: true, undo: true, redo: true, readSnapshot: false, readDocumentSnapshot: false,
+  duplicateNodesForDrag: true, duplicateSelectedNodes: true, pasteNodes: true, undo: true, redo: true, readSnapshot: false, readDocumentSnapshot: false,
   restoreSnapshot: true, applyEventTail: true, applyExternalGraph: true,
   addNode: true, commitPersistedChange: false, updateNode: true, updateNodes: true,
   updateNodePrompt: true, setNodeLocked: true, moveNode: true, moveSelectedNodes: true,
@@ -22,13 +22,13 @@ const documentActions = {
   duplicateNodeForRegeneration: true, reassignNodeCategory: true, copyNodeToCategory: true, deleteNode: true,
   saveSelectedAsWorkflowTemplate: true, instantiateWorkflowTemplate: true, instantiateWorkflowTemplateSnapshot: true,
   startConnection: false, startGroupConnection: false, cancelConnection: false, connectToNode: true, connectNodes: true,
-  connectToGroup: true, updateEdgeMode: true, disconnectEdge: true, moveGroupNodes: true,
+  connectToGroup: true, updateEdgeMode: true, disconnectEdge: true, moveGroupNodes: true, duplicateGroupForDrag: true,
   createGroup: true, createFrame: true, groupSelectedNodes: true, renameGroup: true, setGroupDescription: true,
   setGroupColor: true, setGroupCollapsed: true,
   ungroup: true, ungroupGroups: true, deleteGroup: true, moveNodeToGroup: true,
   removeNodeFromGroup: true, reorderGroup: true, restoreGraph: true,
   setNodeStatus: false, dismissNodeError: false, setNodeProgress: false, appendNodeRun: false,
-  trackNodeRun: false, addNodeResult: true, rollbackHistory: true,
+  trackNodeRun: false, addNodeResult: true, addNodeResultCollection: true, rollbackHistory: true,
 } satisfies Record<ActionName, boolean>
 
 type PendingWrite = { proposalId: string; cancel: () => void | false }

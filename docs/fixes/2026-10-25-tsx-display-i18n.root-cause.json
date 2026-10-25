@@ -1,0 +1,1397 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-tsx-display-i18n",
+  "problem_type": "Renderer display copy bypasses locale ownership",
+  "symptom": "The source hard-zero gate reports 479 untranslated TSX occurrences; custom canvas UI remains Chinese in English mode.",
+  "direct_cause": "New JSX copy, display-only helpers and static option labels use Chinese literals instead of the existing i18next boundary.",
+  "class_root": "Display text and canonical prompt/persisted strings were not distinguished at renderer presentation boundaries.",
+  "affected_population": [
+    "Chinese and English users of custom canvas, storyboard, director, batch and preview components"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+    "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+    "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+    "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+    "src/workbench/creation/WorkbenchEditor.tsx",
+    "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+    "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+    "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+    "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+    "src/ui/onboarding/CodexImagegenManage.tsx",
+    "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+    "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+    "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+    "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+    "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+    "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+    "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+    "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+    "src/i18n/CanvasComponentText.tsx",
+    "src/i18n/locales/canvasComponents.ts",
+    "src/i18n/resources.ts",
+    "scripts/tsx-i18n-display.node-test.mjs",
+    "scripts/lib/tsxI18nInventory.mjs",
+    "scripts/fixtures/tsx-i18n-display.json",
+    "scripts/lib/mainStyleContentFlowCases.mjs",
+    "scripts/main-style-content-flow.node-test.mjs",
+    "tests/ux/main-style-content-flow.walk.mjs"
+  ],
+  "entry_points": [
+    "CapabilityRecipeInspector and batch settings",
+    "Storyboard table and media previews",
+    "Director, review and 3D presentation",
+    "Browser upload and source labels"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The invariant concerns repository-authored display ownership and unchanged persisted/request values; installed i18next is reused without a runtime or dependency change.",
+  "invariants": [
+    "Chinese display text remains exact",
+    "English copy has real translations and identical interpolation bindings",
+    "Language changes never rewrite canonical camera/shot values, project data or outbound prompt/protocol fields",
+    "Approved content-flow class attributes are unchanged"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/devlab/skillLibrarySpecimen.tsx",
+      "symbol": "SkillLibraryContent"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "NomiBrowserDialogProps"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BrowserTab"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BrowserBookmark"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "readBookmarks"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BrowserTabContextMenu"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BrowserBookmarkContextMenu"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BrowserPromptModePickerState"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BrowserCaptureFlyout"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "USE_NATIVE_BROWSER_ASSET_OVERLAY"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "BROWSER_VIEW_POPOVER_GAP"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserTab"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserCaptureFlyoutRect"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserBookmark"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserStartShortcut"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserWorkspaceMode"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_WORKSPACE_MODE_STORAGE_KEY"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_SIDE_DEFAULT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_SIDE_WIDTH_STORAGE_KEY"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_SIDE_MIN_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "DEFAULT_BOOKMARKS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BOOKMARKS_STORAGE_KEY"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "TAB_CONTEXT_MENU_MARGIN"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "TAB_CONTEXT_MENU_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "ViewportRect"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_ASSET_POPOVER_FALLBACK_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_ASSET_POPOVER_FALLBACK_MARGIN"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_ASSET_POPOVER_FALLBACK_HEIGHT"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_VIEW_POPOVER_GAP"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BROWSER_DIALOG_TOP_ANCHOR_SELECTORS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "CAPTURE_FLYOUT_MAX_HEIGHT"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "CAPTURE_FLYOUT_MAX_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "CAPTURE_FLYOUT_TARGET_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "BrowserTab"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "TabFavicon"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "TOOL_BUTTON_CLASS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "TAB_LIMIT"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "MATERIAL_SITE_SHORTCUTS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "BrowserBookmark"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "BROWSER_START_SHORTCUTS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "PromptModeOption"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "BrowserCaptureFlyout"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "CAPTURE_FLYOUT_KEYFRAME_TIMES"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "TAB_CONTEXT_MENU_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "TAB_CONTEXT_MENU_ITEM_CLASS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "BrowserTab"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "BrowserBookmark"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "TAB_LIMIT"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "TAB_CONTEXT_MENU_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "PROMPT_MODE_PICKER_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "PROMPT_MODE_PICKER_MARGIN"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "PROMPT_MODE_PICKER_ESTIMATED_HEIGHT"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/overlay/BrowserAssetOverlayApp.tsx",
+      "symbol": "CAPTURE_FLYOUT_TARGET_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/overlay/BrowserAssetOverlayApp.tsx",
+      "symbol": "CAPTURE_FLYOUT_KEYFRAME_TIMES"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/popover/BrowserAssetPopoverView.tsx",
+      "symbol": "TOOL_BUTTON_CLASS"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/prompt/BrowserPromptExtractionSettingsModal.tsx",
+      "symbol": "TOOL_BUTTON_CLASS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/capability/creativeToolExecute.ts",
+      "symbol": "readVibingDirectorState"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/creation/CreationWorkspace.tsx",
+      "symbol": "WorkbenchEditor"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/explorer/ProjectExplorerSidebar.tsx",
+      "symbol": "SkillLibraryContent"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "symbol": "CapabilityVisionReviewSelection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "CameraOutput"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CameraOutput"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityVisionReviewSelection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityCameraOutputsEditor"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityAutoVisionReviewControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityRecipeInspector"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "CapabilityQualityStatusIcon"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "CapabilityQualityStatusIcon"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "CapabilityQualityReportPopover"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "MultiviewVisionReviewControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "MoodVisionReviewControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "CapabilityHumanReviewControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "PortraitComparisonControl"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "StoryboardMediaLightbox"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "CapabilityResultCollection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "CreativeResourceNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "CanvasSkillNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "ImageComparisonNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "OutputCollectorNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "Model3DCameraNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "symbol": "Model3DViewerHandle"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "symbol": "Model3DViewerHandle"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx",
+      "symbol": "NodeBrowserUploadDragHandleProps"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeVideoFrameToolbar.tsx",
+      "symbol": "VideoKeyframeInspectorDialog"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "symbol": "CreativeResourceNodeBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "symbol": "StoryboardMediaLightbox"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "symbol": "StoryboardMediaLightbox"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "symbol": "StoryboardImagePreview"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "symbol": "StoryboardVideoPreview"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "symbol": "StoryboardMediaPreview"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "BufferedDurationInput"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "GroupedFieldsCell"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "CompactFieldsCell"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "TextCell"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "StoryboardMediaPreview"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "CompactPromptCell"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "symbol": "StoryboardMediaLightbox"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "Scene3DFullscreenToolbar"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "readTakeCaptureStatus"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "Scene3DFullscreen"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/shotTable/ShotTableGrid.tsx",
+      "symbol": "StoryboardMediaPreview"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/useNodeMediaPreview.tsx",
+      "symbol": "NodeResultDownloadButton"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "symbol": "VibingDirectorAssistantPanel"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "symbol": "VibingDirectorAssetLibrary"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "readVibingDirectorState"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "VibingDirectorFullscreen"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowOverlays.tsx",
+      "symbol": "BatchPlanOverlay"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "createBlankTab"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "createTabId"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "measureBrowserDialogTopOffset"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "toViewportRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "sameBoundsRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "captureFlyoutTargetRectFromPopover"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "fallbackCaptureFlyoutSourceRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "fitCaptureFlyoutSourceRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "createFallbackAssetPopoverRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "viewportRectFromEdges"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "browserViewRectAroundPopover"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "browserBoundsFromRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "sameBrowserViewBounds"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialog.tsx",
+      "symbol": "overlayCaptureRequestFromBrowserEvent"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "createTabId"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "tabContextMenuEstimatedHeight"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "viewportRectFromEdges"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "intersectViewportRects"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "captureFlyoutScale"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "createTabId"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "createBlankTab"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "writeBookmarks"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "clampTabContextMenuPosition"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "promptCaptureRequestFromBrowserEvent"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "sameBoundsRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/useBrowserDialogActions.ts",
+      "symbol": "canDownloadFromBrowserView"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/overlay/BrowserAssetOverlayApp.tsx",
+      "symbol": "canDownloadFromBrowserView"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/overlay/BrowserAssetOverlayApp.tsx",
+      "symbol": "sameBoundsRect"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/overlay/BrowserAssetOverlayApp.tsx",
+      "symbol": "captureFlyoutScale"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/popover/browserAssetPopoverUtils.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/popover/useBrowserAssetActions.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/popover/useBrowserAssetMarquee.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/useCanvasContextNodeMenu.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/useCanvasSelectionActions.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "symbol": "orbitDistanceLimitsForRadius"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "symbol": "shouldAutoFitModelCamera"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/nodeSizing.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "scene3DStateEqual"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeDragResize.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeImageEditing.ts",
+      "symbol": "clampNumber"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "createVibingDirectorPreviewResult"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "displayKeys"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "symbol": "zhCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enCanvasComponents"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/onboarding/CodexImagegenManage.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/onboarding/CodexImagegenManage.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/creation/WorkbenchEditor.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/creation/WorkbenchEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "symbol": "useTranslation"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "symbol": "i18n"
+    }
+  ],
+  "door_reduction": {
+    "before": 150,
+    "after": 230,
+    "why_not": "These are separate feature consumers and existing state/protocol owners; localization must not consolidate or alter their business entry points. They converge only at the display resource boundary."
+  },
+  "generality_proof": "One dedicated locale owner serves every changed TSX. Existing useTranslation subscriptions update component display; display-only static tables resolve keys at read time. Tests enumerate all modified components and every registered key, including interpolation and exact Chinese text. Canonical mixed-use values are kept raw and audited separately.",
+  "shared_boundaries": [
+    {
+      "path": "src/i18n/locales/canvasComponents.ts",
+      "symbol": "zhCanvasComponents",
+      "responsibility": "Own paired Chinese/English display copy and interpolation identities"
+    },
+    {
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "translateCanvasComponentText",
+      "responsibility": "Resolve known display labels without changing unknown/user-authored or canonical source values"
+    },
+    {
+      "path": "scripts/tsx-i18n-display.node-test.mjs",
+      "symbol": "readLocale",
+      "responsibility": "Enforce exact bilingual text, real runtime interpolation, known raw-value boundaries and unchanged layout"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "entry_point": "CapabilityRecipeInspector",
+      "disposition": "enforced",
+      "evidence": "Drawer copy and static resource choices use the dedicated namespace; camera defaults remain raw."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "entry_point": "StoryboardTableNodeImpl",
+      "disposition": "enforced",
+      "evidence": "Table actions, statuses and accessibility copy use the same namespace without changing shot edits or prompt builders."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "New custom UI repeatedly introduced literals across 36 independent TSX files and multiple presentation shapes.",
+    "same_class_scan": [
+      "Unchanged visible-text scanner: 479 TSX findings in 36 files",
+      "AST inventory: JSX text/attributes, return values, toast/dialog text, static display choices, mixed-use canonical values",
+      "Generated door map for all 36 original TSX files; 150 file/symbol doors",
+      "door-map.mjs mapDoors API also enumerates actual i18next/translation reads in all changed source files; combined with the original full exported-consumer scan"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "scripts/tsx-i18n-display.node-test.mjs",
+    "invariant": "Every changed component references live bilingual display keys; Chinese and interpolation identities match the original display fixture; canonical source values and layout classes stay unchanged.",
+    "failure_mode": "Missing/changed Chinese copy, untranslated English, broken key bindings or layout mutations fail focused tests; the unchanged global scanner independently reports remaining literals.",
+    "exception_policy": "none",
+    "strategy": "Centralize display resources and resolve static display labels lazily. Never lower global gates or translate canonical writes to satisfy a display rule.",
+    "artifacts": [
+      "src/i18n/locales/canvasComponents.ts",
+      "src/i18n/CanvasComponentText.tsx",
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "src/workbench/creation/WorkbenchEditor.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "src/ui/onboarding/CodexImagegenManage.tsx",
+      "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+      "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+      "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "scripts/tsx-i18n-display.node-test.mjs",
+    "scripts/main-style-content-flow.node-test.mjs",
+    "tests/ux/main-style-content-flow.walk.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "src/workbench/creation/WorkbenchEditor.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx",
+      "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "src/ui/onboarding/CodexImagegenManage.tsx",
+      "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx",
+      "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+      "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+      "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "src/workbench/skillLibrary/SkillLibraryPanel.tsx",
+      "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "src/ui/browser/dialog/NomiBrowserDialogView.tsx"
+    ],
+    "rationale": "Replace display literals in place; no alternate translation framework, fallback renderer or checker exclusion is added. Canonical protocol/data strings intentionally remain with their original owner."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency change. Use the existing installed i18next/react-i18next API and current locale registry.",
+    "exit_criteria": []
+  },
+  "migration": "No persisted project migration. Values, prompts, camera labels, shot-size enums and Blender task fields remain canonical; only display copies are localized.",
+  "residual_risks": [
+    "Canonical mixed-use TSX literals remain subject to the unmodified scanner; report exact false-positive evidence to coordination without changing checker/baseline.",
+    "Other TS and model-display findings are owned by A/main, not this source-TSX line.",
+    "Real App/provider/Blender/state flow and final CI acceptance remain main-line work.",
+    "Delivery preflight stopped at unavailable local proxy; remote freshness unexecuted."
+  ],
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/tsx-i18n-display.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

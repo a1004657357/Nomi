@@ -29,7 +29,7 @@ describe("skillManifestSchema (metadata.nomi)", () => {
     expect(result.manifest.requiredProviders).toEqual(["text", "image"]);
   });
 
-  it("rejects a block that restates name or description (frontmatter owns those)", () => {
+  it("strips a restated name or description (frontmatter owns those)", () => {
     const result = parseSkillManifest({
       name: "workbench-example",
       description: "Example skill",
@@ -42,6 +42,35 @@ describe("skillManifestSchema (metadata.nomi)", () => {
       expect((result.manifest as Record<string, unknown>).name).toBeUndefined();
       expect((result.manifest as Record<string, unknown>).description).toBeUndefined();
     }
+  });
+
+  it("preserves canvas recipe bindings and structured inputs without granting capabilities", () => {
+    const result = parseSkillManifest({
+      version: "1.0.0", tools: [], "required-providers": ["image"],
+      inputs: [{ name: "source", description: "Reference image", required: true }],
+      canvas: { recipeIds: ["image.multiview.grid9"], defaultRecipeId: "image.multiview.grid9" },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.inputs?.[0].required).toBe(true);
+    expect(result.manifest.canvas?.recipeIds).toEqual(["image.multiview.grid9"]);
+    expect(result.manifest.requestedCapabilities).toBeUndefined();
+  });
+
+  it("rejects a default canvas recipe outside its declared recipes", () => {
+    expect(parseSkillManifest({
+      version: "1.0.0", tools: [], "required-providers": [],
+      canvas: { recipeIds: ["portrait.refine"], defaultRecipeId: "portrait.mood" },
+    }).ok).toBe(false);
+  });
+
+  it("accepts shared model3d provider requirements and stage preferences", () => {
+    const result = parseSkillManifest({
+      version: "1.0.0", tools: [], "required-providers": ["image", "model3d"],
+      stages: [{ id: "reconstruct", goal: "Reconstruct", tools: [], "model-prefs": [{ kind: "model3d" }] }],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifest.stages?.[0].modelPrefs).toEqual([{ kind: "model3d" }]);
   });
 
   it("rejects missing required fields", () => {

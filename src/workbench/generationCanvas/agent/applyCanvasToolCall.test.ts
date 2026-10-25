@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CANVAS_READ_CAPABILITY } from '../../../../electron/shared/agentCapabilities/canvasRead'
 
 // 仅替换需要桌面 IPC 的目录读取；方案投影继续使用真实档案纯函数。
@@ -6,6 +6,15 @@ vi.mock('./availableModels', async (importOriginal) => ({
   ...await importOriginal<typeof import('./availableModels')>(),
   listAvailableModelsForAgent: vi.fn(async () => []),
 }))
+vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: vi.fn() }))
+vi.mock('../runner/capabilityRecipeController', () => ({ runCapabilityRecipeOnNode: vi.fn() }))
+vi.mock('../../api/taskApi', async importOriginal => ({
+  ...await importOriginal<typeof import('../../api/taskApi')>(), mintSpendGrant: vi.fn(),
+}))
+vi.mock('../quality/visionReviewModels', () => ({ listVisionReviewModelOptions: vi.fn(async () => []) }))
+vi.mock('../quality/multiviewSubjectVisionReviewService', () => ({ createWorkbenchMultiviewSubjectComparator: vi.fn() }))
+vi.mock('./model3dHandoff', () => ({ handoffModel3dNode: vi.fn() }))
+vi.mock('../../ai/agentLoopMode', () => ({ runSingleShotAgent: vi.fn() }))
 
 import {
   applyCanvasToolCall,
@@ -16,12 +25,48 @@ import {
 } from './applyCanvasToolCall'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { useWorkbenchStore } from '../../workbenchStore'
+import { createProjectSessionTestHarness } from '../../project/projectSessionTestHarness'
+import { withProjectAction } from '../../project/projectCanvasReadSurface'
+import { selectActiveStoryboardDesign } from '../../workbenchDocumentSlice'
+import { tryAttachExternalImage } from './externalImageToolHandler'
+import { runStoryboardTableAutofill } from './storyboardTableAutofill'
+import { runSingleShotAgent } from '../../ai/agentLoopMode'
+import { getDesktopBridge, type DesktopBridge } from '../../../desktop/bridge'
 import type { StoryboardPlan } from './storyboardPlan'
+import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
+import { listAvailableModelsForAgent } from './availableModels'
+import { runCapabilityRecipeOnNode } from '../runner/capabilityRecipeController'
+import { mintSpendGrant } from '../../api/taskApi'
+import { handoffModel3dNode } from './model3dHandoff'
+import { listVisionReviewModelOptions } from '../quality/visionReviewModels'
+import { createWorkbenchMultiviewSubjectComparator } from '../quality/multiviewSubjectVisionReviewService'
+
+const mockedGetDesktopBridge = vi.mocked(getDesktopBridge)
+const mockedListAvailableModels = vi.mocked(listAvailableModelsForAgent)
+const mockedRunCapabilityRecipe = vi.mocked(runCapabilityRecipeOnNode)
+const mockedMintSpendGrant = vi.mocked(mintSpendGrant)
+const mockedHandoffModel3d = vi.mocked(handoffModel3dNode)
+const mockedListVisionReviewModels = vi.mocked(listVisionReviewModelOptions)
+const mockedCreateVisionComparator = vi.mocked(createWorkbenchMultiviewSubjectComparator)
+let projectSession: ReturnType<typeof createProjectSessionTestHarness> | null = null
+afterEach(() => { projectSession?.dispose(); projectSession = null })
 
 function resetCanvas() {
   const state = useGenerationCanvasStore.getState()
   for (const node of [...state.nodes]) state.deleteNode(node.id)
+  projectSession?.dispose()
+  projectSession = createProjectSessionTestHarness()
+  mockedGetDesktopBridge.mockReset()
+  mockedListAvailableModels.mockReset()
+  mockedListAvailableModels.mockResolvedValue([])
+  mockedRunCapabilityRecipe.mockClear()
+  mockedMintSpendGrant.mockClear()
+  mockedHandoffModel3d.mockClear()
+  mockedListVisionReviewModels.mockReset()
+  mockedListVisionReviewModels.mockResolvedValue([])
+  mockedCreateVisionComparator.mockClear()
 }
+
 
 // 回归锁(评测 sb-001 抓出):agent 用 clientId(n1/n2)连边,渲染层曾不翻译直接
 // 入 store → 落盘 "n1→n2" 吊边(指向不存在节点,连线静默丢失)。
@@ -31,23 +76,21 @@ describe('applyCanvasToolCall clientId 翻译', () => {
     useWorkbenchStore.setState({ activeCategoryId: 'shots', canvasFitNonce: 0, canvasFitCategoryId: null })
   })
 
-  it('批量创建节点后请求一次适应视图，单节点不打断当前视口', async () => {
-    await applyCanvasToolCall('create_canvas_nodes', {
-      nodes: [{ clientId: 'solo', kind: 'image', title: '单节点', prompt: 'p' }],
-    })
-    expect(useWorkbenchStore.getState().canvasFitNonce).toBe(0)
-
+  // 2026-09-25 用户拍板「程序不再主动平移 / 缩放画布」：Agent 建卡（单个、批量、跨分类）一律不请求适应、
+  // 不派发聚焦、不切分类——屏外 / 别的分类的新节点由画布边缘提示指路。
+  it('reported case: creating nodes never moves the viewport, focuses a node, or switches category', async () => {
+    // 聚焦事件这一侧由 canvasViewportMovers.structure.test.ts 的名单守（这里是 node 环境，没有 window）。
+    await applyCanvasToolCall('create_canvas_nodes', { nodes: [{ clientId: 'solo', kind: 'image', title: '单节点', prompt: 'p' }] })
     await applyCanvasToolCall('create_canvas_nodes', {
       nodes: [
         { clientId: 'batch-1', kind: 'image', title: '批量 1', prompt: 'p1' },
         { clientId: 'batch-2', kind: 'video', title: '批量 2', prompt: 'p2' },
       ],
     })
-    expect(useWorkbenchStore.getState().canvasFitNonce).toBe(1)
-    expect(useWorkbenchStore.getState().canvasFitCategoryId).toBe('shots')
+    expect(useWorkbenchStore.getState().canvasFitNonce).toBe(0)
   })
 
-  it('批量节点不在当前分类时切到包含新节点的主分类再 fit', async () => {
+  it('class: nodes landing in another category leave the active category and viewport alone', async () => {
     useWorkbenchStore.getState().setActiveCategoryId('audio')
     await applyCanvasToolCall('create_canvas_nodes', {
       nodes: [
@@ -55,9 +98,23 @@ describe('applyCanvasToolCall clientId 翻译', () => {
         { clientId: 'shot-1', kind: 'video', title: '镜头', prompt: 'p2' },
       ],
     })
-    expect(useWorkbenchStore.getState().activeCategoryId).toBe('shots')
-    expect(useWorkbenchStore.getState().canvasFitCategoryId).toBe('shots')
-    expect(useWorkbenchStore.getState().canvasFitNonce).toBe(1)
+    expect(useWorkbenchStore.getState().activeCategoryId).toBe('audio')
+    expect(useWorkbenchStore.getState().canvasFitNonce).toBe(0)
+  })
+
+  it('create_canvas_nodes 尊重 Agent 指定的角色/场景/道具分类', async () => {
+    const created = (await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [
+        { clientId: 'cast-1', kind: 'character', title: '老板', prompt: '角色参考图', categoryId: 'cast' },
+        { clientId: 'scene-1', kind: 'scene', title: '月饼店', prompt: '场景参考图', categoryId: 'scene' },
+        { clientId: 'prop-1', kind: 'image', title: '月饼盒', prompt: '道具参考图', categoryId: 'prop' },
+      ],
+    })) as { clientIdToNodeId: Record<string, string> }
+
+    const nodes = useGenerationCanvasStore.getState().nodes
+    expect(nodes.find((node) => node.id === created.clientIdToNodeId['cast-1'])?.categoryId).toBe('cast')
+    expect(nodes.find((node) => node.id === created.clientIdToNodeId['scene-1'])?.categoryId).toBe('scene')
+    expect(nodes.find((node) => node.id === created.clientIdToNodeId['prop-1'])?.categoryId).toBe('prop')
   })
 
   it('resetClientIdRegistry 清表后旧 clientId 不再解析到旧项目节点(P1 治跨项目串台)', async () => {
@@ -150,6 +207,41 @@ describe('applyCanvasToolCall clientId 翻译', () => {
     expect(cat(created.clientIdToNodeId.g3)).toBe('shots')
   })
 
+  it('分镜组节点透传 storyboardPlanSnapshot 到 meta，并使用表格节点初始尺寸', async () => {
+    const snapshot: StoryboardPlan = {
+      title: '咖啡广告',
+      anchors: [],
+      shots: [
+        {
+          index: 1,
+          shotKind: 'image',
+          durationSec: 0,
+          anchorIds: [],
+          prompt: '咖啡杯特写',
+          scene: '咖啡馆窗边',
+          shotSize: '特写',
+        },
+      ],
+    }
+    const created = (await applyCanvasToolCall('create_canvas_nodes', {
+      groupCategoryId: 'shots',
+      nodes: [
+        {
+          clientId: 'storyboard-group',
+          kind: 'text',
+          title: '分镜组：咖啡广告',
+          prompt: '分镜组',
+          storyboardGroup: true,
+          storyboardPlanSnapshot: snapshot,
+        },
+      ],
+    })) as { clientIdToNodeId: Record<string, string> }
+    const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === created.clientIdToNodeId['storyboard-group'])
+    expect(node?.meta?.storyboardGroup).toBe(true)
+    expect(node?.meta?.storyboardPlanSnapshot).toEqual(snapshot)
+    expect(node?.size).toEqual(STORYBOARD_TABLE_DEFAULT_SIZE)
+  })
+
   it('非法 mode 按通用参考处理（不抛、不静默改语义）', async () => {
     const created = (await applyCanvasToolCall('create_canvas_nodes', {
       nodes: [
@@ -239,38 +331,68 @@ describe('applyCanvasToolCall canonical nomi_canvas_plan patch_shots', () => {
 })
 
 // 图片+视频分镜落画布的镜号语义：首帧图带 storyboardKeyframe 标记不自动领号，
-// 落地后按 first_frame 边共用所属视频的镜号（与手动「转视频」桥继承号同语义）——
+// 落地后 UI/Agent 按 first_frame 边共用所属视频的镜号，不存第二份号码——
 // 否则 N 镜领出 1..2N 交错编号，角标与「镜头 N 首帧」标题错位（A2 类编号 bug）。
 describe('applyCanvasToolCall 图片+视频分镜镜号', () => {
   beforeEach(resetCanvas)
 
-  it('首帧图不占号：视频连续编号 1..N，首帧图与所属视频共号', async () => {
-    const result = (await applyCanvasToolCall('create_canvas_nodes', {
-      nodes: [
-        { clientId: 'shot-1-keyframe', kind: 'image', title: '镜头 1 首帧', prompt: 'k1', storyboardKeyframe: true },
-        { clientId: 'shot-1', kind: 'video', title: '镜头 1', prompt: 'v1' },
-        { clientId: 'shot-2-keyframe', kind: 'image', title: '镜头 2 首帧', prompt: 'k2', storyboardKeyframe: true },
-        { clientId: 'shot-2', kind: 'video', title: '镜头 2', prompt: 'v2' },
-      ],
-      edges: [
-        { sourceClientId: 'shot-1-keyframe', targetClientId: 'shot-1', mode: 'first_frame' },
-        { sourceClientId: 'shot-2-keyframe', targetClientId: 'shot-2', mode: 'first_frame' },
-      ],
-      anchorCount: 0,
+  it('导入本地 Codex/imagegen 图片路径并写回图片节点 result', async () => {
+    const created = (await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'shot1', kind: 'image', title: '咖啡镜头 1', prompt: '热咖啡产品图' }],
     })) as { clientIdToNodeId: Record<string, string> }
+    const nodeId = created.clientIdToNodeId.shot1
+    const importLocalPath = vi.fn(async () => ({
+      id: 'asset-codex-1',
+      name: 'coffee.png',
+      userId: 'local',
+      projectId: 'project-1',
+      createdAt: '2026-07-04T00:00:00.000Z',
+      updatedAt: '2026-07-04T00:00:00.000Z',
+      data: {
+        url: 'nomi-local://asset/project-1/assets/generated/2026-07-04/coffee.png',
+        relativePath: 'assets/generated/2026-07-04/coffee.png',
+        contentType: 'image/png',
+      },
+    }))
+    mockedGetDesktopBridge.mockReturnValue({
+      assets: {
+        importLocalPath,
+        importRemoteUrl: vi.fn(),
+      },
+    } as unknown as DesktopBridge)
+    await projectSession!.open('project-1')
 
-    const byRealId = new Map(useGenerationCanvasStore.getState().nodes.map((n) => [n.id, n]))
-    const kf1 = byRealId.get(result.clientIdToNodeId['shot-1-keyframe'])
-    const video1 = byRealId.get(result.clientIdToNodeId['shot-1'])
-    const kf2 = byRealId.get(result.clientIdToNodeId['shot-2-keyframe'])
-    const video2 = byRealId.get(result.clientIdToNodeId['shot-2'])
+    const attached = await tryAttachExternalImage({
+      project: withProjectAction(project => project)!,
+      toolName: 'attach_external_image_to_node',
+      mutate: operation => operation(),
+      record: {
+      nodeId: 'shot1',
+      sourceType: 'local_path',
+      source: '/tmp/codex-imagegen/coffee.png',
+      fileName: 'coffee.png',
+      prompt: 'cinematic coffee ad',
+      provider: 'codex-imagegen',
+      modelKey: 'gpt-image-2',
+      },
+    })
+    expect(attached.handled).toBe(true)
+    if (!attached.handled) throw new Error('external image owner did not handle the import')
+    const result = attached.value as { nodeId: string; assetId: string; relativePath: string }
 
-    // 视频是镜位本体：连续 1..2，不被首帧图挤号
-    expect([video1?.shotIndex, video2?.shotIndex]).toEqual([1, 2])
-    // 首帧图与所属视频共用镜号；身份标记落进 meta（isShotNumberedNode 据此长期跳过）
-    expect(kf1?.shotIndex).toBe(1)
-    expect(kf2?.shotIndex).toBe(2)
-    expect((kf1?.meta as Record<string, unknown>)?.storyboardKeyframe).toBe(true)
+    expect(importLocalPath).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-1', kind: 'generated', fileName: 'coffee.png',
+      projectBinding: expect.objectContaining({ projectId: 'project-1' }),
+      ownerNodeId: nodeId, path: '/tmp/codex-imagegen/coffee.png',
+    }))
+    expect(result).toMatchObject({ nodeId, assetId: 'asset-codex-1', relativePath: 'assets/generated/2026-07-04/coffee.png' })
+    const node = useGenerationCanvasStore.getState().nodes.find(candidate => candidate.id === nodeId)
+    expect(node?.status).toBe('success')
+    expect(node?.result).toMatchObject({
+      type: 'image', url: 'nomi-local://asset/project-1/assets/generated/2026-07-04/coffee.png',
+      assetId: 'asset-codex-1', provenance: { provider: 'codex-imagegen', modelKey: 'gpt-image-2', prompt: 'cinematic coffee ad' },
+    })
+    expect(node?.history?.[0].id).toBe(node?.result?.id)
   })
 })
 
@@ -321,6 +443,7 @@ describe('applyCanvasToolCall propose_storyboard_plan', () => {
     const ws = useWorkbenchStore.getState()
     expect(ws.storyboardDesignsByDocumentId['doc-1']?.[0]?.plan).toEqual(PLAN)
     expect(ws.workspaceMode).toBe('creation')
+    expect(ws.activeStoryboardId).toBeNull() // Agent 新建的方案只进列表，打开是用户的动作
     expect(useGenerationCanvasStore.getState().nodes.map(node => node.kind)).toEqual(['shot_table']) // 只建表投影，不生成媒体
     expect(ack).toMatchObject({ status: 'applied', documentId: 'doc-1', storyboardDesignId: expect.any(String) })
     expect((ack as { message: string }).message).toContain('1 个锚')
@@ -334,6 +457,12 @@ describe('applyCanvasToolCall propose_storyboard_plan', () => {
     expect(useWorkbenchStore.getState().storyboardDesignsByDocumentId['doc-1']).toBeUndefined()
   })
 
+  it('用户正在分镜页看着方案时，Agent 写新方案不把他挪去创作页', async () => {
+    useWorkbenchStore.getState().setWorkspaceMode('storyboard')
+    await applyCanvasToolCall('propose_storyboard_plan', PLAN, undefined, undefined, 'doc-1')
+    expect(useWorkbenchStore.getState().workspaceMode).toBe('storyboard')
+  })
+
   it('规划期间用户切走后不抢回工作区，结果仍落原文稿', async () => {
     useWorkbenchStore.getState().setWorkspaceMode('generation')
     await applyCanvasToolCall('propose_storyboard_plan', PLAN, undefined, undefined, 'doc-1')
@@ -343,8 +472,8 @@ describe('applyCanvasToolCall propose_storyboard_plan', () => {
   })
 
   it('全新拆镜不会覆盖当前已确认的分镜设计', async () => {
-    await applyCanvasToolCall('propose_storyboard_plan', PLAN, undefined, undefined, 'doc-1')
-    const firstId = useWorkbenchStore.getState().activeStoryboardId!
+    const first = await applyCanvasToolCall('propose_storyboard_plan', PLAN, undefined, undefined, 'doc-1')
+    const firstId = (first as { storyboardDesignId: string }).storyboardDesignId
     useWorkbenchStore.getState().commitStoryboardPlan('doc-1', firstId)
 
     const nextPlan = { ...PLAN, title: '另一版' }
@@ -366,6 +495,157 @@ describe('applyCanvasToolCall propose_storyboard_plan', () => {
 
     expect(result).toMatchObject({ status: 'obsolete', documentId: deletedDocumentId })
     expect(useWorkbenchStore.getState().storyboardDesignsByDocumentId[deletedDocumentId]).toBeUndefined()
+  })
+})
+
+describe('canonical patch_shots and storyboard autofill owners', () => {
+  const PLAN: StoryboardPlan = {
+    title: '咖啡广告',
+    anchors: [],
+    shots: [
+      { index: 1, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '旧视频提示词', imagePrompt: '旧首帧', videoPrompt: '旧视频提示词' },
+      { index: 2, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '旧图片提示词', imagePrompt: '旧图片提示词' },
+    ],
+  }
+
+  beforeEach(async () => {
+    resetCanvas()
+    await projectSession!.open('project-1')
+    useWorkbenchStore.getState().setStoryboardPlan(PLAN)
+    useWorkbenchStore.getState().setWorkspaceMode('generation')
+  })
+
+  it('改视频提示词会更新分镜方案源头并镜像 prompt', async () => {
+    const result = (await applyCanvasToolCall('nomi_canvas_plan', {
+      operation: 'patch_shots', select: { kind: 'indexes', indexes: [1] }, patch: {
+      videoPrompt: '咖啡杯热气升腾，镜头缓慢推进到杯口',
+      modelKey: 'agnes-video-v2.0',
+      modelVendor: 'pavo',
+      durationSec: 5, aspectRatio: '16:9',
+      },
+    })) as { changedShotIndexes: number[]; changedFields: string[] }
+
+    expect(result.changedShotIndexes).toEqual([1])
+    expect(result.changedFields).toContain('videoPrompt')
+    const shot = selectActiveStoryboardDesign(useWorkbenchStore.getState())?.plan.shots[0]
+    expect(shot?.videoPrompt).toBe('咖啡杯热气升腾，镜头缓慢推进到杯口')
+    expect(shot?.prompt).toBe('咖啡杯热气升腾，镜头缓慢推进到杯口')
+    expect(shot?.modelKey).toBe('agnes-video-v2.0')
+    expect(shot?.durationSec).toBe(5)
+    expect(shot?.params).toEqual({ aspect_ratio: '16:9' })
+    expect(useWorkbenchStore.getState().workspaceMode).toBe('generation')
+  })
+
+  it('改图片镜头 prompt 会同步 imagePrompt', async () => {
+    await applyCanvasToolCall('nomi_canvas_plan', { operation: 'patch_shots', select: { kind: 'indexes', indexes: [2] }, patch: { prompt: '俯拍咖啡豆铺满桌面' } })
+    const shot = selectActiveStoryboardDesign(useWorkbenchStore.getState())?.plan.shots[1]
+    expect(shot?.prompt).toBe('俯拍咖啡豆铺满桌面')
+    expect(shot?.imagePrompt).toBe('俯拍咖啡豆铺满桌面')
+  })
+
+  it('可直接更新分镜表结构化列', async () => {
+    const result = (await applyCanvasToolCall('nomi_canvas_plan', {
+      operation: 'patch_shots', select: { kind: 'indexes', indexes: [1] }, patch: {
+      scene: '咖啡馆窗边',
+      shotSize: '中近景',
+      cameraAngle: '正面平视',
+      cameraMove: '缓慢推进',
+      characters: '咖啡师',
+      performance: '端起咖啡闻香',
+      dialogue: '今天的第一杯，给自己。',
+      props: '白瓷咖啡杯',
+      sound: '轻柔爵士乐',
+      notes: '手机背面朝向镜头时不写屏幕内容',
+      },
+    })) as { changedFields: string[] }
+    expect(result.changedFields).toEqual(expect.arrayContaining(['scene', 'shotSize', 'cameraAngle', 'cameraMove', 'dialogue', 'sound']))
+    const shot = selectActiveStoryboardDesign(useWorkbenchStore.getState())?.plan.shots[0]
+    expect(shot).toMatchObject({
+      scene: '咖啡馆窗边',
+      shotSize: '中近景',
+      cameraAngle: '正面平视',
+      cameraMove: '缓慢推进',
+      characters: '咖啡师',
+      performance: '端起咖啡闻香',
+      dialogue: '今天的第一杯，给自己。',
+      props: '白瓷咖啡杯',
+      sound: '轻柔爵士乐',
+      notes: '手机背面朝向镜头时不写屏幕内容',
+    })
+  })
+
+  it('批量填表默认只补空字段，并确定性派生视频提示词同步到表格节点和视频节点', async () => {
+    const canvas = useGenerationCanvasStore.getState()
+    const group = canvas.addNode({
+      kind: 'text',
+      title: '分镜组：咖啡广告',
+      prompt: '旧分镜脚本',
+      meta: { storyboardGroup: true, storyboardPlanSnapshot: PLAN },
+    })
+    const videoNode = canvas.addNode({ kind: 'video', title: '镜头 1 视频', prompt: '旧视频节点提示词' })
+    canvas.updateNode(videoNode.id, { shotIndex: 1 })
+
+    vi.mocked(runSingleShotAgent).mockResolvedValueOnce({ text: JSON.stringify({
+      shots: [
+        {
+          index: 1,
+          scene: '清晨咖啡馆吧台',
+          shotSize: '中近景',
+          cameraAngle: '吧台正面平视',
+          cameraMove: '缓慢推近到咖啡杯',
+          characters: '咖啡师',
+          performance: '把刚萃取的浓缩咖啡端到吧台中央',
+          dialogue: '您的拿铁好了。',
+          props: '白瓷咖啡杯、拉花钢杯、木质吧台',
+          sound: '轻柔爵士乐与咖啡机蒸汽声',
+          notes: '保持手部动作清楚',
+        },
+        {
+          index: 2,
+          imagePrompt: '不应覆盖旧图片提示词',
+          scene: '咖啡豆麻袋旁',
+        },
+      ],
+    }), id: 'autofill-reply', status: 'finished', toolCalls: [], artifacts: [], finishReason: 'stop',
+      usage: { promptTokens: 1, completionTokens: 1, cachedPromptTokens: 0, totalTokens: 2 },
+    })
+    const result = await runStoryboardTableAutofill({ project: withProjectAction(project => project)!, plan: selectActiveStoryboardDesign(useWorkbenchStore.getState())!.plan, overwriteExisting: false })
+
+    expect(result.updatedShotCount).toBe(2)
+    expect(result.updatedShotIndices).toEqual([1, 2])
+    const nextPlan = selectActiveStoryboardDesign(useWorkbenchStore.getState())?.plan
+    const shot1 = nextPlan?.shots[0]
+    const shot2 = nextPlan?.shots[1]
+    expect(shot1?.scene).toBe('清晨咖啡馆吧台')
+    expect(shot1?.videoPrompt).toContain('图生视频导演提示词：镜头 1，时长 5 秒')
+    expect(shot1?.videoPrompt).toContain('首帧继承：以已连接的首帧作为唯一视觉起点')
+    expect(shot1?.prompt).toBe(shot1?.videoPrompt)
+    expect(shot2?.imagePrompt).toBe('旧图片提示词')
+    expect(shot2?.scene).toBe('咖啡豆麻袋旁')
+
+    const syncedGroup = useGenerationCanvasStore.getState().nodes.find((node) => node.id === group.id)
+    const syncedVideo = useGenerationCanvasStore.getState().nodes.find((node) => node.id === videoNode.id)
+    expect(syncedGroup?.meta?.storyboardPlanSnapshot).toEqual(nextPlan)
+    expect(syncedGroup?.prompt).toContain('镜头 1')
+    expect(syncedVideo?.prompt).toBe(shot1?.videoPrompt)
+  })
+
+  it('批量填表 overwriteExisting=true 时覆盖已有字段', async () => {
+    await applyCanvasToolCall('nomi_canvas_plan', {
+      operation: 'patch_shots', select: { kind: 'indexes', indexes: [1] },
+      patch: { videoPrompt: '覆盖后的视频提示词', scene: '新的咖啡馆外景' },
+    })
+    const shot = selectActiveStoryboardDesign(useWorkbenchStore.getState())?.plan.shots[0]
+    expect(shot?.scene).toBe('新的咖啡馆外景')
+    expect(shot?.videoPrompt).toBe('覆盖后的视频提示词')
+    expect(shot?.prompt).toBe('覆盖后的视频提示词')
+  })
+
+  it('无当前方案或镜号不存在时抛错', async () => {
+    useWorkbenchStore.getState().setStoryboardPlan(null)
+    await expect(applyCanvasToolCall('nomi_canvas_plan', { operation: 'patch_shots', select: { kind: 'indexes', indexes: [1] }, patch: { prompt: 'x' } })).rejects.toMatchObject({ code: 'capability_target_stale' })
+    useWorkbenchStore.getState().setStoryboardPlan(PLAN)
+    await expect(applyCanvasToolCall('nomi_canvas_plan', { operation: 'patch_shots', select: { kind: 'indexes', indexes: [9] }, patch: { prompt: 'x' } })).rejects.toMatchObject({ code: 'capability_target_stale' })
   })
 })
 

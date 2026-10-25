@@ -1,0 +1,6 @@
+
+> nomi@0.21.0 check:ipc-sender-binding /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-ipc-sender-binding.mjs
+
+IPC sender binding: 201 registrations; 191 guarded; 10 unguarded (baseline 10)
+✓ IPC sender binding 棘轮通过（只减不增）

@@ -1,7 +1,11 @@
 import type { DesktopBridge } from '../../desktop/bridge'
+import { getDesktopBridge } from '../../desktop/bridge'
+import { unwrapAssetImportResult } from '../../../electron/shared/contracts/assetImportResult'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../generationCanvas/model/generationCanvasTypes'
 import type { TimelineClip } from '../timeline/timelineTypes'
 import type { WorkbenchProjectRecordV1 } from './projectRecordSchema'
+import { assetDimensionsFromMetadata, assetKindOf } from '../assets/assetTypes'
+import { computeMediaMetaPatch, readMediaDimensions, type MediaDimensions } from '../generationCanvas/nodes/nodeSizing'
 
 type BlobLikeRecord = {
   url?: string
@@ -36,10 +40,6 @@ function recordHasBlobMediaUrls(record: WorkbenchProjectRecordV1): boolean {
     }
   }
   return false
-}
-
-function recordUrlFieldsHaveDataMedia(input: BlobLikeRecord | undefined): boolean {
-  return Boolean(input && (isDataMediaUrl(input.url) || isDataMediaUrl(input.thumbnailUrl)))
 }
 
 function countUrlFieldsDataMedia(input: BlobLikeRecord | undefined): number {
@@ -112,14 +112,18 @@ async function upgradeRecordUrlFields<T extends BlobLikeRecord>(
   let changed = false
   const next = { ...input }
   if (isBlobUrl(next.url)) {
-    const converted = fetchBlob ? await blobUrlToDataUrlWithFetcher(next.url, fetchBlob) : await blobUrlToDataUrl(next.url)
+    const converted = fetchBlob
+      ? await blobUrlToDataUrlWithFetcher(next.url, fetchBlob)
+      : await blobUrlToDataUrl(next.url)
     if (converted) {
       next.url = converted
       changed = true
     }
   }
   if (isBlobUrl(next.thumbnailUrl)) {
-    const converted = fetchBlob ? await blobUrlToDataUrlWithFetcher(next.thumbnailUrl, fetchBlob) : await blobUrlToDataUrl(next.thumbnailUrl)
+    const converted = fetchBlob
+      ? await blobUrlToDataUrlWithFetcher(next.thumbnailUrl, fetchBlob)
+      : await blobUrlToDataUrl(next.thumbnailUrl)
     if (converted) {
       next.thumbnailUrl = converted
       changed = true
@@ -138,45 +142,53 @@ export async function upgradeWorkbenchProjectMediaUrls(
 
   const fetchBlob = options?.fetchBlob
   const payload = record.payload
-  const nextNodes = await Promise.all(payload.generationCanvas.nodes.map(async (node) => {
-    let changed = false
-    const nextNode = { ...node }
-    if (nextNode.result && typeof nextNode.result === 'object') {
-      const upgradedResult = await upgradeRecordUrlFields(nextNode.result, fetchBlob)
-      if (upgradedResult !== nextNode.result) {
-        changed = true
-        nextNode.result = upgradedResult as typeof nextNode.result
+  const nextNodes = await Promise.all(
+    payload.generationCanvas.nodes.map(async (node) => {
+      let changed = false
+      const nextNode = { ...node }
+      if (nextNode.result && typeof nextNode.result === 'object') {
+        const upgradedResult = await upgradeRecordUrlFields(nextNode.result, fetchBlob)
+        if (upgradedResult !== nextNode.result) {
+          changed = true
+          nextNode.result = upgradedResult as typeof nextNode.result
+        }
       }
-    }
-    if (Array.isArray(nextNode.history) && nextNode.history.length) {
-      const nextHistory = await Promise.all(nextNode.history.map(async (item) => upgradeRecordUrlFields(item, fetchBlob)))
-      if (nextHistory.some((item, index) => item !== nextNode.history?.[index])) {
-        changed = true
-        nextNode.history = nextHistory as typeof nextNode.history
+      if (Array.isArray(nextNode.history) && nextNode.history.length) {
+        const nextHistory = await Promise.all(
+          nextNode.history.map(async (item) => upgradeRecordUrlFields(item, fetchBlob)),
+        )
+        if (nextHistory.some((item, index) => item !== nextNode.history?.[index])) {
+          changed = true
+          nextNode.history = nextHistory as typeof nextNode.history
+        }
       }
-    }
-    return changed ? nextNode : node
-  }))
+      return changed ? nextNode : node
+    }),
+  )
 
-  const nextTracks = await Promise.all(payload.timeline.tracks.map(async (track) => {
-    let changed = false
-    const nextTrack = { ...track }
-    const nextClips = await Promise.all(track.clips.map(async (clip) => {
-      if (!clip || typeof clip !== 'object') return clip
-      const nextClip = { ...clip }
-      const upgraded = await upgradeRecordUrlFields(nextClip as BlobLikeRecord, fetchBlob)
-      if (upgraded !== nextClip) {
-        changed = true
-        return upgraded
+  const nextTracks = await Promise.all(
+    payload.timeline.tracks.map(async (track) => {
+      let changed = false
+      const nextTrack = { ...track }
+      const nextClips = await Promise.all(
+        track.clips.map(async (clip) => {
+          if (!clip || typeof clip !== 'object') return clip
+          const nextClip = { ...clip }
+          const upgraded = await upgradeRecordUrlFields(nextClip as BlobLikeRecord, fetchBlob)
+          if (upgraded !== nextClip) {
+            changed = true
+            return upgraded
+          }
+          return clip
+        }),
+      )
+      if (changed) {
+        nextTrack.clips = nextClips as typeof track.clips
+        return nextTrack
       }
-      return clip
-    }))
-    if (changed) {
-      nextTrack.clips = nextClips as typeof track.clips
-      return nextTrack
-    }
-    return track
-  }))
+      return track
+    }),
+  )
 
   const nextGenerationCanvas = nextNodes.some((node, index) => node !== payload.generationCanvas.nodes[index])
     ? { ...payload.generationCanvas, nodes: nextNodes }
@@ -199,6 +211,69 @@ export async function upgradeWorkbenchProjectMediaUrls(
   }
 }
 
+type PersistedAsset = { id?: string; data?: Record<string, unknown> }
+
+function canvasNeedsMediaDimensionsBackfill(record: WorkbenchProjectRecordV1): boolean {
+  return record.payload.generationCanvas.nodes.some((node) => {
+    const resultType = node.result?.type
+    if (resultType !== 'image' && resultType !== 'video') return false
+    const dimensions = resultType === 'video'
+      ? readMediaDimensions(node.meta?.videoWidth, node.meta?.videoHeight)
+      : readMediaDimensions(node.meta?.imageWidth, node.meta?.imageHeight)
+    return !dimensions
+  })
+}
+
+/** Match an old result to the asset sidecar without decoding the media bytes. */
+export function findCanvasResultMediaDimensions(
+  result: GenerationNodeResult | undefined,
+  assets: readonly PersistedAsset[],
+): MediaDimensions | null {
+  if (!result || (result.type !== 'image' && result.type !== 'video')) return null
+  const asset = assets.find((candidate) => {
+    if (result.assetId && candidate.id === result.assetId) return true
+    const data = candidate.data || {}
+    return data.url === result.url || data.thumbnailUrl === result.thumbnailUrl
+  })
+  if (!asset) return null
+  return assetDimensionsFromMetadata(asset.data, result.type) || readMediaDimensions(asset.data?.width, asset.data?.height)
+}
+
+/** One-time hydration repair for legacy canvas nodes missing intrinsic dimensions. */
+export async function backfillCanvasMediaDimensions(
+  record: WorkbenchProjectRecordV1,
+  desktop: DesktopBridge | null = getDesktopBridge(),
+): Promise<WorkbenchProjectRecordV1> {
+  if (!canvasNeedsMediaDimensionsBackfill(record)) return record
+  const list = desktop?.assets?.list
+  if (!list) return record
+  const assets: PersistedAsset[] = []
+  let cursor: string | null = null
+  do {
+    const page = await list({ projectId: record.id, cursor, limit: 500 })
+    assets.push(...(page.items || []))
+    cursor = page.cursor || null
+  } while (cursor)
+  if (!assets.length) return record
+  let changed = false
+  const nodes = record.payload.generationCanvas.nodes.map((node) => {
+    const dimensions = findCanvasResultMediaDimensions(node.result, assets)
+    if (!dimensions) return node
+    const patch = computeMediaMetaPatch({ resultType: node.result?.type, meta: node.meta || {}, ...dimensions, durationSeconds: node.result?.durationSeconds })
+    if (!patch) return node
+    changed = true
+    return { ...node, meta: patch.meta }
+  })
+  if (!changed) return record
+  return {
+    ...record,
+    payload: {
+      ...record.payload,
+      generationCanvas: { ...record.payload.generationCanvas, nodes },
+    },
+  }
+}
+
 type LocalizeDataUrlOptions = {
   desktop: DesktopBridge
   projectId: string
@@ -214,7 +289,12 @@ type LocalizeDataUrlStats = {
 const DEFAULT_DATA_URL_LOCALIZE_LIMIT = 12
 
 function fileSafePart(value: string): string {
-  return value.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'media'
+  return (
+    value
+      .replace(/[^\w.-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'media'
+  )
 }
 
 function fileExtensionForDataUrl(value: string | undefined, result: BlobLikeRecord & { type?: unknown }): string {
@@ -231,7 +311,12 @@ function fileExtensionForDataUrl(value: string | undefined, result: BlobLikeReco
   return 'png'
 }
 
-function fileNameForResult(prefix: string, ownerId: string, result: BlobLikeRecord & { type?: unknown }, field: 'url' | 'thumbnailUrl'): string {
+function fileNameForResult(
+  prefix: string,
+  ownerId: string,
+  result: BlobLikeRecord & { type?: unknown },
+  field: 'url' | 'thumbnailUrl',
+): string {
   return `${fileSafePart(prefix)}-${fileSafePart(ownerId)}-${field}.${fileExtensionForDataUrl(result[field], result)}`
 }
 
@@ -250,13 +335,15 @@ async function localizeRecordDataUrlFields<T extends BlobLikeRecord & { type?: u
       continue
     }
     try {
-      const imported = await options.desktop.assets.importRemoteUrl({
+      const imported = unwrapAssetImportResult(await options.desktop.assets.importRemoteUrl({
         projectId: options.projectId,
         url: value,
         kind: 'generated',
+        // 缩略图一律是图；主结果按它记着的类型（记不清的老记录主进程不收，原值留在原处）。
+        expectedKind: field === 'thumbnailUrl' ? 'image' : assetKindOf(input.type),
         fileName: fileNameForResult(options.prefix, options.ownerId, input, field),
         ownerNodeId: options.ownerId,
-      })
+      }))
       const hostedUrl = typeof imported.data?.url === 'string' ? imported.data.url.trim() : ''
       if (!hostedUrl) {
         stats.errors += 1
@@ -352,18 +439,16 @@ export async function localizeWorkbenchProjectDataUrls(
     }
   }
 
-  const nextGenerationCanvas = nextNodes
-    ? { ...payload.generationCanvas, nodes: nextNodes }
-    : payload.generationCanvas
-  const nextTimeline = nextTracks
-    ? { ...payload.timeline, tracks: nextTracks }
-    : payload.timeline
+  const nextGenerationCanvas = nextNodes ? { ...payload.generationCanvas, nodes: nextNodes } : payload.generationCanvas
+  const nextTimeline = nextTracks ? { ...payload.timeline, tracks: nextTracks } : payload.timeline
 
   if (nextGenerationCanvas === payload.generationCanvas && nextTimeline === payload.timeline) {
-    if (stats.localized >= maxItems) stats.skipped = Math.max(stats.skipped, totalDataUrls - stats.localized - stats.errors)
+    if (stats.localized >= maxItems)
+      stats.skipped = Math.max(stats.skipped, totalDataUrls - stats.localized - stats.errors)
     return { record, stats }
   }
-  if (stats.localized >= maxItems) stats.skipped = Math.max(stats.skipped, totalDataUrls - stats.localized - stats.errors)
+  if (stats.localized >= maxItems)
+    stats.skipped = Math.max(stats.skipped, totalDataUrls - stats.localized - stats.errors)
 
   return {
     record: {
@@ -393,7 +478,9 @@ const LEGACY_ASSET_SOURCE_TAGS = new Set<string>([
   'panorama-screenshot',
 ])
 
-function isLegacyMaterialImageNode(node: WorkbenchProjectRecordV1['payload']['generationCanvas']['nodes'][number]): boolean {
+function isLegacyMaterialImageNode(
+  node: WorkbenchProjectRecordV1['payload']['generationCanvas']['nodes'][number],
+): boolean {
   if (node.kind !== 'image') return false
   // 真生成图带 provenance —— 一定保留为生成节点，绝不转素材。
   if (node.result?.provenance) return false

@@ -3,10 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// 2026-09-21：测试不许读写用户真实目录。这份文件此前经默认路径读到了**用户本人的**
+// `~/.nomi/capability-core`（token / 签名密钥 / 接入会话 / handoff 队列都住那里）——
+// 读到的是真人数据，写下去就是改真人数据，而且一台机器一个结果：`mcpOnboardingLoopback`
+// 就是这么在这台机器上红、在别处绿的。给它一个本轮独有的空目录。
+const capabilityRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-rpc-server-cap-"));
+process.env.NOMI_CAPABILITY_DIR = capabilityRoot;
+
 import { startRpcServer, type RpcServerHandle } from "./rpcServer";
 import { ensureToken, signMcpClient, type AuthenticatedMcpClient } from "./security";
 import { createProjectSessionRuntime } from "./projectSessionRuntime";
-import { createMcpGenerationPolicy } from "./mcpGenerationPolicy";
 import { createMcpConnectionContext, getMcpConnectionAttestation } from "./mcpConnectionContext";
 import { getWorkspaceRepositoryDeps } from "../runtimePaths";
 import { readWorkspaceProject, resolveWorkspaceProjectDir } from "../workspace/workspaceRepository";
@@ -14,6 +20,7 @@ import { ensureWorkspaceProjectIdentity } from "../workspace/workspaceProjectIde
 import { createMainCapabilityExecutorRegistry } from "./capabilityExecutorRegistry";
 import { createProjectAgentProposalReceiptService } from "./projectAgentProposalReceiptStore";
 import { projectAgentProposalReceiptPath } from "./projectAgentProposalReceiptStore";
+import { readProject, saveProject } from "../projects/repository";
 
 function canvasReadRuntime(nodeId: string) {
   return Object.freeze({
@@ -44,6 +51,7 @@ let rendererOps: string[] = [];
 let documentReply: { applied: true; revision: number; contentHash: string } = { applied: true, revision: 7, contentHash: "document-hash" };
 // 捕获最后一次 runTask 请求,断言 grantId 是否随请求下传(=付费确认是否真路由+铸令牌)。
 let lastRunTaskReq: { extras?: Record<string, unknown> } | null = null;
+let lastDirectorInput: Record<string, unknown> | null = null;
 
 vi.mock("electron", () => ({
   app: {
@@ -54,8 +62,16 @@ vi.mock("electron", () => ({
 
 vi.mock("./rendererBridge", () => ({
   isRendererAvailable: () => rendererUp,
-  requestRenderer: async (op: string) => {
+  requestRenderer: async (op: string, payload: unknown) => {
     rendererOps.push(op);
+    if (op === 'project.activate') {
+      const projectId = (payload as { projectId?: string })?.projectId || ''
+      openProjectId = projectId
+      return { active: true, projectId }
+    }
+    if (op === 'generation.batch') {
+      return { awaitingConfirmation: true, payload }
+    }
     if (op === "document.write") return documentReply;
     if (op === "timeline.read") return { timeline: [] };
     if (op === "asset.read") return { assets: [] };
@@ -115,13 +131,91 @@ async function rpc(
 }
 
 /** 发原始请求体：用于测顶层旁路标志（planConfirmed / spendConfirmed），它们不在 params 里。 */
-async function rpcRaw(body: Record<string, unknown>) {
+async function rpcRaw(
+  body: Record<string, unknown>,
+  identity?: { client: AuthenticatedMcpClient; proof: string; connectionAttestation?: string },
+) {
   const res = await fetch(`http://127.0.0.1:${server!.port}/rpc`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      ...(identity
+        ? {
+            "x-nomi-mcp-client": identity.client,
+            "x-nomi-mcp-client-proof": identity.proof,
+            ...(identity.connectionAttestation
+              ? { "x-nomi-mcp-connection-attestation": identity.connectionAttestation }
+              : {}),
+          }
+        : {}),
+    },
     body: JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json()) as { ok: boolean; result?: unknown; error?: string } };
+}
+
+/**
+ * 画布写要租约（2026-09-21 删掉 legacy `canvas.addNodes/connect/setPrompt/deleteNodes` 之后，
+ * 裸 bearer 一条写路都没有）。这个夹具给一份已验证的会话 + 连接证明，让断言落在被测的那件事上。
+ */
+async function leasedCanvasWriteFixture(projectId: string, randomSecret: string) {
+  await server!.close();
+  server = await startRpcServer({
+    runTask: async (req) => {
+      lastRunTaskReq = req.request as { extras?: Record<string, unknown> };
+      return { id: "t", status: "succeeded", assets: [] };
+    },
+    isProjectOpen: (id) => Boolean(openProjectId) && id === openProjectId,
+    projectSessionAuthority: {
+      verifyLease: vi.fn(async () => ({
+        projectId,
+        immutableProjectUuid: "33333333-3333-4333-8333-333333333333",
+        projectGeneration: 1,
+        canonicalRootDigest: "root-digest",
+      })),
+    } as never,
+  });
+  const proof = signMcpClient("codex")!;
+  const context = createMcpConnectionContext({ client: "codex", proof, randomSecret: () => randomSecret });
+  return {
+    connection: { client: "codex" as const, proof, connectionAttestation: getMcpConnectionAttestation(context) },
+    params: (extra: Record<string, unknown>) => ({ leaseHandle: "verified-lease", projectId, ...extra }),
+  };
+}
+
+async function localCanvasSessionFixture() {
+  await server!.close();
+  const authorityDir = makeTempDir("nomi-rpc-local-session-");
+  const deps = getWorkspaceRepositoryDeps();
+  const runtime = createProjectSessionRuntime({
+    leaseFilePath: path.join(authorityDir, "leases"),
+    leaseMacKey: "local-session-key", leaseStoreMacKey: "local-session-store-key",
+    getOpenProjectSelection: () => null,
+    resolveProjectRoot: (id) => resolveWorkspaceProjectDir(id, deps),
+    ensureProjectIdentity: ensureWorkspaceProjectIdentity,
+    readProject: (id) => readWorkspaceProject(id, deps),
+    isServerAllowlisted: () => false,
+  });
+  server = await startRpcServer({
+    runTask: vi.fn(async () => { throw new Error("Local operations must not call paid runTask"); }),
+    runDirector: async (input) => {
+      lastDirectorInput = input;
+      return { jobId: "director-job", preview: { url: "nomi-local://preview" },
+        blend: { url: "nomi-local://blend" }, model: { url: "nomi-local://model" } };
+    },
+    isProjectOpen: (id) => id === openProjectId,
+    projectSessionAuthority: runtime.authority,
+  });
+  const proof = signMcpClient("codex")!;
+  const context = createMcpConnectionContext({ client: "codex", proof });
+  const connection = { client: "codex" as const, proof, connectionAttestation: getMcpConnectionAttestation(context) };
+  const created = await rpc("project.create", { name: "Local operations" }, token, connection);
+  const { id: projectId, projectSelectionHandle } = created.body.result as { id: string; projectSelectionHandle: string };
+  const opened = await rpc("nomi_session_open", { projectSelectionHandle }, token, connection);
+  expect(opened.status).toBe(200);
+  const { leaseHandle } = opened.body.result as { leaseHandle: string };
+  return { projectId, leaseHandle, connection };
 }
 
 beforeEach(async () => {
@@ -135,11 +229,22 @@ beforeEach(async () => {
   rendererOps = [];
   documentReply = { applied: true, revision: 7, contentHash: "document-hash" };
   lastRunTaskReq = null;
+  lastDirectorInput = null;
   token = ensureToken();
   server = await startRpcServer({
     runTask: async (req) => {
       lastRunTaskReq = req.request as { extras?: Record<string, unknown> };
       return { id: "t", status: "succeeded", assets: [{ type: "image", url: "nomi-local://x" }] };
+    },
+    runDirector: async (input) => {
+      lastDirectorInput = input
+      return {
+        jobId: 'director-job',
+        blenderVersion: '4.0.1',
+        preview: { url: 'nomi-local://asset/p/director-preview.png', assetId: 'preview' },
+        blend: { url: 'nomi-local://asset/p/director-scene.blend', assetId: 'blend' },
+        model: { url: 'nomi-local://asset/p/director-scene.glb', assetId: 'model' },
+      }
     },
     isProjectOpen: (id) => Boolean(openProjectId) && id === openProjectId,
   });
@@ -317,9 +422,7 @@ describe("capabilityCore/rpcServer", () => {
     await server!.close();
     const authorityDir = makeTempDir("nomi-rpc-project-session-");
     const repositoryDeps = getWorkspaceRepositoryDeps();
-    const generationPolicy = createMcpGenerationPolicy({ env: {} });
     const runtime = createProjectSessionRuntime({
-      generationPolicy,
       leaseFilePath: path.join(authorityDir, "project-leases-v2"),
       leaseMacKey: "rpc-project-session-key",
       leaseStoreMacKey: "rpc-project-session-store-key",
@@ -331,7 +434,6 @@ describe("capabilityCore/rpcServer", () => {
     });
     server = await startRpcServer({
       runTask: async () => ({ id: "t", status: "succeeded", assets: [] }),
-      generationPolicy,
       projectSessionAuthority: runtime.authority,
       canvasReadExecutionRuntime: canvasReadRuntime("mcp-executor-node"),
     });
@@ -411,9 +513,7 @@ describe("capabilityCore/rpcServer", () => {
     await server!.close();
     const authorityDir = makeTempDir("nomi-rpc-project-session-replay-");
     const repositoryDeps = getWorkspaceRepositoryDeps();
-    const generationPolicy = createMcpGenerationPolicy({ env: {} });
     const runtime = createProjectSessionRuntime({
-      generationPolicy,
       leaseFilePath: path.join(authorityDir, "project-leases-v2"),
       leaseMacKey: "rpc-project-session-replay-key",
       leaseStoreMacKey: "rpc-project-session-replay-store-key",
@@ -425,7 +525,6 @@ describe("capabilityCore/rpcServer", () => {
     });
     server = await startRpcServer({
       runTask: async () => ({ id: "t", status: "succeeded", assets: [] }),
-      generationPolicy,
       projectSessionAuthority: runtime.authority,
       canvasReadExecutionRuntime: canvasReadRuntime("must-not-read-stolen-lease"),
     });
@@ -542,10 +641,17 @@ describe("capabilityCore/rpcServer", () => {
     const projectId = (created.body.result as { id: string }).id;
     expect(projectId).toBeTruthy();
 
-    const added = await rpc("canvas.addNodes", { projectId, nodes: [{ kind: "text", prompt: "hi" }] });
-    expect(added.body.ok).toBe(true);
-    const ids = (added.body.result as { ids: string[] }).ids;
-    expect(ids).toHaveLength(1);
+    // 2026-09-21：这一格原来拿 legacy `canvas.addNodes` 当脚手架播个节点。那条路已删——
+    // 裸 bearer 写画布现在是 404（方法不存在），走语义面是 403（要会话）。两条一起钉住。
+    const legacyWrite = await rpc("canvas.addNodes", { projectId, nodes: [{ kind: "text", prompt: "hi" }] });
+    expect(legacyWrite.status).toBe(404);
+    const semanticWrite = await rpc("canvas.write", {
+      projectId,
+      operation: "create_canvas_nodes",
+      summary: "创建画布节点",
+      nodes: [{ clientId: "c-1", kind: "text", title: "镜 1", prompt: "hi" }],
+    });
+    expect(semanticWrite.status).toBe(403);
 
     const read = await rpc("canvas.read", { projectId });
     expect(read.status).toBe(200);
@@ -554,6 +660,28 @@ describe("capabilityCore/rpcServer", () => {
     const forged = await rpc("canvas.read", { projectId, caller: { kind: "internal", principal: "forged" } });
     expect(forged.status).toBe(403);
     expect(forged.body).toMatchObject({ ok: false, error: { code: "capability_authority_invalid" } });
+  });
+
+  it("a refusal is not a fault: 自报更松的信任档 → 403 + human_approval_required，不是 500", async () => {
+    // 2026-09-21 真机探针先拿到的是 HTTP 500——调用方读到「Nomi 崩了」，真相是「Nomi 在等你点头」。
+    // 领域层抛的授权拒绝有公开码，状态码要跟着它走。
+    const created = await rpc("project.create", { name: "信任档自报" });
+    const projectId = (created.body.result as { id: string }).id;
+    const denied = await rpc("production.start", {
+      projectId, playbook: "brand.promo", brief: { goal: "probe" }, trustLevel: "budget_only",
+    });
+    expect(denied.status).toBe(403);
+    expect(denied.body).toMatchObject({ ok: false, error: { code: "human_approval_required" } });
+    // 非法值仍是 400（这条分支还在跑，阳性对照）。
+    const invalid = await rpc("production.start", {
+      projectId, playbook: "brand.promo", brief: { goal: "probe" }, trustLevel: "anything",
+    });
+    expect(invalid.status).toBe(400);
+    // 收紧照收。
+    const tightened = await rpc("production.start", {
+      projectId, playbook: "brand.promo", brief: { goal: "probe tighten" }, trustLevel: "confirm_all",
+    });
+    expect(tightened.status).toBe(200);
   });
 
   it("never downgrades MCP-looking canvas traffic without exact connection proof to internal bearer", async () => {
@@ -627,16 +755,94 @@ describe("capabilityCore/rpcServer", () => {
     expect(rendererOps).toEqual([]);
   });
 
+  it("keeps the custom director preview on its existing scene node", async () => {
+    const { projectId, leaseHandle, connection } = await localCanvasSessionFixture();
+    const project = readProject(projectId)!;
+    const payload = project.payload as Record<string, unknown>;
+    payload.generationCanvas = {
+      nodes: [{
+        id: "scene-node", kind: "scene3d", title: "导演台", position: { x: 0, y: 0 },
+        meta: { scene3dState: { objects: [], cameras: [], trajectories: [], trajectoryBindings: [], sceneTimeline: { totalDuration: 3 }, environment: {}, editorCamera: {} } },
+      }],
+      edges: [], groups: [], selectedNodeIds: [],
+    };
+    saveProject(projectId, { ...project, payload });
+
+    const rendered = await rpc("director.render", { projectId, leaseHandle, sourceNodeId: "scene-node", stagePreset: "studio" }, token, connection);
+    expect(rendered).toMatchObject({ status: 200, body: { ok: true } });
+    expect(lastDirectorInput).toMatchObject({ projectId, ownerNodeId: "scene-node", stagePreset: "studio" });
+    const saved = readWorkspaceProject(projectId, getWorkspaceRepositoryDeps());
+    expect((saved?.payload as { generationCanvas: { nodes: unknown[] } }).generationCanvas.nodes).toHaveLength(3);
+  });
+
+  it("keeps custom batch admission and project activation without reviving legacy generate", async () => {
+    const { projectId, leaseHandle, connection } = await localCanvasSessionFixture();
+    rendererUp = true;
+    openProjectId = projectId;
+
+    const accepted = await rpc("generation.batch", { projectId, leaseHandle, nodeIds: ["n2", "n1", "n2"] }, token, connection);
+    expect(accepted).toMatchObject({ status: 200, body: { result: {
+      awaitingConfirmation: true, payload: { projectId, nodeIds: ["n2", "n1"] },
+    } } });
+    expect(rendererOps).toEqual(["generation.batch"]);
+    expect(lastRunTaskReq).toBeNull();
+
+    openProjectId = "another-project";
+    rendererOps = [];
+    const switched = await rpc("generation.batch", { projectId, leaseHandle, nodeIds: ["n1"] }, token, connection);
+    expect(switched.status).toBe(200);
+    expect(rendererOps).toEqual(["project.activate", "generation.batch"]);
+    expect(lastRunTaskReq).toBeNull();
+  });
+
+  it.each(["director.render", "generation.batch"])("rejects bearer, missing lease, wrong project and cross-connection replay for %s", async (method) => {
+    const fixture = await localCanvasSessionFixture();
+    rendererUp = true;
+    const params = { projectId: fixture.projectId, leaseHandle: fixture.leaseHandle,
+      ...(method === "director.render" ? { sourceNodeId: "scene-node" } : { nodeIds: ["n1"] }) };
+    expect((await rpc(method, params)).status).toBe(403);
+    expect((await rpc(method, { ...params, leaseHandle: "" }, token, fixture.connection)).status).toBe(403);
+    expect((await rpc(method, { ...params, projectId: "other-project" }, token, fixture.connection)).status).toBe(403);
+    const other = createMcpConnectionContext({ client: "codex", proof: fixture.connection.proof });
+    expect((await rpc(method, params, token, { ...fixture.connection, connectionAttestation: getMcpConnectionAttestation(other) })).status).toBe(403);
+    expect(rendererOps).toEqual([]);
+    expect(lastDirectorInput).toBeNull();
+  });
+
+  it("never turns caller approval flags into paid batch authorization and refuses headless admission", async () => {
+    const fixture = await localCanvasSessionFixture();
+    const params = { projectId: fixture.projectId, leaseHandle: fixture.leaseHandle, nodeIds: ["n2", "n1"] };
+    expect((await rpc("generation.batch", params, token, fixture.connection)).status).toBe(501);
+    expect(rendererOps).toEqual([]);
+    rendererUp = true;
+    openProjectId = fixture.projectId;
+    expect((await rpc("generation.batch", { ...params, preApprovedSpend: true }, token, fixture.connection)).status).toBe(400);
+    const queued = await rpcRaw({ method: "generation.batch", params, preApprovedSpend: true, spendConfirmed: true, planConfirmed: true }, fixture.connection);
+    expect(queued).toMatchObject({ status: 200, body: { result: { awaitingConfirmation: true, payload: { projectId: fixture.projectId, nodeIds: ["n2", "n1"] } } } });
+    expect(rendererOps).toEqual(["generation.batch"]);
+    expect(lastRunTaskReq).toBeNull();
+  });
+
   it("A 模式无渲染层（测试环境）：改打开中的项目 → 降级磁盘网关，照常落盘（不再硬 409）", async () => {
     // 新路由：app 开着 + 项目打开 → 本应走渲染层网关实时应用；测试环境无渲染层可达，
     // 降级到磁盘网关直写盘（isRendererAvailable=false）。证明不再有「打开即拒绝」的死路。
     const created = await rpc("project.create", { name: "打开中的项目" });
     const projectId = (created.body.result as { id: string }).id;
     openProjectId = projectId;
-    const added = await rpc("canvas.addNodes", { projectId, nodes: [{ kind: "text", prompt: "live" }] });
+    const fixture = await leasedCanvasWriteFixture(projectId, "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+    const added = await rpc(
+      "canvas.write",
+      fixture.params({
+        operation: "create_canvas_nodes",
+        summary: "创建画布节点",
+        nodes: [{ clientId: "c-1", kind: "text", title: "镜 1", prompt: "live" }],
+      }),
+      token,
+      fixture.connection,
+    );
     expect(added.status).toBe(200);
     expect(added.body.ok).toBe(true);
-    expect((added.body.result as { ids: string[] }).ids).toHaveLength(1);
+    expect((added.body.result as { affectedNodeIds: string[] }).affectedNodeIds).toHaveLength(1);
     const saved = readWorkspaceProject(projectId, getWorkspaceRepositoryDeps());
     const payload = saved?.payload;
     const generationCanvas =
@@ -683,17 +889,23 @@ describe("capabilityCore/rpcServer", () => {
     openProjectId = "";
     const created = await rpc("project.create", { name: "预批范围" });
     const projectId = (created.body.result as { id: string }).id;
-    const added = await rpcRaw({
-      method: "canvas.addNodes",
-      params: {
-        projectId,
-        nodes: [
-          { kind: "text", prompt: "a" },
-          { kind: "text", prompt: "b" },
-        ],
+    const fixture = await leasedCanvasWriteFixture(projectId, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+    rendererUp = true;
+    const added = await rpcRaw(
+      {
+        method: "canvas.write",
+        params: fixture.params({
+          operation: "create_canvas_nodes",
+          summary: "创建画布节点",
+          nodes: [
+            { clientId: "c-1", kind: "text", title: "镜 1", prompt: "a" },
+            { clientId: "c-2", kind: "text", title: "镜 2", prompt: "b" },
+          ],
+        }),
+        spendConfirmed: true,
       },
-      spendConfirmed: true,
-    });
+      fixture.connection,
+    );
     expect(added.body.ok).toBe(true);
     // hybrid 网关的 confirmPlan 仍走渲染层问真人。
     expect(rendererOps).toContain("plan.confirm");
@@ -717,12 +929,13 @@ describe("capabilityCore/rpcServer", () => {
   });
 
   it("keeps typed generation policy details in the local RPC error payload", async () => {
+    // 2026-09-21：`feature_disabled` 与 `phase` 随 env flag 一起删除。语义路现在一路走到真正
+    // 该停的地方——缺一张有效的项目租约——而结构化细节（码 / 下一步 / 能力名）照常带出来。
     const res = await rpc("nomi_operation_create", {});
     expect(res.status).toBe(403);
     expect(res.body.error).toMatchObject({
-      code: "feature_disabled",
+      code: "lease_required",
       nextAction: expect.any(String),
-      phase: "schema_only",
       capability: "create",
     });
   });

@@ -2,8 +2,10 @@
 // 评审 P1 在案:canvasHistory 将随翻正删除,但它混装着剪贴板——P1 纪律"旧的有价值
 // → 先把价值迁走再删"。本模块只管 copy/cut/paste 的数据面,语义逐字等价。
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { createEdgeId } from '../model/graphOps'
 import { CLIPBOARD_OFFSET, createClipboardNodeId } from './canvasIds'
 import i18n from '../../../i18n'
+import { remapShotNodeReferences } from '../../../../electron/shared/canvas/shotNumbering'
 
 export type GenerationCanvasClipboard = {
   nodes: GenerationCanvasNode[]
@@ -68,13 +70,13 @@ export function cloneClipboardPayload(payload: GenerationCanvasClipboard): Clipb
     if (!source || !target) return []
     return [{
       ...edge,
-      id: `edge-${source}-${target}`,
+      id: createEdgeId(source, target, edge.order ?? 0),
       source,
       target,
     }]
   })
   return {
-    nodes,
+    nodes: nodes.map(node => remapShotNodeReferences(node, idMap)),
     edges,
     selectedNodeIds: nodes.map((node) => node.id),
   }

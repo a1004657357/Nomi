@@ -194,4 +194,26 @@ describe('deferred node media queue', () => {
 
     expect(onVisibilityChange).toHaveBeenCalledWith(true)
   })
+
+  it('uses the supplied scroll container as the visibility root', () => {
+    let observerOptions: IntersectionObserverInit | undefined
+    class FakeIntersectionObserver {
+      constructor(_callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        observerOptions = options
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+    vi.stubGlobal('window', { IntersectionObserver: FakeIntersectionObserver })
+    const root = {} as Element
+
+    ;(observeDeferredNodeMediaVisibility as unknown as (
+      element: Element,
+      onVisible: () => void,
+      options: { root: Element },
+    ) => () => void)({} as Element, vi.fn(), { root })
+
+    expect(observerOptions?.root).toBe(root)
+  })
 })

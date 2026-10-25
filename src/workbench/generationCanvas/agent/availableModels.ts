@@ -18,9 +18,11 @@ import { orderByVendorPreference } from "../../../../electron/shared/contracts/v
 // （resolveArchetypeForModel 内部已按 vendor 特化）。agent 必须同时选 modelKey + modeId。
 import type { ModelOption } from "../../../config/models";
 import { parseModelParameterControls } from "../../../config/modelCatalogMeta";
-import { resolveArchetypeForModel } from "../../../config/modelArchetypes";
+import { resolveArchetypeForModel, specializeArchetypeForVariant, type ArchetypeMode } from "../../../../electron/shared/modelArchetypes";
 import { preloadModelOptions } from "../../../config/modelCatalogCache";
+import { pickImplicitVendorMatch } from "../../../config/modelIdentity";
 import i18n from "../../../i18n";
+import { translateModelDisplayText } from "../../../i18n/modelDisplayText";
 
 import type { AgentModelEntry } from "../../../../electron/shared/agentCapabilities/availableModels";
 export type { AgentModelEntry, AgentModelMode, AgentModelSlot } from "../../../../electron/shared/agentCapabilities/availableModels";
@@ -35,6 +37,13 @@ export type { AgentModelEntry, AgentModelMode, AgentModelSlot } from "../../../.
  * 实测 HTTP 400 阻断，见 docs/plan/2026-09-03-storyboard-entry-vendor-identity.md §1 Bug 3）。
  * image/video 两边真正的重复由 `(vendor, modelKey, kind)` 之外的同源条目负责，不靠丢 vendor 实现。
  */
+function toAgentMode(mode: ArchetypeMode) {
+  return { modeId: mode.id, vendorTerm: mode.vendorTerm, intent: mode.intent, hint: mode.hint,
+    consumesAnchors: mode.consumesAnchors, params: mode.params,
+    slots: mode.slots.map(slot => ({ kind: slot.kind, label: slot.label, max: slot.max,
+      ...(slot.characterIndexed ? { characterIndexed: true as const } : {}) })) };
+}
+
 export function buildAgentModelEntries(options: readonly ModelOption[]): AgentModelEntry[] {
   const entries: AgentModelEntry[] = [];
   const seen = new Set<string>();
@@ -55,21 +64,11 @@ export function buildAgentModelEntries(options: readonly ModelOption[]): AgentMo
     // whatever default model happens to be mounted on the node.
     const kind = archetype?.kind ?? option.kind;
     if (!kind || (!archetype && kind !== "text")) continue;
+    const defaultVariant = archetype?.variants?.find(variant => variant.id === archetype.defaultVariantId);
     const modes = archetype
-      ? archetype.modes.map((mode) => ({
-          modeId: mode.id,
-          vendorTerm: mode.vendorTerm,
-          intent: mode.intent,
-          hint: mode.hint,
-          consumesAnchors: mode.consumesAnchors,
-          params: mode.params,
-          slots: mode.slots.map((slot) => ({
-            kind: slot.kind,
-            label: slot.label,
-            max: slot.max,
-            ...(slot.characterIndexed ? { characterIndexed: true as const } : {}),
-          })),
-        }))
+      ? specializeArchetypeForVariant(archetype, archetype.defaultVariantId).modes
+        .filter(mode => !defaultVariant?.supportedModeIds || defaultVariant.supportedModeIds.includes(mode.id))
+        .map(toAgentMode)
       : [{
           modeId: "chat",
           vendorTerm: "对话",
@@ -80,14 +79,32 @@ export function buildAgentModelEntries(options: readonly ModelOption[]): AgentMo
         }];
     seen.add(identity);
     entries.push({
-      modelKey,
+      // 目录状态里这个字段叫 `modelKey`（宿主/持久化的名字）；`AgentModelEntry` 是**模型看的那一面**，
+      // 那边它叫 `modelId`——与 `draft_shots` 收的字段同名。投影就发生在这一行。
+      modelId: modelKey,
       modelAlias: option.modelAlias ?? null,
       vendor: option.vendor ?? null,
       label: option.label,
+      // 界面上这个模型叫什么：与卡上 / 模型框 / 设置同一个函数翻出来（身份与落盘的 `label` 不随语言变）。
+      displayName: translateModelDisplayText(option.label),
       kind,
       ...(archetype ? { archetypeId: archetype.id } : {}),
       defaultModeId: archetype?.defaultModeId ?? "chat",
       modes,
+      // 变体随档案一起投出去：准入层会拒未知 variantId，不投就是「可被拒、不可发现」。
+      ...(archetype?.variants?.length
+        ? {
+            variants: archetype.variants.map((variant) => ({
+              id: variant.id,
+              label: variant.label,
+              ...(variant.modelKey ? { modelKey: variant.modelKey } : {}),
+              modes: specializeArchetypeForVariant(archetype, variant.id).modes
+                .filter(mode => !variant.supportedModeIds || variant.supportedModeIds.includes(mode.id))
+                .map(toAgentMode),
+            })),
+            ...(archetype.defaultVariantId ? { defaultVariantId: archetype.defaultVariantId } : {}),
+          }
+        : {}),
     });
   }
   return entries;
@@ -102,6 +119,7 @@ export async function listAvailableModelsForAgent(): Promise<AgentModelEntry[]> 
       preloadModelOptions("imageEdit"),
       preloadModelOptions("video"),
       preloadModelOptions("video", "image_to_video"),
+      preloadModelOptions("model3d"),
     ]),
     getVendorPreference(),
   ]);
@@ -133,7 +151,7 @@ export function pickSavedDefaultModel(
     const preferred = defaults[taskKind]
     if (!preferred) continue
     const match = candidates.find(
-      (entry) => entry.vendor === preferred.vendorKey && entry.modelKey === preferred.modelKey,
+      (entry) => entry.vendor === preferred.vendorKey && entry.modelId === preferred.modelKey,
     )
     if (match) return match
   }
@@ -147,12 +165,16 @@ export function pickSavedDefaultModel(
  * 生成钮直接是灰的——「什么都不给」比「给一个通用的好模型」更伤。它**不是权威**：
  * 权威是用户保存的默认（`pickSavedDefaultModel`），这条阶梯只在权威缺席时补位。
  */
-export function pickStoryboardDefaultModel(entries: readonly AgentModelEntry[], kind: 'image' | 'video'): AgentModelEntry | undefined {
+export function pickStoryboardDefaultModel(entries: readonly AgentModelEntry[], kind: 'image' | 'video', orderedVendorKeys: readonly string[] = []): AgentModelEntry | undefined {
   const candidates = entries.filter(entry => entry.kind === kind)
-  const byName = (re: RegExp) => candidates.find(entry => re.test(`${entry.modelKey} ${entry.modelAlias ?? ''} ${entry.label}`))
-  return kind === 'image'
+  const byName = (re: RegExp) => candidates.find(entry => re.test(`${entry.modelId} ${entry.modelAlias ?? ''} ${entry.label}`))
+  const model = kind === 'image'
     ? byName(/gpt[\s-]?image/i) ?? byName(/nano[\s-]?banana/i) ?? candidates[0]
     : byName(/seedance/i) ?? candidates[0]
+  if (!model) return undefined
+  // 阶梯只决定「哪个模型」；同名多家时「哪一家」走全仓同一把尺（pickImplicitVendorMatch），
+  // 不是列表里第一个同名的——目录新接入的在前，自定义同名中转会悄悄变成默认（2026-09-21 同类扫描）。
+  return pickImplicitVendorMatch(candidates.filter(entry => entry.modelId === model.modelId), entry => entry.vendor, orderedVendorKeys) ?? model
 }
 
 /**
@@ -164,13 +186,13 @@ async function preferredDefaultModel(
   entries: readonly AgentModelEntry[],
   kind: 'image' | 'video',
 ): Promise<AgentModelEntry | undefined> {
-  let defaults: GenerationModelDefaultMap = {}
+  let defaults: GenerationModelDefaultMap
   try {
     defaults = await loadGenerationModelDefaults()
   } catch {
     defaults = {}
   }
-  return pickSavedDefaultModel(entries, kind, defaults) ?? pickStoryboardDefaultModel(entries, kind)
+  return pickSavedDefaultModel(entries, kind, defaults) ?? pickStoryboardDefaultModel(entries, kind, (await getVendorPreference()).orderedVendorKeys)
 }
 
 /**
@@ -197,7 +219,7 @@ export async function resolveStoryboardImageDefault(): Promise<{ modelKey?: stri
   const plainMode = prefer.modes.find((m) => m.modeId === prefer.defaultModeId) ?? prefer.modes[0]
   const refMode = prefer.modes.find((m) => m.slots.some((s) => s.kind === 'image_ref'))
   return {
-    modelKey: prefer.modelKey,
+    modelKey: prefer.modelId,
     // vendor 与 key 一起返回：调用方据此写节点，避免落地时按 key 反查命中别家（身份唯一键）。
     ...(prefer.vendor ? { modelVendor: prefer.vendor } : {}),
     ...(plainMode ? { modeId: plainMode.modeId } : {}),
@@ -221,10 +243,21 @@ export async function resolveStoryboardVideoDefault(): Promise<{ modelKey?: stri
   }
   const prefer = await preferredDefaultModel(entries, 'video')
   if (!prefer) return {}
-  const refMode = prefer.modes.find((m) => m.slots.some((s) => s.kind === 'image_ref' || s.kind === 'first_frame'))
-  const mode = refMode ?? prefer.modes.find((m) => m.modeId === prefer.defaultModeId) ?? prefer.modes[0]
+  return selectStoryboardVideoDefault([prefer])
+}
+
+/** Prefer identity/scene references over a locked first frame; explicit saved model choice is resolved by the caller. */
+export function selectStoryboardVideoDefault(entries: readonly AgentModelEntry[]): { modelKey?: string; modelVendor?: string; modeId?: string } {
+  const videos = entries.filter(entry => entry.kind === 'video')
+  const hasReference = (entry: AgentModelEntry) => entry.modes.some(mode => mode.slots.some(slot => slot.kind === 'image_ref' || slot.kind === 'first_frame'))
+  const prefer = videos.find(hasReference) ?? videos[0]
+  if (!prefer) return {}
+  const mode = prefer.modes.find(mode => mode.slots.some(slot => slot.kind === 'image_ref' && (slot.max ?? 1) > 1))
+    ?? prefer.modes.find(mode => mode.slots.some(slot => slot.kind === 'image_ref'))
+    ?? prefer.modes.find(mode => mode.slots.some(slot => slot.kind === 'first_frame'))
+    ?? prefer.modes.find(mode => mode.modeId === prefer.defaultModeId) ?? prefer.modes[0]
   return {
-    modelKey: prefer.modelKey,
+    modelKey: prefer.modelId,
     // vendor 与 key 一起返回（身份唯一键）——见 buildAgentModelEntries 去重键的注释。
     ...(prefer.vendor ? { modelVendor: prefer.vendor } : {}),
     ...(mode ? { modeId: mode.modeId } : {}),

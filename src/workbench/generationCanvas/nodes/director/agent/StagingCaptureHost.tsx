@@ -7,17 +7,19 @@
  *        一次只处理一个节点；结果处理失败也清标志，不让 Host 卡死。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GenerationCanvasNode } from '../../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../../store/generationCanvasStore'
 import { persistDirectorScreenshot } from '../bridge/persistOutputs'
+import { isProjectExecutionContextCurrent, withProjectAction } from '../../../../project/projectCanvasReadSurface'
 import { createOutputId } from '../model/directorIds'
 import { DIRECTOR_NODE_KIND, DIRECTOR_PROJECT_META_KEY, STAGING_AUTO_CAPTURE_META_KEY } from '../model/directorNodeMeta'
 import { normalizeDirectorProject } from '../model/directorProject'
 import type { DirectorProject } from '../model/directorTypes'
 import { readStagingAutoCapture } from './createStagingReferenceNode'
 import { DirectorHeadlessCapture, type HeadlessCaptureResult } from './DirectorHeadlessCapture'
+import { computeMediaMetaPatch } from '../../../nodes/nodeSizing'
 
 const STILL_TIMES = [0]
 
@@ -46,6 +48,8 @@ export function StagingCaptureHost(): JSX.Element | null {
 
   const handleResult = React.useCallback(
     async (nodeId: string, capture: HeadlessCaptureResult | null) => {
+      // 常驻出图宿主的「动作起点」= 拿到这次离屏截图结果的那一刻：此刻签发原项目，落盘与写回画布只认它。
+      const originProject = withProjectAction((issued) => issued) ?? null
       const store = useGenerationCanvasStore.getState()
       const node = store.nodes.find((candidate) => candidate.id === nodeId)
       const staging = node ? readStagingAutoCapture(node) : null
@@ -59,7 +63,8 @@ export function StagingCaptureHost(): JSX.Element | null {
       try {
         if (!node || !capture || capture.frames.length === 0) return
         const title = t('director.agent.stagingReference')
-        const persisted = await persistDirectorScreenshot(capture.frames[0], nodeId, title)
+        const persisted = await persistDirectorScreenshot(capture.frames[0], nodeId, title, originProject)
+        if (originProject && !isProjectExecutionContextCurrent(originProject)) return
         const createdAt = Date.now()
         const imageNode = store.addNode({
           kind: 'image',
@@ -69,6 +74,12 @@ export function StagingCaptureHost(): JSX.Element | null {
         })
         const size = imageNodeSize(capture.width, capture.height)
         const result = { id: `staging-shot-${imageNode.id}-${createdAt}`, type: 'image' as const, url: persisted.url, assetId: persisted.assetId, raw: persisted.raw, createdAt }
+        const mediaMeta = computeMediaMetaPatch({
+          resultType: result.type,
+          meta: imageNode.meta || {},
+          width: capture.width,
+          height: capture.height,
+        })?.meta
         store.updateNode(imageNode.id, {
           result,
           history: [result],
@@ -76,14 +87,12 @@ export function StagingCaptureHost(): JSX.Element | null {
           size: { width: size.width, height: size.height },
           meta: {
             ...(imageNode.meta || {}),
+            ...(mediaMeta || {}),
             source: 'director-camera',
             sourceNodeId: nodeId,
             // 站位构图图：被当 composition_ref 喂关键帧时触发「构图控制 + 写实重渲染」提示词后缀
             stagingComposition: true,
             localOnly: persisted.localOnly,
-            imageWidth: capture.width,
-            imageHeight: capture.height,
-            imageAspectRatio: capture.width / Math.max(1, capture.height),
             previewHeight: size.previewHeight,
           },
         })
@@ -92,8 +101,11 @@ export function StagingCaptureHost(): JSX.Element | null {
         const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
         const project = normalizeDirectorProject(current?.meta?.[DIRECTOR_PROJECT_META_KEY] ?? node.meta?.[DIRECTOR_PROJECT_META_KEY])
         store.updateNode(nodeId, { meta: { ...(current?.meta || node.meta || {}), [DIRECTOR_PROJECT_META_KEY]: projectWithScreenshot(project, title, persisted.url) } })
+      } catch (error) {
+        if (originProject && !isProjectExecutionContextCurrent(originProject)) return
+        throw error
       } finally {
-        clearFlag()
+        if (!originProject || isProjectExecutionContextCurrent(originProject)) clearFlag()
         processingRef.current = null
       }
     },

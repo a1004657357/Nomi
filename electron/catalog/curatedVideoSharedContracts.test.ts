@@ -32,6 +32,11 @@ import { buildVideoModelCandidates, modeTransportFor, videoArchetypeIdFromMeta }
 import { modeSlotReach } from "./referenceReachability";
 import { applyBuiltinSeeds } from "./seedBuiltins";
 import { selectTaskMapping, type CatalogState } from "./types";
+import { JIMENG_WEB_SEEDANCE_MODEL_SEED, JIMENG_WEB_VENDOR_SEED } from "./jimengWeb";
+import { buildJimengWebTaskPayload } from "../jimengWeb/seedanceBridge";
+import { PAVO_WEB_AGNES_FLASH_MODEL_SEED, PAVO_WEB_VENDOR_SEED } from "./pavoWeb";
+import { buildPavoWebTaskPayload } from "../pavoWeb/bridge";
+import { buildArchetypeInputParams, referenceSlotStorage } from "../../src/workbench/generationCanvas/nodes/controls/archetypeMeta";
 import type { ArchetypeMode } from "../shared/videoCapabilities/types";
 
 function seededState(): CatalogState {
@@ -55,7 +60,7 @@ function modeIsHiddenFromUi(mode: ArchetypeMode, createBody: unknown | null): bo
 }
 
 describe("每个 (vendor, model, mode)：要么真发得出，要么被收窄判据证明是隐藏的", () => {
-  it("没有「UI 上看得见、却发不出去」的模式", () => {
+  it("没有「UI 上看得见、却发不出去」的模式", async () => {
     const state = seededState();
     const models = state.models.filter((model) => model.kind === "video" && videoArchetypeIdFromMeta(model.meta));
     const candidates = buildVideoModelCandidates(models.map((model) => ({
@@ -71,6 +76,60 @@ describe("每个 (vendor, model, mode)：要么真发得出，要么被收窄判
       for (const mode of candidate.archetype.modes) {
         const taskKind = modeTransportFor(mode, candidate.archetype, model.vendorKey);
         const mapping = selectTaskMapping(state.mappings, model.vendorKey, taskKind, model.modelKey, mode.id);
+        // runtime dispatches this local browser bridge before HTTP mappings; exercise its real payload builder.
+        if (model.vendorKey === JIMENG_WEB_VENDOR_SEED.key && model.modelKey === JIMENG_WEB_SEEDANCE_MODEL_SEED.modelKey) {
+          expect(mapping).toBeNull();
+          if (taskKind !== "text_to_video" && taskKind !== "image_to_video") throw new Error(`Unsupported bridge task: ${taskKind}`);
+          const meta: Record<string, unknown> = { archetype: { id: candidate.archetype.id, modeId: mode.id } };
+          const expected: Array<{ base64: string; fileType: string }> = [];
+          for (const [slotIndex, slot] of mode.slots.entries()) {
+            const storage = referenceSlotStorage(slot);
+            if (!storage) throw new Error(`Missing bridge reference storage: ${slot.kind}`);
+            const fileType = slot.kind === "video_ref" ? "video/mp4" : slot.kind === "audio_ref" ? "audio/mpeg" : "image/png";
+            const values = Array.from({ length: slot.max ?? Math.max(1, slot.min) }, (_, index) => {
+              const base64 = `data:${fileType};base64,${Buffer.from(`${slotIndex}-${index}`).toString("base64")}`;
+              expected.push({ base64, fileType });
+              return base64;
+            });
+            meta[storage.metaKey] = storage.isArray ? values : values[0];
+          }
+          const payload = await buildJimengWebTaskPayload({
+            kind: taskKind, prompt: "contract fixture", extras: {
+              realSubmit: false, archetypeInput: buildArchetypeInputParams(meta, candidate.archetype),
+            },
+          });
+          expect(payload).toMatchObject({ mediaType: "video", expectedResultCount: 1, realSubmit: false });
+          expect(payload.referenceFiles.map(({ base64, fileType }) => ({ base64, fileType }))).toEqual(expected);
+          expect(payload.modelConfig.referenceMode).toBe(mode.id === "firstlast" ? "首尾帧" : "全能参考");
+          continue;
+        }
+        if (model.vendorKey === PAVO_WEB_VENDOR_SEED.key && model.modelKey === PAVO_WEB_AGNES_FLASH_MODEL_SEED.modelKey) {
+          expect(mapping).toBeNull();
+          if (taskKind !== "text_to_video" && taskKind !== "image_to_video") throw new Error(`Unsupported bridge task: ${taskKind}`);
+          const meta: Record<string, unknown> = { archetype: { id: candidate.archetype.id, modeId: mode.id } };
+          const expected: Array<{ base64: string; fileType: string }> = [];
+          for (const [slotIndex, slot] of mode.slots.entries()) {
+            const storage = referenceSlotStorage(slot);
+            if (!storage) throw new Error(`Missing bridge reference storage: ${slot.kind}`);
+            const fileType = slot.kind === "audio_ref" ? "audio/mpeg" : "image/png";
+            const values = Array.from({ length: slot.max ?? Math.max(1, slot.min) }, (_, valueIndex) => {
+              const base64 = `data:${fileType};base64,${Buffer.from(`${slotIndex}-${valueIndex}`).toString("base64")}`;
+              expected.push({ base64, fileType });
+              return base64;
+            });
+            meta[storage.metaKey] = storage.isArray ? values : values[0];
+          }
+          const payload = await buildPavoWebTaskPayload({
+            kind: taskKind, prompt: "contract fixture", extras: {
+              idempotencyKey: "contract-fixture", realSubmit: false,
+              archetypeInput: buildArchetypeInputParams(meta, candidate.archetype),
+            },
+          });
+          expect(payload).toMatchObject({ mediaType: "video", expectedResultCount: 1, realSubmit: false });
+          expect(payload.referenceFiles.map(({ base64, fileType }) => ({ base64, fileType }))).toEqual(expected);
+          expect(payload.modelConfig.referenceMode).toBe(mode.id === "keyframe" ? "首尾帧" : "全能模式");
+          continue;
+        }
         const body = mapping ? mapping.create.body : null;
         // 被判据隐藏 = 用户根本看不到它，谈不上撒谎。这是本不变量与旧版的**唯一**区别。
         if (modeIsHiddenFromUi(mode, body)) continue;
@@ -123,7 +182,7 @@ describe("结构上拒绝 per-triple 豁免名单", () => {
     // 记号名拆开拼装，免得这条断言自己成为「仓库里存在该字符串」的反例。
     const marker = ["KNOWN", "LEGACY", "GAPS"].join("_");
     const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-    let hits = "";
+    let hits: string;
     try {
       // git grep 只扫版本控制内的文件（天然跳过 node_modules / 构建产物）。
       hits = execFileSync("git", ["grep", "-n", "--", marker], { cwd: repoRoot, encoding: "utf8" });

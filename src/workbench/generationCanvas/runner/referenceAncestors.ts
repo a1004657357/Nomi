@@ -42,3 +42,19 @@ export function collectUngeneratedReferenceAncestors(
   collected.delete(nodeId)
   return [...collected]
 }
+
+export function expandNodeIdsWithUngeneratedReferenceAncestors(
+  nodeIds: readonly string[],
+  context: { nodes: readonly GenerationCanvasNode[]; edges: readonly GenerationCanvasEdge[] },
+): string[] {
+  const expanded = new Set<string>()
+  for (const rawId of nodeIds) {
+    const nodeId = String(rawId || '').trim()
+    if (!nodeId) continue
+    for (const ancestorId of collectUngeneratedReferenceAncestors(nodeId, context)) {
+      expanded.add(ancestorId)
+    }
+    expanded.add(nodeId)
+  }
+  return [...expanded]
+}

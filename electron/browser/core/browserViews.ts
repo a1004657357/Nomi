@@ -22,6 +22,7 @@ import {
 } from "../media/browserViewMedia";
 import { normalizeCaptureSourceRect } from "../media/browserCaptureSource";
 import { selectBrowserPromptScreenshotRect } from "../media/browserPromptScreenshotSelection";
+import { startBrowserAssetNativeDrag } from "../media/browserAssetNativeDrag";
 import {
   applyBrowserAssetOverlayMouseEvents,
   applyBrowserAssetOverlayShape,
@@ -39,6 +40,7 @@ import {
   setBrowserAssetOverlayDragInteractive,
   setBrowserAssetOverlayHostBounds,
   setBrowserAssetOverlayViewId,
+  setBrowserAssetOverlayProjectResolver,
   setBrowserAssetOverlayRendererUrlResolver,
   showBrowserAssetOverlay,
   sameOverlayRect,
@@ -47,6 +49,8 @@ import {
 import { allocateBrowserViewId, browserAssetOverlaysByWindow, browserViews, browserViewsByWindow } from "./browserViewState";
 import { BROWSER_PROFILE_PARTITION, STANDARD_CHROME_UA, configureBrowserSession } from "./browserViewSession";
 import { assertTrustedUiSender } from "../../ipcSenderGuard";
+import { issueWindowProject } from "../../assets/windowProjectCapture";
+import { canvasReadSurfaceRuntime } from "../../capabilityCore/canvasReadSurfaceRuntime";
 import {
   bringBrowserViewToFront,
   destroyBrowserView,
@@ -94,21 +98,25 @@ function trackBrowserView(win: BrowserWindow, record: BrowserViewRecord): void {
 
 function attachBrowserViewEvents(record: BrowserViewRecord): void {
   const contents = record.view.webContents;
-  const notify = () => {
-    sendBrowserViewState(record);
-    void installBrowserImageDragBridge(record);
-    void installBrowserPromptHoverBridge(record);
-    if (record.resourceCaptureEnabled) void installBrowserResourceCaptureBridge(record, true);
+  let pageBridgeInstallScheduled = false;
+  const schedulePageBridgeInstall = () => {
+    if (pageBridgeInstallScheduled) return;
+    pageBridgeInstallScheduled = true;
+    setImmediate(() => {
+      pageBridgeInstallScheduled = false;
+      if (contents.isDestroyed() || contents.isLoading()) return;
+      void installBrowserImageDragBridge(record);
+      void installBrowserPromptHoverBridge(record);
+      if (record.resourceCaptureEnabled) void installBrowserResourceCaptureBridge(record, true);
+    });
   };
-  contents.on("did-start-loading", notify);
-  contents.on("did-stop-loading", notify);
-  contents.on("did-navigate", notify);
-  contents.on("did-navigate-in-page", notify);
-  contents.on("dom-ready", () => {
-    void installBrowserImageDragBridge(record);
-    void installBrowserPromptHoverBridge(record);
-    if (record.resourceCaptureEnabled) void installBrowserResourceCaptureBridge(record, true);
+  contents.on("did-start-loading", () => sendBrowserViewState(record));
+  contents.on("did-stop-loading", () => {
+    sendBrowserViewState(record);
+    schedulePageBridgeInstall();
   });
+  contents.on("did-navigate", () => sendBrowserViewState(record));
+  contents.on("did-navigate-in-page", () => sendBrowserViewState(record));
   contents.on("before-input-event", (event, input) => {
     if (!record.resourceCaptureEnabled) return;
     if (input.type !== "keyDown") return;
@@ -203,7 +211,7 @@ function attachBrowserViewEvents(record: BrowserViewRecord): void {
     }
     setBrowserAssetOverlayDragInteractive(overlay, true);
   });
-  contents.on("page-title-updated", notify);
+  contents.on("page-title-updated", () => sendBrowserViewState(record));
   contents.on("page-favicon-updated", (_event, favicons) => {
     const win = BrowserWindow.fromId(record.ownerWindowId);
     if (!win || win.isDestroyed()) return;
@@ -239,6 +247,25 @@ function attachBrowserViewEvents(record: BrowserViewRecord): void {
 
 export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void {
   setBrowserAssetOverlayRendererUrlResolver(rendererUrlResolver);
+  // 浮层窗的项目 = 父窗口已提交的项目面；父窗口换项目/关项目时重推，浮层跟着换或清空。
+  setBrowserAssetOverlayProjectResolver((owner) => issueWindowProject(owner)?.binding ?? null);
+  canvasReadSurfaceRuntime.subscribeCommittedProject(() => {
+    for (const record of browserAssetOverlaysByWindow.values()) sendBrowserAssetOverlayConfig(record);
+  });
+
+  ipcMain.on("browser:asset-drag:start", (event, payload: unknown) => {
+    assertTrustedUiSender(event);
+    const result = startBrowserAssetNativeDrag(
+      event.sender,
+      payload && typeof payload === "object" ? payload : {},
+    );
+    if (!result.ok) event.sender.send("browser:asset-drag:error", { message: result.error });
+  });
+  ipcMain.on("browser:asset-drag:end", (event) => {
+    assertTrustedUiSender(event);
+    const overlay = getOverlayForSender(event.sender);
+    if (overlay) setBrowserAssetOverlayDragInteractive(overlay, false);
+  });
 
   ipcMain.handle("browser:view:create", async (event, payload: BrowserViewCreatePayload = {}) => {
     assertTrustedUiSender(event);
@@ -269,6 +296,7 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
       view,
       lastBounds: { x: 0, y: 0, width: 0, height: 0 },
       resourceCaptureEnabled: false,
+      promptCategories: [],
     };
     browserViews.set(record.viewId, record);
     trackBrowserView(win, record);
@@ -336,14 +364,18 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
 
   ipcMain.handle("browser:view:import-media", async (event, payload: BrowserViewImportMediaPayload) => {
     assertTrustedUiSender(event);
+    // 项目身份只来自发起窗口（素材盒浮层 = 它的父窗口）已提交的项目面，在任何 await 之前签发。
+    const project = issueWindowProject(getOwnerWindowForSender(event.sender));
+    if (!project) throw Object.assign(new Error("project_identity_unavailable"), { code: "project_identity_unavailable" });
     const record = getBrowserViewForSender(event.sender, payload);
-    return importBrowserMedia(record, payload);
+    return importBrowserMedia(record, payload, project);
   });
 
   ipcMain.handle("browser:view:capture-prompt-image", async (event, payload: BrowserViewPromptImagePayload) => {
     assertTrustedUiSender(event);
+    const project = issueWindowProject(getOwnerWindowForSender(event.sender));
     const record = getBrowserViewForSender(event.sender, payload);
-    return captureBrowserPromptImage(record, payload);
+    return captureBrowserPromptImage(record, payload, project);
   });
 
   ipcMain.handle("browser:view:select-prompt-screenshot", async (event, payload: BrowserViewIdPayload) => {
@@ -354,8 +386,9 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
 
   ipcMain.handle("browser:view:capture-prompt-screenshot", async (event, payload: BrowserViewPromptScreenshotPayload) => {
     assertTrustedUiSender(event);
+    const project = issueWindowProject(getOwnerWindowForSender(event.sender));
     const record = getBrowserViewForSender(event.sender, payload);
-    return captureBrowserPromptScreenshot(record, payload);
+    return captureBrowserPromptScreenshot(record, payload, project);
   });
 
   ipcMain.on("browser:view:set-resource-capture", (event, payload: BrowserViewIdPayload & { enabled?: unknown }) => {

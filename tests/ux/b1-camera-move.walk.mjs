@@ -171,7 +171,9 @@ let applied = { node: false }
 if (popover.ok) {
   const applyBtn = win.locator('button', { hasText: /^应用$/ }).first()
   if (await applyBtn.count()) { await applyBtn.click({ timeout: 3000 }).catch((e) => console.log('  apply err', e.message)); await win.waitForTimeout(2500) }
-  applied = await win.evaluate(() => ({ node: document.body.innerText.includes('运镜参考') }))
+  const generatedReference = win.locator('.generation-canvas-v2-node').filter({ hasText: '运镜参考' })
+  await expect(generatedReference.first()).toBeVisible()
+  applied = { node: await generatedReference.first().isVisible() }
   console.log(`  ④ 应用后出现「运镜参考」节点=${applied.node}`)
   await snap(win, 'after-apply')
 }

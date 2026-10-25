@@ -1,4 +1,5 @@
-import React from 'react'
+import { acceptAttrForSurface } from '../../../../electron/shared/contracts/mediaImportPolicy';
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
 import { IconPhoto, IconUpload } from '../../../vendor/tablerIcons'
@@ -26,7 +27,7 @@ export default function PanoramaUploadFallback({
           description={t('generationCommon.nodeEmpty.panorama.description')}
           action={<span className="inline-flex items-center gap-1.5 rounded-nomi-sm bg-nomi-ink px-3 py-1.5 text-caption font-medium text-nomi-paper"><IconUpload size={14} stroke={1.8} />{t('generationCommon.node.uploadPanorama')}</span>}
         />
-        <input className="hidden" type="file" accept="image/*" onChange={onChange} />
+        <input className="hidden" type="file" accept={acceptAttrForSurface('panorama')} onChange={onChange} />
       </label>
     </div>
   )

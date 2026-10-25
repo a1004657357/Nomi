@@ -1,3 +1,5 @@
+import { pushTimelineUndo } from './timeline/pushTimelineUndo'
+import type { FilmBibleV1 } from './domain/cinematicTypes'
 import type { LibraryPrompt } from './api/promptLibraryApi'
 import { applyStoryboardPlanProjection } from './creation/storyboard/exec/ensureStoryboardShotTable'
 import { create } from 'zustand'
@@ -30,13 +32,14 @@ import {
   updateTextClipTransform,
 } from './timeline/timelineTextEdit'
 import type { Vec2 } from './timeline/overlayTransform'
-import { createDefaultTimeline, normalizeTimeline } from './timeline/timelineMath'
+import { createDefaultTimeline, normalizeTimeline, TIMELINE_UNDO_LIMIT } from './timeline/timelineMath'
 import type { TimelineClip, TimelineState, TimelineTextStyle, TimelineTrackType } from './timeline/timelineTypes'
 import type { TimelineTransition } from './timeline/timelineTypes'
 import { applyTimelineOperation } from './timeline/kernel/timelineKernel'
 import { timelineUndoTimeline, type TimelineUndoEntry } from './timeline/timelineUndoHistory'
-import { normalizeWorkbenchDocument, type CreationDocumentTools, type PreviewAspectRatio, type WorkbenchDocument } from './workbenchTypes'
+import { normalizeWorkbenchDocument, type PreviewAspectRatio, type WorkbenchDocument } from './workbenchTypes'
 import type { ComposerAttachment } from './ai/composer/composerAttachmentTypes'
+import type { ProjectAgentDraftRecoveryState } from './ai/projectAgentDraftRecovery'
 import { createWorkbenchDocumentSlice, type WorkbenchDocumentSlice } from './workbenchDocumentSlice'
 import {
   cloneBuiltinCategories,
@@ -51,29 +54,18 @@ import { useGenerationCanvasStore } from './generationCanvas/store/generationCan
 import type { AgentContextHandle } from '../../electron/shared/agentContextSnapshot'
 import { DEFAULT_PROJECT_AGENT_APPROVAL_POLICY, type ProjectAgentApprovalPolicy } from '../../electron/shared/agentCapabilities/capabilityApprovalPolicy';
 import { createEditingPanelLayoutSlice, type EditingPanelLayoutSlice } from './preview/editingPanelLayoutSlice'
+import { createCreationResourceTreeSlice, type CreationResourceTreeSlice } from './creation/creationResourceTreeCollapse'
 import { createTimelineClipWritesSlice, type TimelineClipWritesSlice } from './timeline/timelineClipWritesSlice'
-import { readTimelinePanelCollapsed, writeTimelinePanelCollapsed } from './timeline/timelinePanelPrefs'
+import { readDockCollapsed, writeDockCollapsed } from './generation/dockCollapsePrefs'
 import { TIMELINE_PANEL_DEFAULT, clampTimelinePanelHeight } from './timeline/timelinePanelBounds'
 import type { ExportQuality } from './export/exportTypes'
 
 /** 拖动中临时吸附辅助线（非持久化）。 */
 export type TimelineSnapGuide = { frame: number; label: string }
-
-// 时间轴撤销栈封顶（防无限增长）。
-const TIMELINE_UNDO_LIMIT = 30
-// 离散编辑生效时把旧 timeline 压栈：仅当真的变了。供 set 内联调用。
-function pushTimelineUndo(stack: TimelineUndoEntry[], previous: TimelineState): TimelineUndoEntry[] {
-  const next = [...stack, previous]
-  if (next.length > TIMELINE_UNDO_LIMIT) next.shift()
-  return next
-}
-
 export const WORKSPACE_MODES = ['creation', 'storyboard', 'generation', 'preview'] as const
-
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number]
 
 type GraphViewport = { zoom: number; offset: { x: number; y: number } }
-
 export type ProjectAgentReference = Readonly<{
   id: string
   label: string
@@ -84,7 +76,10 @@ export type ProjectAgentReference = Readonly<{
   contextHandle?: AgentContextHandle
 }>
 
-type WorkbenchState = WorkbenchDocumentSlice & EditingPanelLayoutSlice & TimelineClipWritesSlice & {
+type WorkbenchState = WorkbenchDocumentSlice & EditingPanelLayoutSlice & CreationResourceTreeSlice & TimelineClipWritesSlice & ProjectAgentDraftRecoveryState & {
+  filmBible: FilmBibleV1 | null
+  setFilmBible: (filmBible: FilmBibleV1 | null) => void
+  hydrateFilmBible: (filmBible: FilmBibleV1 | null) => void
   persistRevision: number
   workspaceMode: WorkspaceMode
   /** 生成/预览区右侧助手侧栏宽度（px，可拖宽）。 */
@@ -111,16 +106,19 @@ type WorkbenchState = WorkbenchDocumentSlice & EditingPanelLayoutSlice & Timelin
   toggleSidebarCollapsed: () => void
   setSidebarCollapsed: (collapsed: boolean) => void
   rememberCategoryViewport: (categoryId: string, viewport: GraphViewport) => void
-  creationDocumentTools: CreationDocumentTools | null
   creationSelectionText: string; storyboardPlannerLauncher: ((displayPrompt?: string) => void) | null
   creationAiModeId: string
-  /** 手动锁定的 active skill（覆盖 mode 推导的 skillKey）。null = 自动（用创作模式默认）。 */
-  creationActiveSkill: { key: string; name: string } | null
+
   /**
-   * 「请画布适应视图」一次性信号（nonce，仿 createCategoryNonce）。bump 一次 = 请生成画布
-   * 平滑 fit 到全部节点一次。用于落画布等「批量加节点到已加载画布」的场景——useAutoFitOnLoad
-   * 只在首次加载/切分类触发，加新节点不重跑，新节点会落在视口外（用户以为「没反应」）。
-   * 非持久化、非用户动作残留：只在显式动作时 bump。
+   * 手动锁定的 active skill（覆盖 mode 推导的 skillKey）。null = 自动（用创作模式默认）。
+   * 只存 key（与恢复草稿时钉版本的 contentHash）——**不存名字**：名字由 `skillLabelForKey` 渲染时派生。
+   */
+  creationActiveSkill: { key: string; contentHash?: string } | null
+  /**
+   * 「请画布适应视图」一次性信号（nonce，仿 createCategoryNonce）。bump 一次 = 请生成画布平滑 fit 一次（并切到目标分类）。
+   * **只许用户显式动作 bump**（2026-09-25 用户拍板「程序不再主动平移 / 缩放画布」）：以前落画布、导入、切图、
+   * Agent 批量建卡都会 bump，那就是「画布自己动、找不到东西」。新东西落在屏外改由画布边缘提示指路。
+   * 允许 bump 的调用处名单在 generationCanvas/components/canvasViewportMovers.structure.test.ts。
    */
   canvasFitNonce: number
   canvasFitCategoryId: string | null
@@ -159,16 +157,16 @@ type WorkbenchState = WorkbenchDocumentSlice & EditingPanelLayoutSlice & Timelin
   setWorkspaceMode: (mode: unknown) => void
   setAssistantWidth: (width: number) => void
   setProjectSidebarWidth: (width: number) => void
-  setCreationDocumentTools: (tools: CreationDocumentTools | null) => void
   setCreationSelectionText: (text: string) => void; setStoryboardPlannerLauncher: (launcher: ((displayPrompt?: string) => void) | null) => void
   setCreationAiModeId: (modeId: string) => void
-  setCreationActiveSkill: (skill: { key: string; name: string } | null) => void
+  setCreationActiveSkill: (skill: { key: string; contentHash?: string } | null) => void
   /** 请生成画布平滑 fit 一次；可显式切到并绑定目标分类。 */
   requestCanvasFit: (categoryId?: string) => void
   /** Resident ProjectAgent composer state. Draft/attachments are ephemeral UI state, not Host history. */
   selectedLibraryPrompt: LibraryPrompt | null
   setSelectedLibraryPrompt: (prompt: LibraryPrompt | null) => void
   projectAgentDraft: string
+  projectAgentDraftRevision: number
   projectAgentAttachments: ComposerAttachment[]
   /** Composer-only references. Host remains the sole owner of durable context/history. */
   projectAgentReferences: ProjectAgentReference[]
@@ -238,7 +236,6 @@ type WorkbenchState = WorkbenchDocumentSlice & EditingPanelLayoutSlice & Timelin
 export function isWorkspaceMode(value: unknown): value is WorkspaceMode {
   return typeof value === 'string' && WORKSPACE_MODES.includes(value as WorkspaceMode)
 }
-
 export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector((set, get, store) => ({
   ...createWorkbenchDocumentSlice(set, get, store, design => applyStoryboardPlanProjection(
     () => get().storyboardDesignsByDocumentId[design.documentId]?.find(current => current.id === design.id),
@@ -312,23 +309,33 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
       },
     }))
   },
-  creationDocumentTools: null,
   creationSelectionText: '', storyboardPlannerLauncher: null,
   creationAiModeId: 'general',
+  filmBible: null,
+  setFilmBible: filmBible => set(state => ({ filmBible, persistRevision: state.persistRevision + 1 })),
+  hydrateFilmBible: filmBible => set({ filmBible }),
   creationActiveSkill: null,
+
   canvasFitNonce: 0,
   canvasFitCategoryId: null,
   selectedLibraryPrompt: null,
-  setSelectedLibraryPrompt: (selectedLibraryPrompt) => set({ selectedLibraryPrompt, creationActiveSkill: null }),
+  setSelectedLibraryPrompt: (selectedLibraryPrompt) => set(state => ({ selectedLibraryPrompt, creationActiveSkill: null,
+    projectAgentDraftRevision: state.projectAgentDraftRevision + 1,
+    projectAgentDraftIntent: state.projectAgentDraftIntent ? { ...state.projectAgentDraftIntent, systemPrompt: undefined } : null })),
   projectAgentDraft: '',
+  projectAgentDraftRevision: 0,
+  projectAgentRecoveredDrafts: [], projectAgentDraftIntent: null, projectAgentDraftDisplayText: null, projectAgentAdmissionId: null,
   projectAgentAttachments: [],
   projectAgentReferences: [],
   projectAgentApprovalPolicy: DEFAULT_PROJECT_AGENT_APPROVAL_POLICY,
-  setProjectAgentDraft: (projectAgentDraft) => set({ projectAgentDraft }),
+  setProjectAgentDraft: (projectAgentDraft) => set(state => ({ projectAgentDraft, projectAgentDraftDisplayText: null,
+    ...(!projectAgentDraft.trim() ? { projectAgentDraftIntent: null } : {}), projectAgentDraftRevision: state.projectAgentDraftRevision + 1 })),
   setProjectAgentAttachments: (attachments) => set((state) => ({
+    projectAgentDraftRevision: state.projectAgentDraftRevision + 1,
     projectAgentAttachments: typeof attachments === 'function' ? attachments(state.projectAgentAttachments) : attachments,
   })),
   setProjectAgentReferences: (references) => set((state) => ({
+    projectAgentDraftRevision: state.projectAgentDraftRevision + 1,
     projectAgentReferences: typeof references === 'function' ? references(state.projectAgentReferences) : references,
   })),
   setProjectAgentApprovalPolicy: (projectAgentApprovalPolicy) => set({ projectAgentApprovalPolicy: Object.freeze({ mode: projectAgentApprovalPolicy.mode, spend: projectAgentApprovalPolicy.spend }) }),
@@ -340,14 +347,15 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   timelineSnapGuide: null,
   timelineSplitMode: false,
   // 默认折叠以保持最小窗口的 composer 可用空间；用户仍可拖拽展开。
-  timelinePanelCollapsed: readTimelinePanelCollapsed(),
+  timelinePanelCollapsed: readDockCollapsed('timelinePanel'),
   setTimelinePanelCollapsed: (collapsed) => {
-    writeTimelinePanelCollapsed(Boolean(collapsed))
+    writeDockCollapsed('timelinePanel', Boolean(collapsed))
     set({ timelinePanelCollapsed: Boolean(collapsed) })
   },
   timelinePanelHeight: TIMELINE_PANEL_DEFAULT,
   setTimelinePanelHeight: (height) => set({ timelinePanelHeight: clampTimelinePanelHeight(height) }),
   ...createEditingPanelLayoutSlice(set, get, store),
+  ...createCreationResourceTreeSlice(set, get, store),
   exportResolution: '1080p',
   exportQuality: 'standard',
   setExportResolution: (exportResolution) => set({ exportResolution }),
@@ -364,9 +372,6 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
     assistantWidth: clampAssistantWidth(width, typeof window === 'undefined' ? 0 : window.innerWidth),
   }),
   setProjectSidebarWidth: (width) => set({ projectSidebarWidth: Math.max(240, Math.min(720, Math.round(width))) }),
-  setCreationDocumentTools: (creationDocumentTools) => {
-    set({ creationDocumentTools })
-  },
   setCreationSelectionText: (text) => {
     set({ creationSelectionText: typeof text === 'string' ? text.trim() : '' })
   },
@@ -375,7 +380,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
     set({ creationAiModeId })
   },
   setCreationActiveSkill: (creationActiveSkill) => {
-    set({ creationActiveSkill, selectedLibraryPrompt: null })
+    set(state => ({ creationActiveSkill, selectedLibraryPrompt: null,
+      projectAgentDraftRevision: state.projectAgentDraftRevision + 1,
+      projectAgentDraftIntent: state.projectAgentDraftIntent ? { ...state.projectAgentDraftIntent, systemPrompt: undefined } : null }))
   },
   requestCanvasFit: (categoryId) => {
     // 一次性信号：目标分类与 nonce 原子更新。显式目标立即切过去，延迟消费时若用户又手动切走则跳过。
@@ -384,6 +391,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
       return { activeCategoryId: target, canvasFitCategoryId: target, canvasFitNonce: state.canvasFitNonce + 1 }
     })
   },
+
   setTimeline: (timeline) => {
     set((state) => ({
       timeline: normalizeTimeline(timeline),

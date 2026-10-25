@@ -20,7 +20,6 @@ import {
 import { createCanvasReadSurfaceRegistry, createSurfaceOwnerAuthority } from "./canvasReadSurfaceRegistry";
 import { MCP_CAPABILITY_RESOLVER } from "./mcpCapabilityProjection";
 import { createMcpConnectionContext } from "./mcpConnectionContext";
-import { createMcpGenerationPolicy } from "./mcpGenerationPolicy";
 import { createMcpProtocol, type McpInvokeOptions, type McpTransport } from "./mcpProtocol";
 import { createMcpStdioProjectSessionRouter } from "./mcpStdioProjectSessionRouter";
 import { createProjectSessionRuntime, createVerifiedProjectSessionBinding } from "./projectSessionRuntime";
@@ -87,7 +86,6 @@ function makeAuthorityHarness(now: () => string = () => "2026-08-28T00:00:00.000
     canonicalRootDigest: IDENTITY.canonicalRootDigest,
   });
   const runtime = createProjectSessionRuntime({
-    generationPolicy: createMcpGenerationPolicy({ env: {} }),
     leaseFilePath: path.join(dir, "project-leases-v2"),
     leaseMacKey: "b6-parity-lease-key",
     leaseStoreMacKey: "b6-parity-store-key",
@@ -141,7 +139,7 @@ async function capturePiAuthority() {
     projectId: IDENTITY.projectId,
     suspension,
   });
-  return { registry, capturedPort: registry.captureCanvasReadPort(owner, binding) };
+  return { registry, session: registry.openProjectSession(owner, binding.binding) };
 }
 
 function protocolClient(transport: McpTransport) {
@@ -186,7 +184,7 @@ describe("B6 canvas.read transport acceptance", () => {
     const execute = vi.spyOn(executor, "execute");
     const pi = createPiCanvasReadTransportAdapter({
       registry: piAuthority.registry,
-      capturedPort: piAuthority.capturedPort,
+      session: piAuthority.session,
       requestId: "request-b6",
       executor,
     });

@@ -35,13 +35,23 @@ export function writeInstanceAdvertisement(advertisement: InstanceAdvertisement,
   fs.writeFileSync(instancePath(advertisement.projectsRoot, isDefault), JSON.stringify(advertisement, null, 2), 'utf8')
 }
 
-/** app 退出时清掉广告（best-effort，不抛——退出路径绝不卡）。清的是这个实例自己那份（同命名空间文件名）。 */
-export function clearInstanceAdvertisement(projectsRoot: string, isDefault: boolean): void {
+/**
+ * 只清理由指定进程写入的广告。多个源码实例可能共用默认 capability 目录；
+ * compare-before-delete 防止旧实例退出时抹掉仍在线的新实例。
+ */
+function clearAdvertisementFile(file: string, ownerPid: number): boolean {
   try {
-    fs.rmSync(instancePath(projectsRoot, isDefault), { force: true })
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<InstanceAdvertisement>
+    if (parsed.pid !== ownerPid) return false
+    fs.rmSync(file, { force: true })
+    return true
   } catch {
-    /* 退出清理失败无所谓：下次读会做 pid 存活校验兜底 */
+    return false
   }
+}
+
+export function clearInstanceAdvertisement(projectsRoot: string, isDefault: boolean, ownerPid = process.pid): boolean {
+  return clearAdvertisementFile(instancePath(projectsRoot, isDefault), ownerPid)
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -83,7 +93,7 @@ export function readLiveInstance(
   }
   if (!parsed) return null
   if (!isProcessAlive(Number(parsed.pid))) {
-    try { fs.rmSync(file, { force: true }) } catch { /* 兜底清理，不抛 */ }
+    clearAdvertisementFile(file, Number(parsed.pid))
     return null
   }
   return {

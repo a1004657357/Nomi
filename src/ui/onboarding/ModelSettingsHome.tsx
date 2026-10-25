@@ -1,16 +1,21 @@
-import React from 'react'
+import React, { type JSX } from 'react'
+import { builtinVendorKeyOfKey } from '../../../electron/shared/builtinVendorIdentity'
 import {
   IconChevronDown,
   IconChevronRight,
   IconCloud,
   IconCode,
   IconPlugConnected,
+  IconPlus,
+  IconSettings,
   IconServerBolt,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
+import { CatalogPackageActions, CatalogStatusNotices } from './ModelCatalogNotices'
+import type { ModelCatalogReadOnlyDto } from '../../workbench/api/modelCatalogApi'
 
 import type { Mapping } from '../../../electron/catalog/types'
-import { DesignButton, DesignSearchInput, NomiLoadingMark } from '../../design'
+import { DesignButton, DesignSearchInput, NomiLoadingMark, VendorLogoImage } from '../../design'
 import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 import { cn } from '../../utils/cn'
 import { AiAssistedOnboardingSection } from './AiAssistedOnboardingSection'
@@ -52,6 +57,7 @@ export type ModelSettingsHomeConnection = {
   /** direct-script 那类家没有可预检的通用接口，别白探（与卡片侧同一套策略）。 */
   skipHealthProbe?: boolean
   onOpen: () => void
+  onAddModels?: () => void
 }
 
 // 品牌标：有 logo 显图，无 logo 显首字母徽标。两者共用同一个「白底描边框」——
@@ -64,7 +70,7 @@ function ConnectionMark({ connection }: { connection: ModelSettingsHomeConnectio
       className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-nomi-sm border border-nomi-line bg-nomi-paper"
     >
       {connection.logo ? (
-        <img src={connection.logo} alt="" className="size-full object-contain" />
+        <VendorLogoImage src={connection.logo} className="size-full" />
       ) : (
         <span className="text-caption font-semibold leading-none text-nomi-ink-60">
           {(connection.glyph || translateModelDisplayText(connection.name)).trim().slice(0, 2).toUpperCase()}
@@ -246,6 +252,7 @@ function ConnectedRow({
           : t('onboardingProviders.drawer.home.readyCount', { count: summary.ready })
 
   return (
+    <div>
     <button
       type="button"
       onClick={connection.onOpen}
@@ -274,6 +281,19 @@ function ConnectedRow({
       </span>
       <IconChevronRight size={15} stroke={1.7} className="shrink-0 text-nomi-ink-30 group-hover:text-nomi-accent" aria-hidden="true" />
     </button>
+    {connection.kind === 'api' ? (
+      <div data-model-home-api-actions={connection.vendorKey} className="flex flex-wrap gap-2 px-3 pb-3">
+        <DesignButton variant="subtle" className="min-h-11 sm:min-h-8" onClick={connection.onOpen} leftSection={<IconSettings size={15} stroke={1.7} aria-hidden="true" />}>
+          {t('onboardingProviders.workspace.editConnection')}
+        </DesignButton>
+        {connection.onAddModels ? (
+          <DesignButton variant="light" className="min-h-11 sm:min-h-8" onClick={connection.onAddModels} leftSection={<IconPlus size={15} stroke={1.7} aria-hidden="true" />}>
+            {t('onboardingProviders.workspace.addOtherModels')}
+          </DesignButton>
+        ) : null}
+      </div>
+    ) : null}
+    </div>
   )
 }
 
@@ -312,13 +332,21 @@ function ConnectedRows({
 }
 
 function availableHint(connection: ModelSettingsHomeConnection, t: ReturnType<typeof useTranslation>['t']): string {
-  if (connection.vendorKey === 'apimart') return t('onboardingProviders.drawer.home.apimartHint')
-  if (connection.vendorKey === 'kie') return t('onboardingProviders.drawer.home.kieHint')
-  if (connection.vendorKey.startsWith('comfyui')) return t('onboardingProviders.drawer.home.comfyuiHint')
-  if (connection.vendorKey === 'dreamina-member') return t('onboardingProviders.drawer.home.dreaminaHint')
+  // #831：身份按 root 问，别比 key 字面量——`apimart--mini` 这类兄弟连接也是 APIMart，
+  // 比字面量会让用户新建的特价组丢掉说明文字与「推荐」徽章（症状：接了，但看起来像个陌生家）。
+  const root = builtinVendorKeyOfKey(connection.vendorKey)
+  if (root === 'apimart') return t('onboardingProviders.drawer.home.apimartHint')
+  if (root === 'kie') return t('onboardingProviders.drawer.home.kieHint')
+  if (root.startsWith('comfyui')) return t('onboardingProviders.drawer.home.comfyuiHint')
+  if (root === 'dreamina-member') return t('onboardingProviders.drawer.home.dreaminaHint')
   if (connection.vendorKey === 'codex-local') return t('onboardingProviders.drawer.home.codexImageHint')
   if (connection.vendorKey === 'antigravity-cli') return t('antigravity.subtitle')
-  return t('onboardingProviders.drawer.home.adaptedHint', { name: translateModelDisplayText(connection.name) })
+  const name = translateModelDisplayText(connection.name)
+  // 有几个预置模型就说几个；一个都没有就别说「已有…模型」——Replicate 这类走 bespoke 调用的家
+  // 预置数就是 0，旧文案在那一行等于对用户说了句假话（D4 诚实交付）。
+  return connection.models.length > 0
+    ? t('onboardingProviders.drawer.home.adaptedHintWithCount', { name, count: connection.models.length })
+    : t('onboardingProviders.drawer.home.adaptedHintNoModels', { name })
 }
 
 export function ModelSettingsHome({
@@ -327,6 +355,8 @@ export function ModelSettingsHome({
   mappings,
   loaded,
   bridgeMissing,
+  loadError,
+  readOnly,
   taskCount,
   taskContent,
   diagnostic,
@@ -336,12 +366,17 @@ export function ModelSettingsHome({
   onReload,
   onCustomApi,
   onDirectScript,
+  onImported,
 }: {
   connections: ModelSettingsHomeConnection[]
   availableConnections: ModelSettingsHomeConnection[]
   mappings: readonly Mapping[]
   loaded: boolean
   bridgeMissing: boolean
+  /** 这一次读为什么失败；非空时列表里仍是上一份数据，不是空目录。 */
+  loadError: string | null
+  /** 目录只能读不能改的原因；null = 可写。 */
+  readOnly: ModelCatalogReadOnlyDto | null
   taskCount: number
   taskContent?: React.ReactNode
   diagnostic?: React.ReactNode
@@ -352,28 +387,14 @@ export function ModelSettingsHome({
   onReload: () => void
   onCustomApi: () => void
   onDirectScript: () => void
+  /** 导入写盘之后重新拉一次目录。 */
+  onImported: () => void
 }): JSX.Element {
   const { t } = useTranslation()
   const [search, setSearch] = React.useState('')
   const [morePlatformsOpen, setMorePlatformsOpen] = React.useState(false)
   const [otherWaysOpen, setOtherWaysOpen] = React.useState(false)
-  // 「手动接入」不另开向导：滚到本页已有的「自定义 API / 中转站」那一行并描一次边
-  // （§1.5.2 一功能一个家——那一行才是手动接入的家）。
-  const [manualHighlighted, setManualHighlighted] = React.useState(false)
   const scrollRef = React.useRef<HTMLDivElement>(null)
-  const handleManualConnect = React.useCallback(() => {
-    setManualHighlighted(true)
-    window.requestAnimationFrame(() => {
-      scrollRef.current
-        ?.querySelector<HTMLElement>('[data-model-home-action="custom-api"]')
-        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    })
-  }, [])
-  React.useEffect(() => {
-    if (!manualHighlighted) return
-    const timer = window.setTimeout(() => setManualHighlighted(false), 2400)
-    return () => window.clearTimeout(timer)
-  }, [manualHighlighted])
   // 各行探完把结果报上来（探测本身仍归每行的 useVendorHealth，这里只收结论，不第二次探）。
   const [unreachableKeys, setUnreachableKeys] = React.useState<ReadonlySet<string>>(() => new Set())
   const handleHealthChange = React.useCallback((vendorKey: string, unreachable: boolean) => {
@@ -388,6 +409,7 @@ export function ModelSettingsHome({
   const allModels = connections.flatMap((connection) => connection.models)
   const statuses = allModels.map((model) => resolveModelHomeStatus(model, mappings))
   const needsSetupCount = statuses.filter((status) => status === 'needsSetup' || status === 'failed').length
+  const readyCount = statuses.filter((status) => status === 'ready' || status === 'verified').length
   const hasConnections = connections.length > 0
   const showSearch = hasConnections && (connections.length >= 4 || allModels.length >= 8)
   const hasAttention = taskCount > 0 || needsSetupCount > 0
@@ -412,8 +434,10 @@ export function ModelSettingsHome({
       <SectionHeading
         title={t('onboardingProviders.drawer.home.connected')}
         aside={unreachableAside ?? (hasAttention
-          ? t('onboardingProviders.drawer.home.connectedAttention', { ready: allModels.length - needsSetupCount, pending: needsSetupCount })
-          : t('onboardingProviders.drawer.home.readyCount', { count: allModels.length }))}
+          // 「可使用」的口径必须和每个连接行里那句一样（`summary.ready`）——同一个 i18n key
+          // 在页头算一份、在行里算另一份，就是同屏两个答案。停用的、正在跑的都不算「可使用」。
+          ? t('onboardingProviders.drawer.home.connectedAttention', { ready: readyCount, pending: needsSetupCount })
+          : t('onboardingProviders.drawer.home.readyCount', { count: readyCount }))}
       />
       <ConnectedRows
         connections={connections}
@@ -437,7 +461,7 @@ export function ModelSettingsHome({
             connection={connection}
             title={hasConnections ? t('onboardingProviders.drawer.home.connectPlatform', { name: translateModelDisplayText(connection.name) }) : undefined}
             hint={availableHint(connection, t)}
-            badge={connection.vendorKey === 'apimart' ? t('onboardingProviders.drawer.home.recommended') : undefined}
+            badge={builtinVendorKeyOfKey(connection.vendorKey) === 'apimart' ? t('onboardingProviders.drawer.home.recommended') : undefined}
             end={t('onboardingProviders.drawer.home.fillKey')}
           />
         ))}
@@ -465,17 +489,6 @@ export function ModelSettingsHome({
     </section>
   ) : null
 
-  const customApiRow = (
-    <ActionRow
-      icon={<IconPlugConnected size={16} stroke={1.7} aria-hidden="true" />}
-      title={t('onboardingProviders.drawer.home.customApi')}
-      hint={t('onboardingProviders.drawer.home.customApiHint')}
-      onClick={onCustomApi}
-      dataMarker="custom-api"
-      highlighted={manualHighlighted}
-    />
-  )
-
   const alternateRows = otherAvailable.map((connection) => (
     <AvailableConnectionRow
       key={connection.vendorKey}
@@ -484,21 +497,35 @@ export function ModelSettingsHome({
     />
   ))
 
+  /**
+   * 「自定义 API / 中转站」——手工接入那条路的家。
+   *
+   * 它在 2026-09-11 的 57d73c742 里随「起点改成用 AI 帮我接入」一起下线过；09-17 用户拍板
+   * **两个都要**：MCP / AI 协助那条仍是首选摆在上面，手工入口回到「其他接入方式」下做第三条路。
+   * 恢复的是入口，不是重设计——文案、图标、落点（向导的 `newapi` 预设 = 可编辑 baseUrl 那一支）
+   * 都沿用 v0.21.0 那一版。
+   */
+  const customApiRow = (
+    <ActionRow
+      icon={<IconPlugConnected size={16} stroke={1.7} aria-hidden="true" />}
+      title={t('onboardingProviders.drawer.home.customApi')}
+      hint={t('onboardingProviders.drawer.home.customApiHint')}
+      onClick={onCustomApi}
+      dataMarker="custom-api"
+    />
+  )
+
   const otherMethodsSection = !hasConnections ? (
     <section className="mt-5" data-model-home-other-methods>
       <SectionHeading title={t('onboardingProviders.drawer.home.otherMethods')} />
       <RowGroup>
-        {customApiRow}
         {alternateRows}
+        {customApiRow}
         {availableFooter ? <div className="p-2">{availableFooter}</div> : null}
       </RowGroup>
     </section>
   ) : (
     <>
-      <section className="mt-5" data-model-home-other-methods>
-        <SectionHeading title={t('onboardingProviders.drawer.home.otherMethods')} />
-        <RowGroup>{customApiRow}</RowGroup>
-      </section>
       {otherAvailable.length > 0 || availableFooter ? (
         <section className="mt-5" data-model-home-other-ways>
           <SectionHeading title={t('onboardingProviders.drawer.home.otherWays')} />
@@ -515,6 +542,7 @@ export function ModelSettingsHome({
             {otherWaysOpen ? (
               <>
                 {alternateRows}
+                {customApiRow}
                 {availableFooter ? <div className="p-2">{availableFooter}</div> : null}
               </>
             ) : null}
@@ -559,10 +587,13 @@ export function ModelSettingsHome({
           </div>
         ) : (
           <>
+            {/* 「这份配置怎么了」先说清楚，再谈接哪家模型——用户看到空白页时第一个问题就是这个。 */}
+            <CatalogStatusNotices readOnly={readOnly} loadError={loadError} onRetry={onReload} />
+
             {/* 「用 AI 帮我接入」：想接模型的人一定会到这一屏，所以入口就放在这一屏的最上面
                 （搜索框正下方）。它不是一个模型家，也不接 MCP——只把「跟助手说什么」交到手上。 */}
             <section className="mt-4" data-model-home-assisted>
-              <AiAssistedOnboardingSection onManualConnect={handleManualConnect} />
+              <AiAssistedOnboardingSection />
             </section>
 
             {taskCount > 0 && taskContent ? (
@@ -602,6 +633,9 @@ export function ModelSettingsHome({
                   dataMarker="direct-script"
                   directScript
                 />
+                {/* 配置的搬家（导出 / 导入）：整份目录级的动作，和「直连脚本 / 网络」同属高级组，
+                    不挂在任何一家连接行上——它不是某一家的事（§1.5 一功能一个家）。 */}
+                <CatalogPackageActions onImported={onImported} />
                 {networkContent ? <div className="px-3 py-1">{networkContent}</div> : null}
               </RowGroup>
             </section>

@@ -12,6 +12,9 @@ export const zhModelSetup = {
   baseUrl: '接入地址（BaseURL）',
   baseUrlAnthropicHint: '留空用官方地址；中转站填它给你的地址',
   baseUrlHint: '中转后台那个地址，带不带 /v1 都行',
+  /** #831：地址撞上已有连接时，**原位替换**上面那句静态 hint（同一行、同一档灰字，不新增元素）。 */
+  baseUrlDuplicateCreate: '此地址已有连接「{{name}}」：填不同名称会新建独立连接；要改它的 Key，去那个连接里改。',
+  baseUrlDuplicateUpdate: '保存会更新连接「{{name}}」的 Key。',
   proxyUrl: '这个 API 单独走代理（可选）',
   proxyUrlHint: '只影响这个 API，不会改变其他厂商；支持 HTTP / HTTPS / SOCKS。只存在你的电脑上，加密保存',
   proxyUrlPlaceholder: '如：http://127.0.0.1:7897 或 socks5://127.0.0.1:7897',
@@ -28,7 +31,14 @@ export const zhModelSetup = {
   noApiKeyHint: '适用于局域网或已经在网关层完成鉴权的服务',
   getKey: '没有 Key？去 {{provider}} 官网获取 →',
   models: '模型',
-  noModelsListedHint: '这个地址没自动列出模型，可在「选择模型」里手动输入 id，或重新拉取',
+  noModelsListedHint: '该供应商没有模型清单接口 / 返回了空列表；可在「选择模型」里手动输入 id，或重新拉取',
+  // 存 key 那一刻就地发现的两种非异常出口（空清单 / 还卡在别的前置条件）。抛错那条由调用方
+  // 原样显示错误文案，不走这里。
+  credentialSavedNoModels:
+    'Key 已存好，但这个供应商没有模型清单接口 / 返回了空列表，所以没自动列出模型——可稍后重新拉取，或手动输入模型 ID。',
+  credentialSavedDiscoveryUnavailable:
+    'Key 已存好。这家没能读出模型清单（没有清单接口，或这次没读通），所以没自动列出模型——在「选择模型」里手动输入模型 ID 即可，或稍后重新拉取。',
+  credentialSavedBlocked: 'Key 已存好，但这次接入还卡在「{{reason}}」这一步。',
   noModelsFetchedHint: '没自动拉到模型，可在「选择模型」里手动输入 id，或重新拉取',
   noModelsFetchedWithReason: '没自动拉到模型：{{error}}。可在「选择模型」里手动输入 id，或重新拉取',
   discoveryUnsupported: '这个地址未提供可识别的模型列表，不代表模型不可用。可手动输入模型 ID，再配置调用方式。',
@@ -41,6 +51,8 @@ export const zhModelSetup = {
     rate_limit: '模型列表请求被限流，请稍后重试。{{error}}',
     network: '模型列表请求未完成，请检查网络或代理后重试。{{error}}',
     invalid_response: '地址返回的内容不是可识别的模型列表，请检查地址或手动输入模型 ID。{{error}}',
+    // 整句由主进程按界面语言给（desktopStrings network.credentialRedirect*），这里原样透出，不再拼前缀。
+    redirect: '{{error}}',
     upstream: '服务返回了模型列表错误，可稍后重试。{{error}}',
   },
   manualEnter: '手动输入',
@@ -62,7 +74,10 @@ export const zhModelSetup = {
   addHeader: '添加 Header',
   diagnostics: '连接诊断（可选）',
   testConnection: '测试连接',
-  testAndSaveHint: '“测试连接”是可选的显式上游请求，可能产生少量额度；“保存”只写入本地，不会发起测试。',
+  testAndSaveHint: '“测试连接”是可选的显式上游请求；“保存”只写入本地，不会发起测试。',
+  // ：这一下今天确实会发一次真实 POST /chat/completions（onboardingIpc.probeOneProtocol）。
+  // 费用边界的 owner（catalog/credentialProbePolicy）还没接到这条路上，所以本批先如实说，不加确认卡。
+  testConnectionSpendHint: '会向该地址发送一次测试请求。',
   connectedProtocol: '已连上 · 用的是 {{protocol}} 协议',
   connected: '连接正常',
   connectedReachabilityOnly:
@@ -84,11 +99,14 @@ export const zhModelSetup = {
   saveFailed: '没能保存',
   saveFailedHint: '连接和模型没有写入本地，请保留当前选择后重试。',
   integrationUnavailable: '接入会话不可用，请回到模型设置后重试。',
-  integrationConfirmTitle: '确认接入并开始验证',
-  integrationConfirmHint: '这是一次真实生产请求，用来证明选中的模型确实可用。确认后才会消耗上游额度。',
-  integrationSpendWarning: '请求会发送到显示的接入地址。Nomi 不会把 API Key 展示给对话助手。',
-  integrationConfirmAction: '确认验证',
-  integrationConfirmFailed: '确认没有完成，请检查窗口状态后重试。',
+  integrationSelfCheckTitle: '开始自检',
+  // 旧文案写的是「这是一次真实生产请求……消耗上游额度」——而实际最坏一个模型 6 次付费出图。
+  // 2026-09-11 起这一步只做免费自检：不发任何生成请求，也就没有额度可花。
+  // 2026-09-12 连词条名里的 confirm / spend 一起退役：这一步不是确认花钱，是开始检查。
+  integrationSelfCheckHint: '自检只做三件事：确认密钥可用、拉一次模型清单、检查调用方式是否完整。不会发起生成请求。',
+  integrationSelfCheckScope: '自检只访问显示的接入地址。Nomi 不会把 API Key 展示给对话助手。',
+  integrationSelfCheckAction: '开始自检',
+  integrationSelfCheckFailed: '自检没有跑起来，请检查窗口状态后重试。',
   integrationFailed: '验证没有通过，这条工作流还没接进来。',
   integrationFailedWithReason: '验证没有通过（{{code}}），这条工作流还没接进来。',
   integrationPending: '正在读取…',
@@ -104,7 +122,7 @@ export const zhModelSetup = {
     START_FAILED: '没能启动验证，请保留当前选择后重试。',
   },
   added: '{{name}} 已添加',
-  addedHint: '已保存为“已配置、未验证”，可稍后在模型详情中选择调用方式。',
+  addedHint: '已保存。自检通过后它会出现在画布的模型列表里，并标注「未试跑」——第一次真实生成就是试跑。',
   addAnother: '再加一个',
   done: '完成',
   addFailed: '没能完成添加',
@@ -138,6 +156,8 @@ export const enModelSetup = {
   baseUrl: 'Base URL',
   baseUrlAnthropicHint: 'Leave empty for the official endpoint, or enter your gateway URL',
   baseUrlHint: 'Enter the gateway URL; /v1 is optional',
+  baseUrlDuplicateCreate: 'This address already has a connection “{{name}}”. A different name creates a separate connection; to change its key, edit that connection.',
+  baseUrlDuplicateUpdate: 'Saving will update the key for “{{name}}”.',
   proxyUrl: 'Proxy for this API (optional)',
   proxyUrlHint: 'Only this API uses it; other providers are unchanged. HTTP / HTTPS / SOCKS supported. Stored encrypted on this computer only.',
   proxyUrlPlaceholder: 'Example: http://127.0.0.1:7897 or socks5://127.0.0.1:7897',
@@ -155,7 +175,12 @@ export const enModelSetup = {
   getKey: 'No key? Get one from {{provider}} →',
   models: 'Models',
   noModelsListedHint:
-    'This endpoint did not list models automatically. Enter an ID manually in Choose models, or fetch again.',
+    'This provider has no model listing endpoint / returned an empty list. Enter an ID manually in Choose models, or fetch again.',
+  credentialSavedNoModels:
+    'The key is saved, but this provider has no model listing endpoint / returned an empty list, so nothing was listed — fetch again later, or enter model IDs manually.',
+  credentialSavedDiscoveryUnavailable:
+    'The key is saved. This provider’s model list could not be read (no listing endpoint, or it did not respond), so nothing was listed — enter model IDs manually in Choose models, or fetch again later.',
+  credentialSavedBlocked: 'The key is saved, but this integration is still blocked at “{{reason}}”.',
   noModelsFetchedHint:
     'Models could not be fetched automatically. Enter an ID manually in Choose models, or fetch again.',
   noModelsFetchedWithReason:
@@ -174,6 +199,7 @@ export const enModelSetup = {
     invalid_response:
       'The response is not a recognized model list. Check the URL or enter a model ID manually. {{error}}',
     upstream: 'The service returned a model-list error. Try again later. {{error}}',
+    redirect: '{{error}}',
   },
   manualEnter: 'Enter Manually',
   fetchModels: 'Get Models',
@@ -197,7 +223,9 @@ export const enModelSetup = {
   diagnostics: 'Connection diagnostics (optional)',
   testConnection: 'Test connection',
   testAndSaveHint:
-    '“Test connection” is an optional explicit upstream request and may use a small amount of credit. “Save” only writes locally and never runs a test.',
+    '“Test connection” is an optional explicit upstream request. “Save” only writes locally and never runs a test.',
+  testConnectionSpendHint:
+    'This sends one test request to that address.',
   connectedProtocol: 'Connected · Using the {{protocol}} protocol',
   connected: 'Connection successful',
   connectedReachabilityOnly:
@@ -223,13 +251,13 @@ export const enModelSetup = {
   saveFailed: 'Could not save',
   saveFailedHint: 'The connection and models were not written locally. Keep the current selection and try again.',
   integrationUnavailable: 'The integration session is unavailable. Return to Model settings and try again.',
-  integrationConfirmTitle: 'Confirm integration and start verification',
-  integrationConfirmHint:
-    'This runs a real production request to prove the selected models work. It may use upstream quota.',
-  integrationSpendWarning:
-    'The request will be sent to the displayed endpoint. Nomi never shows the API key to the chat agent.',
-  integrationConfirmAction: 'Confirm Verify',
-  integrationConfirmFailed: 'Confirmation did not complete. Check the window and try again.',
+  integrationSelfCheckTitle: 'Start the self-check',
+  integrationSelfCheckHint:
+    'The self-check does three things: confirm the key works, fetch the model list once, and check that the call contract is complete. It never sends a generation request.',
+  integrationSelfCheckScope:
+    'The self-check only reaches the integration address shown here. Nomi never shows your API key to the assistant.',
+  integrationSelfCheckAction: 'Start self-check',
+  integrationSelfCheckFailed: 'The self-check did not start. Check the window and try again.',
   integrationFailed: 'Verification did not pass. This workflow is not connected yet.',
   integrationFailedWithReason: 'Verification did not pass ({{code}}). This workflow is not connected yet.',
   integrationPending: 'Loading…',
@@ -245,7 +273,7 @@ export const enModelSetup = {
     START_FAILED: 'Verification could not start. Keep the current selection and try again.',
   },
   added: '{{name}} added',
-  addedHint: 'Saved as configured and unverified. Choose its call method later from model details.',
+  addedHint: 'Saved. Once the self-check passes it appears in the canvas model list marked “not tried yet” — your first real generation is the try run.',
   addAnother: 'Add another',
   done: 'Done',
   addFailed: 'Could not add the model',

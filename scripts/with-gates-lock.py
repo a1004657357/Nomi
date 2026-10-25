@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Serialize local validation using an OS-owned lock; no stale-file deletion.
 
-Two callers share this wrapper (one lock implementation, one set of failure modes):
-`gates` on /tmp/nomi-gates.lock, and the Ponytail review hook on /tmp/nomi-ponytail.lock
-(--wait-timeout bounds the queue; --label says which lock is being waited on).
+Local validation (`gates` and the suites it fans out to) serializes on
+/tmp/nomi-gates.lock. One lock implementation, one set of failure modes.
 
 The inode stays in place: unlinking a flock file would allow two owners on two
 inodes. The kernel releases dead owners, even after SIGKILL. On POSIX the foreground
@@ -23,7 +22,26 @@ import time
 import uuid
 
 if os.name == 'nt':
+    import ctypes
+    from ctypes import wintypes
     import msvcrt
+
+    # Windows has no signals: CPython maps os.kill(pid, 0) onto
+    # GenerateConsoleCtrlEvent(CTRL_C_EVENT=0, pid), which interrupts every
+    # process sharing that console (issue #838: it killed the host backend).
+    # Observing a process object is the read-only equivalent.
+    PROCESS_SYNCHRONIZE = 0x00100000
+    ERROR_INVALID_PARAMETER = 87
+    ERROR_ACCESS_DENIED = 5
+    WAIT_OBJECT_0 = 0
+    WAIT_TIMEOUT = 258
+    _kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
 else:
     import fcntl
 
@@ -51,10 +69,43 @@ def try_lock(file):
 
 
 def alive(pid):
+    """Read-only liveness of a lock owner. Never signals, never terminates.
+
+    A false positive hands the shared lock to a caller that cannot really
+    inherit it, so unknown states raise instead of guessing.
+    """
+    # Rejecting non-positive-int pids up front keeps 0 (= "my own console
+    # group" on Windows, "my process group" on POSIX), negatives, bools and
+    # junk metadata out of the system call.
+    if type(pid) is not int or pid <= 0:
+        return False
+    if os.name == 'nt':
+        if pid > 0xFFFFFFFF:  # not a DWORD, so not a pid
+            return False
+        handle = _kernel32.OpenProcess(PROCESS_SYNCHRONIZE, False, pid)
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == ERROR_INVALID_PARAMETER:  # no process carries this id
+                return False
+            if error == ERROR_ACCESS_DENIED:  # exists, just not ours to open
+                return True
+            raise ctypes.WinError(error)
+        try:
+            # Zero-wait on the process object: signaled means it has exited.
+            # GetExitCodeProcess alone cannot tell STILL_ACTIVE from a process
+            # that really exited with that very code.
+            state = _kernel32.WaitForSingleObject(handle, 0)
+            if state == WAIT_TIMEOUT:
+                return True
+            if state == WAIT_OBJECT_0:
+                return False
+            raise ctypes.WinError(ctypes.get_last_error())  # WAIT_FAILED etc.
+        finally:
+            _kernel32.CloseHandle(handle)
     try:
-        os.kill(int(pid), 0)
+        os.kill(pid, 0)
         return True
-    except (ValueError, TypeError, ProcessLookupError):
+    except (OverflowError, ProcessLookupError):
         return False
     except PermissionError:
         return True
@@ -103,27 +154,15 @@ def execute(command, shell, file, token, owner=None):
     return code if code >= 0 else 128 - code
 
 
-def parse_options(args):
-    """Optional leading flags. Kept ahead of the command so `--`/`--command` still delimit it."""
-    wait_timeout, label = None, 'gates'
-    while len(args) >= 2 and args[0] in ('--wait-timeout', '--label'):
-        if args[0] == '--wait-timeout':
-            wait_timeout = float(args[1])
-        else:
-            label = args[1]
-        args = args[2:]
-    return wait_timeout, label, args
-
-
 def main():
-    wait_timeout, label, args = parse_options(sys.argv[1:])
+    args = sys.argv[1:]
     if len(args) >= 2 and args[0] == '--command':
         extra = subprocess.list2cmdline(args[2:]) if os.name == 'nt' else shlex.join(args[2:])
         command, shell = args[1] + (' ' + extra if extra else ''), True
     elif len(args) >= 2 and args[0] == '--':
         command, shell = args[1:], False
     else:
-        raise SystemExit('Usage: with-gates-lock.py [--wait-timeout <秒>] [--label <名字>] -- <command> [args] | --command <shell command>')
+        raise SystemExit('Usage: with-gates-lock.py -- <command> [args] | --command <shell command>')
     default = os.path.join(tempfile.gettempdir() if os.name == 'nt' else '/tmp', 'nomi-gates.lock')
     lock_path = os.environ.get('NOMI_GATES_LOCK_PATH', default)
     # O_NOFOLLOW prevents accidentally opening a symlink in the shared tmp dir.
@@ -131,19 +170,14 @@ def main():
     with os.fdopen(fd, 'r+', encoding='utf-8') as file:
         token = os.environ.get('NOMI_GATES_LOCK_TOKEN', '')
         next_report = 0
-        deadline = None if wait_timeout is None else time.monotonic() + wait_timeout
         while not try_lock(file):
             owner = metadata(file)
             if inherited_owner(owner, token):
                 return execute(command, shell, file, token)
             if time.monotonic() >= next_report:
                 minutes = max(0, (time.time() - owner.get('started', time.time())) / 60)
-                print(f"另一棵 worktree 在跑 {label}（pid={owner.get('pid', '?')} cwd={owner.get('cwd', '?')} 已跑 {minutes:.1f} 分钟）；排队等待", file=sys.stderr, flush=True)
+                print(f"另一棵 worktree 在跑 gates（pid={owner.get('pid', '?')} cwd={owner.get('cwd', '?')} 已跑 {minutes:.1f} 分钟）；排队等待", file=sys.stderr, flush=True)
                 next_report = time.monotonic() + 30
-            # 等锁封顶后 fail-closed（EX_TEMPFAIL）：调用方该重试或走留痕延后，不许并跑。
-            if deadline is not None and time.monotonic() >= deadline:
-                print(f"等 {label} 锁超过 {wait_timeout:.0f} 秒（占用者 pid={owner.get('pid', '?')} cwd={owner.get('cwd', '?')}）；放弃排队", file=sys.stderr, flush=True)
-                return 75
             time.sleep(0.2)
         token = uuid.uuid4().hex
         owner = {'pid': os.getpid(), 'cwd': os.getcwd(), 'started': time.time(), 'token': token}

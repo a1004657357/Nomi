@@ -68,13 +68,20 @@ describe('generationNodeExecutor connected text prompt integration', () => {
     const target = mediaNode(`${kind}-1`, kind)
 
     await generationNodeExecutor(target, {
+      projectTarget: { projectId: 'project-test', immutableProjectUuid: '11111111-1111-4111-8111-111111111111', projectGeneration: 1 },
       nodes: [text, target],
       edges: [textPromptEdge(text.id, target.id)],
     })
 
     expect(runWorkbenchTaskByVendor).toHaveBeenCalledOnce()
     const [, request] = runWorkbenchTaskByVendor.mock.calls[0] as [string, TaskRequestDto]
-    expect(request.prompt).toBe('base prompt\n\nconnected story context')
+    expect(request.prompt).toContain('base prompt\n\nconnected story context')
+    if (kind === 'video') {
+      expect(request.prompt).toContain('【Nomi 视频编译约束】')
+      expect(request.prompt).toContain('不是照片动效')
+    } else {
+      expect(request.prompt).toBe('base prompt\n\nconnected story context')
+    }
     expect(target.prompt).toBe('base prompt')
   })
 })

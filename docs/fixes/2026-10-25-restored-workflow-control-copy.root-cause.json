@@ -1,0 +1,260 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-restored-workflow-control-copy",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "Previously unresolved translations concealed invalid compact control copy",
+  "symptom": "Resolved restored/new action labels expose 25 contract findings across 16 keys in three owned namespaces.",
+  "direct_cause": "Long explanatory phrases were restored as actual button labels; two labels also violate the established canonical action vocabulary.",
+  "class_root": "Translation resolution was verified without also exercising the existing control-copy contract against real consumers.",
+  "affected_population": [
+    "Scene3D edit/preview/export/trajectory controls",
+    "Text-model empty-state chooser",
+    "Dreamina CLI update control"
+  ],
+  "scope_paths": [
+    "src/i18n/locales/scene3d.ts",
+    "src/i18n/locales/generationCommon.ts",
+    "src/i18n/locales/onboardingProviders.ts",
+    "src/i18n/restoredWorkflowControlCopy.test.ts"
+  ],
+  "entry_points": [
+    "scene3d.coach.start",
+    "generationCommon.parameters.selectTextModel",
+    "onboardingProviders.dreamina.update",
+    "scene3d.cameraMovePanel.exportFrames",
+    "scene3d.environment.importPanorama",
+    "scene3d.export.goCanvas",
+    "scene3d.fullscreen.openEditor",
+    "scene3d.moveHub.enterTrajectory",
+    "scene3d.taskFlow.backToWorkViewShort",
+    "scene3d.taskFlow.previewFinal",
+    "scene3d.trajectory.list.addToGroup",
+    "scene3d.trajectory.menu.addControlPoint",
+    "scene3d.exportCard.replayInPlace",
+    "scene3d.trajectory.enterEdit",
+    "scene3d.trajectory.exitEdit",
+    "scene3d.export.acknowledge"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The existing control source, GLOSSARY, i18next resources and repository-owned display/source split define this copy invariant. No external model/service capability is assumed or invoked.",
+  "invariants": [
+    "Only 16 existing display keys may change; all other locale values, interpolation variables and raw source/default names stay unchanged.",
+    "Chinese visible action labels satisfy existing weight <=4; English <=2 words; canonical GLOSSARY actions are used.",
+    "Existing controls, fields, callbacks, permissions, approval and no-resend semantics remain byte-identical.",
+    "No TSX/source-default/geometry/checker/baseline/registry/frozen/count/token-budget edit."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/i18n/locales",
+    "tests": [
+      "src/i18n/restoredWorkflowControlCopy.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/generationCommon.ts",
+      "symbol": "zhGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/onboardingProviders.ts",
+      "symbol": "zhOnboardingProviders"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/scene3d.ts",
+      "symbol": "zhScene3d"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhScene3d"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhOnboardingProviders"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enScene3d"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enOnboardingProviders"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/onboarding/DreaminaMemberCard.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/ai/AssistantModelPicker.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCameraMovePanel.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DCoachMarks.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dExportPanel.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMoveHub.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DTaskOverlays.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectoryListPanel.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTrajectorySurfaces.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/trajectory/TrajectoryMenus.tsx",
+      "symbol": "t"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "t"
+    }
+  ],
+  "door_reduction": {
+    "before": 21,
+    "after": 21,
+    "why_not": "Copy values change at the existing locale owners only. Resource registration and each distinct workflow control remain genuine required readers; deleting a control or rewriting its handler would violate the request. Actual AST reads are recorded without pretending pure data definitions are calls."
+  },
+  "generality_proof": "A focused regression reuses the unchanged real control scanner over every actual control in the three owned namespaces, and checks that each affected key still resolves in both languages. Existing source/hash regressions prove action copy remains outside authored state.",
+  "shared_boundaries": [
+    {
+      "path": "src/i18n/locales/scene3d.ts",
+      "symbol": "zhScene3d",
+      "responsibility": "Display-only compact Scene3D actions; canonical defaults stay in their neutral source owner."
+    },
+    {
+      "path": "src/i18n/locales/generationCommon.ts",
+      "symbol": "zhGenerationCommon",
+      "responsibility": "Text-model-specific chooser copy with existing full catalog tooltip."
+    },
+    {
+      "path": "src/i18n/locales/onboardingProviders.ts",
+      "symbol": "zhOnboardingProviders",
+      "responsibility": "Dreamina CLI update display copy, with original update handler and state untouched."
+    },
+    {
+      "path": "src/i18n/restoredWorkflowControlCopy.test.ts",
+      "symbol": "copyOffenders",
+      "responsibility": "Invoke the existing unchanged copyOffenders owner over real TSX consumers and resolve every affected key in both languages."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCameraMovePanel.tsx",
+      "entry_point": "exportFrames control",
+      "disposition": "enforced",
+      "evidence": "Real existing control still uses the same key, tooltip and onExportFrames callback; only locale label is shortened."
+    },
+    {
+      "path": "src/workbench/ai/AssistantModelPicker.tsx",
+      "entry_point": "empty text-model picker",
+      "disposition": "enforced",
+      "evidence": "Consumer specifically requires text-model identity and retains its nomi-open-model-catalog event/title."
+    },
+    {
+      "path": "src/ui/onboarding/DreaminaMemberCard.tsx",
+      "entry_point": "CLI update action",
+      "disposition": "enforced",
+      "evidence": "Same busy/updating conditional and update callback; no CLI is executed here."
+    },
+    {
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "entry_point": "canonical authored canvas defaults",
+      "disposition": "not-affected",
+      "evidence": "No action key reads or edits; existing exact source/prompt/geometry/SSR regressions are rerun."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any new or restored resource can turn a previously unresolved control key into long or inconsistent visible copy.",
+    "same_class_scan": [
+      "controls-compact-06.log only, excluding coordinator-owned canvasComponents.",
+      "Existing copyOffenders and scanControlCopy against all real TSX controls in owned namespaces.",
+      "Exact key references and original 21c4de6ea -> 33cd631 locale diff prove task ownership.",
+      "Hash all other resolved records and audit all producer/handler/source paths unchanged."
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "src/i18n/restoredWorkflowControlCopy.test.ts",
+    "invariant": "Resolved labels in all three owned namespaces obey the unchanged real compact-control contract and retain their real keys/consumers.",
+    "failure_mode": "Any new overlong/banned/noncanonical owned control or missing affected locale key fails the focused test.",
+    "exception_policy": "none",
+    "strategy": "Run the existing AST consumer/real-resource contract after restoring translations; do not modify its parser, bounds or exemptions.",
+    "artifacts": [
+      "src/i18n/restoredWorkflowControlCopy.test.ts",
+      "src/i18n/locales/scene3d.ts",
+      "src/i18n/locales/generationCommon.ts",
+      "src/i18n/locales/onboardingProviders.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/i18n/restoredWorkflowControlCopy.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/i18n/restoredWorkflowControlCopy.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "All controls, translation keys, fields and handlers remain; only display strings change."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Existing i18next, TypeScript AST parser, Vitest and control-copy checker are retained unchanged.",
+    "exit_criteria": []
+  },
+  "migration": "No stored state migration or key rename. Existing controls resolve shorter display copies; canonical source names and prompt bytes remain independent of locale.",
+  "residual_risks": [
+    "All five focused files pass (105 tests), including existing source/geometry/prompt/hash and SSR cases. This is not whole-repository CI.",
+    "The private whole-control scan still contains only coordinator-owned canvasComponents findings because those main-line fixes are not in this private base. Assigned namespaces have zero findings.",
+    "Real App/CLI/media/paid flows are deliberately not exercised; full CI remains coordinator-owned."
+  ]
+}

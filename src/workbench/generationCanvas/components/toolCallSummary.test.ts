@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { buildStepDetailLabels, countCreatedNodesByCategory, summarizeToolCall, describeToolCallDetail } from './toolCallSummary'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import i18n, { DEFAULT_LOCALE } from '../../../i18n'
+import { CAPABILITY_ALIAS_ENTRIES } from '../../../../electron/shared/agentCapabilities/registry'
 
 // id→标题翻译读 store 节点(A6:杀掉漏给用户的 n1/shot-1 这类机器 id)。测试注入几个有标题的节点。
 function seedNodes(nodes: Array<{ id: string; title: string }>): void {
@@ -15,8 +16,28 @@ describe('summarizeToolCall — 时间线步骤标题(人话,无 toolName 原文
     expect(summarizeToolCall('create_canvas_nodes', { nodes: [1, 2, 3], summary: '海边三镜头' })).toBe('创建 3 个节点：海边三镜头')
     expect(summarizeToolCall('connect_canvas_edges', { edges: [1, 2] })).toBe('连接 2 条引用线')
     expect(summarizeToolCall('set_node_prompt', { nodeId: 'n1' })).toBe('改写「镜1」的提示词')
+    expect(summarizeToolCall('update_storyboard_shot', { shotIndex: 2 })).toBe('修改镜头 2 的分镜提示词')
+    expect(summarizeToolCall('batch_update_storyboard_shots', { shots: [{ shotIndex: 1 }, { shotIndex: 2 }] })).toBe('批量填写 2 个分镜表镜头')
     expect(summarizeToolCall('delete_canvas_nodes', { nodeIds: ['a'] })).toBe('删除 1 个节点')
     expect(summarizeToolCall('run_generation_batch', { nodeIds: ['a', 'b'] })).toContain('批量生成 2 个节点')
+    expect(summarizeToolCall('attach_external_image_to_node', { nodeId: 'n1' })).toBe('导入外部图片到「镜1」')
+    expect(summarizeToolCall('list_capability_recipes', {})).toBe('查看创作能力配方')
+    expect(
+      summarizeToolCall('apply_capability_recipe', {
+        sourceNodeId: 'n1',
+        recipeId: 'portrait.refine',
+        requestedOutputs: 1,
+      }),
+    ).toBe('为「镜1」生成「人像真实化」新结果（将产生费用）')
+    expect(summarizeToolCall('apply_capability_recipe', {
+      sourceNodeId: 'n1', recipeId: 'image.multiview.custom', visionReview: { modelKey: 'vision' },
+    })).toContain('并执行一次视觉复核')
+    expect(summarizeToolCall('save_creative_resource', {
+      sourceNodeId: 'n1', kind: 'style', label: '柔和胶片',
+    })).toBe('把「镜1」保存为风格资源「柔和胶片」')
+    expect(summarizeToolCall('handoff_model3d', {
+      sourceNodeId: 'n1', target: 'vibingDirector',
+    })).toBe('把「镜1」送入 Blender Director')
   })
 
   it('set_node_prompt 查不到节点 → 退回不带 id 的人话(不漏机器串)', () => {
@@ -28,6 +49,33 @@ describe('summarizeToolCall — 时间线步骤标题(人话,无 toolName 原文
 
   it('未知工具退回工具名(不崩)', () => {
     expect(summarizeToolCall('mystery', {})).toBe('mystery')
+  })
+
+  it.each(['zh-CN', 'en-US'])('covers all six live creative Pi aliases without changing authored labels: %s', async locale => {
+    await i18n.changeLanguage(locale)
+    seedNodes([{ id: 'source', title: '用户原文标题' }])
+    const aliases = CAPABILITY_ALIAS_ENTRIES.filter(entry => entry.surface === 'pi'
+      && (entry.contract.id === 'creative.component.read' || entry.contract.id === 'creative.component.write'))
+    expect(aliases).toHaveLength(6)
+    for (const { alias } of aliases) {
+      expect(summarizeToolCall(alias, { sourceNodeId: 'source', recipeId: 'portrait.refine', kind: 'style', label: '用户自定资源' })).not.toBe(alias)
+    }
+    const summary = summarizeToolCall('apply_capability_recipe', { sourceNodeId: 'source', recipeId: 'portrait.refine', visionReview: { modelKey: 'vision' } })
+    expect(summary).toContain('用户原文标题')
+    expect(summary).toContain(locale === 'zh-CN' ? '将产生费用' : '(paid)')
+    expect(summary).toContain(locale === 'zh-CN' ? '视觉复核' : 'visual review')
+    if (locale === 'en-US') expect(summary).not.toContain('人像真实化')
+    expect(summarizeToolCall('save_creative_resource', { sourceNodeId: 'source', kind: 'style', label: '用户自定资源' })).toContain('用户自定资源')
+    for (const [kind, zh, en] of [
+      ['character', '角色', 'Character'], ['scene', '场景', 'Scene'],
+      ['prop', '道具', 'Prop'], ['style', '风格', 'Style'],
+    ] as const) {
+      const saved = summarizeToolCall('save_creative_resource', { sourceNodeId: 'source', kind, label: '用户自定资源' })
+      expect(saved).toContain(locale === 'zh-CN' ? zh : en)
+      expect(saved).not.toContain('storyboardEditor.')
+    }
+    expect(summarizeToolCall('future_creative_tool', {})).toBe('future_creative_tool')
+    await i18n.changeLanguage(DEFAULT_LOCALE)
   })
 })
 
@@ -57,12 +105,28 @@ describe('describeToolCallDetail — 副标题翻 args(杀 raw id/JSON)', () => 
     const detail = describeToolCallDetail('set_node_prompt', { prompt: long })
     expect(detail.length).toBeLessThan(90)
     expect(detail.endsWith('…')).toBe(true)
+    expect(describeToolCallDetail('update_storyboard_shot', { videoPrompt: long }).endsWith('…')).toBe(true)
+    expect(describeToolCallDetail('batch_update_storyboard_shots', { shots: [{ shotIndex: 2 }, { shotIndex: 1 }] })).toBe('镜头 1、镜头 2')
   })
 
   it('delete/batch 列节点标题(非 id);read 无 detail', () => {
     seedNodes([{ id: 'a', title: '镜A' }, { id: 'b', title: '镜B' }])
     expect(describeToolCallDetail('delete_canvas_nodes', { nodeIds: ['a', 'b'] })).toBe('「镜A」、「镜B」')
+    expect(describeToolCallDetail('attach_external_image_to_node', { source: '/tmp/codex-output.png' })).toBe('/tmp/codex-output.png')
     expect(describeToolCallDetail('read_canvas_state', {})).toBe('')
+    expect(
+      describeToolCallDetail('apply_capability_recipe', {
+        modelKey: 'gpt-image-2',
+        modeId: 'image-edit',
+        requestedOutputs: 3,
+      }),
+    ).toBe('gpt-image-2 · image-edit · 3 个结果')
+    expect(describeToolCallDetail('apply_capability_recipe', {
+      modelKey: 'gpt-image-2', requestedOutputs: 2, visionReview: { modelKey: 'vision' },
+    })).toBe('gpt-image-2 · 2 个结果 · 视觉复核 1 次')
+    expect(describeToolCallDetail('handoff_model3d', {
+      targetNodeId: 'director-1', license: 'user-owned',
+    })).toBe('追加到 director-1 · 许可 user-owned')
   })
 })
 

@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:symlinks /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-no-machine-symlinks.mjs
+
+✅ 无本机绝对路径符号链接进 git

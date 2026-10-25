@@ -1,54 +1,58 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { subscribeProjectOpened, withProjectAction } from '../workbench/project/projectCanvasReadSurface'
+import { createProjectSessionTestHarness } from '../workbench/project/projectSessionTestHarness'
 
 const KEY = 'nomi-workbench-last-active-project-v1'
-
-// 测试环境是 node（无 jsdom），用最小 localStorage 桩模拟 window。
 const store = new Map<string, string>()
-const localStorageStub = {
-  getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-  setItem: (k: string, v: string) => void store.set(k, v),
-  removeItem: (k: string) => void store.delete(k),
-}
+let session: ReturnType<typeof createProjectSessionTestHarness>
 
-describe('getDesktopActiveProjectId（projectId 缺失窗口的兜底）', () => {
+describe('project action authority replaces the deleted desktop reader', () => {
   beforeEach(() => {
     store.clear()
-    vi.stubGlobal('window', { localStorage: localStorageStub })
+    vi.stubGlobal('window', { localStorage: { getItem: (key: string) => store.get(key) ?? null } })
+    session = createProjectSessionTestHarness()
   })
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.resetModules()
-  })
+  afterEach(() => { session.dispose(); vi.unstubAllGlobals() })
 
-  it('内存全局有值时直接返回它', async () => {
-    const { getDesktopActiveProjectId, setDesktopActiveProjectId } = await import('./activeProject')
-    setDesktopActiveProjectId(' proj-A ')
-    expect(getDesktopActiveProjectId()).toBe('proj-A')
+  it('issues only the hydrated project', async () => {
+    await session.open('proj-A')
+    expect(withProjectAction(project => project.binding.projectId)).toBe('proj-A')
   })
-
-  it('setter 尚未运行（React effect 还没赋值的窗口）→ 回退到持久化的 last-active id', async () => {
+  it('does not grant authority from persisted last-active before hydration', () => {
     store.set(KEY, 'proj-persisted')
-    const { getDesktopActiveProjectId } = await import('./activeProject')
-    // 这正是修复点：以前这里返回空 → 生成图拿到会过期的厂商临时 URL、上传退回 base64
-    expect(getDesktopActiveProjectId()).toBe('proj-persisted')
+    expect(withProjectAction(project => project.binding.projectId)).toBeUndefined()
   })
-
-  it('内存有值时优先于持久化值', async () => {
-    const { getDesktopActiveProjectId, setDesktopActiveProjectId } = await import('./activeProject')
-    setDesktopActiveProjectId('proj-current')
+  it('does not replace the open project with persisted state', async () => {
+    await session.open('proj-current')
     store.set(KEY, 'proj-stale')
-    expect(getDesktopActiveProjectId()).toBe('proj-current')
+    expect(withProjectAction(project => project.binding.projectId)).toBe('proj-current')
   })
-
-  it('显式清空后不再回退到上一个持久化项目', async () => {
+  it('revokes authority on close despite persisted state', async () => {
     store.set(KEY, 'proj-stale')
-    const { getDesktopActiveProjectId, setDesktopActiveProjectId } = await import('./activeProject')
-    setDesktopActiveProjectId(null)
-    expect(getDesktopActiveProjectId()).toBe('')
+    await session.open('proj-current')
+    const project = withProjectAction(project => project)!
+    session.close()
+    expect(() => project.assertCurrent()).toThrow()
+    expect(withProjectAction(project => project.binding.projectId)).toBeUndefined()
   })
-
-  it('两者都空时返回空字符串（不抛错）', async () => {
-    const { getDesktopActiveProjectId } = await import('./activeProject')
-    expect(getDesktopActiveProjectId()).toBe('')
+  it('has no implicit local project when no project is open', () => {
+    expect(withProjectAction(project => project.binding.projectId)).toBeUndefined()
+  })
+  it('does not revive an old lifetime after A to B to A', async () => {
+    await session.open('proj-A')
+    const first = withProjectAction(project => project)!
+    await session.open('proj-B')
+    await session.open('proj-A')
+    expect(() => first.assertCurrent()).toThrow()
+    expect(withProjectAction(project => project.binding.projectId)).toBe('proj-A')
+  })
+  it('notifies adopted projects and stops after unsubscribe', async () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeProjectOpened(project => listener(project.binding.projectId))
+    await session.open('proj-A')
+    await session.open('proj-B')
+    unsubscribe()
+    await session.open('proj-C')
+    expect(listener.mock.calls).toEqual([['proj-A'], ['proj-B']])
   })
 })

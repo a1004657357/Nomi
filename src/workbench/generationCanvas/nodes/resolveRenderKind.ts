@@ -3,7 +3,14 @@
 import type { GenerationCanvasNode } from "../model/generationCanvasTypes";
 
 /** 走「卡片」式 body（非纯图片预览）的 renderKind 集合。 */
-export const CARD_RENDER_KINDS = ["character-card", "scene-card", "prop-card", "audio-strip", "whiteboard-card"] as const;
+export const CARD_RENDER_KINDS = [
+  "character-card",
+  "scene-card",
+  "prop-card",
+  "audio-strip",
+  "whiteboard-card",
+  "storyboard-table",
+] as const;
 
 /** kind 自带专属卡 body 的节点：这些 kind 的 body 就是功能本体，任何分类默认值都不该顶掉它。 */
 const RENDER_KIND_BY_NODE_KIND: Record<string, string> = {
@@ -17,25 +24,32 @@ const RENDER_KIND_BY_NODE_KIND: Record<string, string> = {
  * 推断节点的 renderKind。优先级：
  * 1. 素材节点（kind=asset）永远纯图片预览（renderKind=undefined）——否则落进 cast/scene 分类的
  *    素材会被误判成角色/场景卡。
- * 2. **kind 专属卡最高**：画板/声音/角色/场景节点在任意分类都长成自己的卡——V51→V60 迁移曾把
- *    shots 分类默认值 `shot-frame` 盖章到这些节点的 renderKind 上，画板节点因此渲染成通用媒体壳、
- *    「打开画板」入口消失（2026-07-29 真机复现）。kind 压过存量脏显式值 = 行为层自愈全部已损数据。
- * 3. node.renderKind 显式覆盖（对无专属卡的 kind，如 shots 的 image 节点 → shot-frame 媒体预览）。
- * 4. categoryId 仅作「无 kind 信号」时的兜底（如 prop 分类的 image 节点 → prop-card）。
+ * 2. 画板/声音的专属 card 是功能本体，必须优先于显式展示值。V51→V60 曾把 shots 默认
+ *    `shot-frame` 写进旧节点，已存脏值不能藏掉「打开画板」或音频上传/播放/转写控件。
+ * 3. 非功能工作区的 node.renderKind 显式覆盖（角色/场景可明确选择 shot-frame 媒体预览）。
+ * 4. 无显式展示值时用 kind 默认；再按 categoryId 兜底（如 prop 分类的 image → prop-card）。
  */
 export function resolveNodeRenderKind(
-  node: Pick<GenerationCanvasNode, "kind" | "renderKind" | "categoryId">,
+  node: Pick<GenerationCanvasNode, "kind" | "renderKind" | "categoryId" | "meta">,
 ): string | undefined {
+  // 编辑器型节点是一个独立工作区，不是分类卡。即使归在 scene 分类，也必须继续走
+  // BaseGenerationNode 里的 Scene3DEditor / VibingDirectorEditor 分支。
+  if (node.kind === "asset" || node.kind === "skill" || node.kind === "scene3d" || node.kind === "vibingDirector") return undefined;
+  // 分镜表是 text 节点上的专属工作区。旧项目迁移会给 shots 分类补上 shot-frame，
+  // 因此该语义标记必须先于显式 renderKind，否则表格会退化成空白文本/媒体节点。
+  if (node.kind === "text" && node.meta?.storyboardGroup === true) return "storyboard-table";
   // 素材与 Agent 手艺产物都走「壳内 kind 专属渲染」，永远纯预览/专属 body（renderKind=undefined）——
   // 否则落进 cast/scene/prop 分类会被误判成角色/场景/道具卡（asset 的历史边界 1，agent-artifact 同款）。
-  if (node.kind === "asset" || node.kind === "agent-artifact") return undefined;
-  const kindOwned = RENDER_KIND_BY_NODE_KIND[node.kind as string];
-  if (kindOwned) return kindOwned;
+  if (node.kind === "agent-artifact") return undefined;
+  const intrinsic = RENDER_KIND_BY_NODE_KIND[node.kind];
+  // These cards own controls, not an interchangeable media presentation.
+  if (node.kind === "whiteboard" || node.kind === "audio") return intrinsic;
   const explicit = node.renderKind as string | undefined;
   // 注：`shot-frame`（shots 分类默认 renderKind，历史迁移回填）不在 CARD_RENDER_KINDS，故按 explicit
   // 返回后走「媒体预览」路径——镜头节点就该显生成出的图/视频，不套卡片。分镜序号由 BaseGenerationNode
   // 的常显「镜头 N」角标提供（不依赖某个 ShotFrameNode 组件，那个组件从未存在，别再当它是死引用）。
   if (explicit) return explicit;
+  if (intrinsic) return intrinsic;
   if (node.categoryId === "cast") return "character-card";
   if (node.categoryId === "scene") return "scene-card";
   if (node.categoryId === "prop") return "prop-card";
@@ -57,7 +71,7 @@ export function isCardRenderKind(renderKind: string | undefined): boolean {
  * 五行否定判断，每加一种承载型 kind 就长一行，而它和上面 renderKind 的 asset/agent-artifact
  * 特例说的是同一件事。一份定义，两处消费。
  */
-const KINDS_WITHOUT_GENERATION_COMPOSER = new Set(["panorama", "director", "whiteboard", "asset", "agent-artifact"]);
+const KINDS_WITHOUT_GENERATION_COMPOSER = new Set(["panorama", "director", "whiteboard", "asset", "agent-artifact", "scene3d", "vibingDirector", "skill", "compare", "resource", "output"]);
 
 /** 该 kind 是否应该在选中时浮出生成 composer。 */
 export function nodeHasGenerationComposer(kind: string): boolean {

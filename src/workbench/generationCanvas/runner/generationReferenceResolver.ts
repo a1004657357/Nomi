@@ -1,3 +1,4 @@
+import { generationPromptSource } from '../../../../electron/shared/generationPromptText'
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { sortEdgesByOrder } from '../model/graphOps'
 import { archetypeForNode, referenceAssetKindForNode } from '../agent/referenceEdgeCapability'
@@ -7,10 +8,23 @@ import { resolveIndexedParameterReferenceAssignments } from '../model/parameterR
 import { isComfyuiVendorKey } from '../model/comfyuiVendor'
 import { readParameterReferenceContract } from '../../../../electron/catalog/parameterReferenceContract'
 
+export type ReferenceImagePurpose =
+  | 'first_frame'
+  | 'last_frame'
+  | 'character'
+  | 'scene'
+  | 'prop'
+  | 'composition'
+  | 'generic'
+
 export type ResolvedGenerationReferences = {
   /** Live parameter-specific inputs. null reserves a pending edge without reviving stale uploaded values. */
   parameterReferenceUrls?: Record<string, string | null>
   referenceImages: string[]
+  /** 与 referenceImages 同序，供网页桥生成真正的 (@图片N) 引用和用途说明。 */
+  referenceImageRoles: string[]
+  /** 与 referenceImages 同序的机器可读用途。单图视频模型据此优先选首帧/分镜图，而不是误选角色卡。 */
+  referenceImagePurposes?: ReferenceImagePurpose[]
   /** 连线进来的视频/音频参考（按源节点类型分流，不混进 referenceImages）。喂 omni 的 video_ref/audio_ref
    *  槽——B4 修：此前视频源 URL 漏进 referenceImages 当图片/首帧发，且 video_ref 槽只收 meta 上传。 */
   referenceVideos: string[]
@@ -113,6 +127,68 @@ function targetRelaysVideoToFirstFrame(target: GenerationCanvasNode): boolean {
   return kinds.has('first_frame')
 }
 
+function referenceImageRole(
+  targetNodeId: string,
+  url: string,
+  index: number,
+  nodes: GenerationCanvasNode[],
+  edges: GenerationCanvasEdge[],
+  nodesById: Map<string, GenerationCanvasNode>,
+): string {
+  const source = nodes.find((candidate) => findNodeResultUrl(nodesById, candidate.id) === url)
+  if (!source) return generationPromptSource.unknownImage(index + 1)
+  const directEdge = sortEdgesByOrder(edges).find((edge) => (
+    edge.source === source.id && edge.target === targetNodeId
+  ))
+  const mode = directEdge?.mode
+  const title = String(source.title || `图片 ${index + 1}`).trim()
+  const meta = source.meta && typeof source.meta === 'object' ? source.meta as Record<string, unknown> : {}
+  if (mode === 'first_frame') return generationPromptSource.firstFrame(title)
+  if (mode === 'last_frame') return generationPromptSource.lastFrame(title)
+  if (mode === 'character_ref' || source.kind === 'character') {
+    return generationPromptSource.character(title)
+  }
+  if (mode === 'style_ref' || source.kind === 'scene') {
+    return generationPromptSource.scene(title)
+  }
+  const storyboardImage = meta.storyboardContainedRole === 'image'
+    || meta.storyboardRowOutputRole === 'image'
+    || (typeof source.shotIndex === 'number' && !meta.referenceSheet)
+    || /^镜头\s*\d+/.test(title)
+  if (mode === 'composition_ref' && storyboardImage) {
+    return generationPromptSource.storyboard(title)
+  }
+  if (mode === 'composition_ref') {
+    return generationPromptSource.composition(title)
+  }
+  if (mode === 'reference' || meta.referenceSheet) {
+    return generationPromptSource.prop(title)
+  }
+  return generationPromptSource.generic(title)
+}
+
+function referenceImagePurpose(
+  targetNodeId: string,
+  url: string,
+  nodes: GenerationCanvasNode[],
+  edges: GenerationCanvasEdge[],
+  nodesById: Map<string, GenerationCanvasNode>,
+): ReferenceImagePurpose {
+  const source = nodes.find((candidate) => findNodeResultUrl(nodesById, candidate.id) === url)
+  if (!source) return 'generic'
+  const directEdge = sortEdgesByOrder(edges).find((edge) => (
+    edge.source === source.id && edge.target === targetNodeId
+  ))
+  if (directEdge?.mode === 'first_frame') return 'first_frame'
+  if (directEdge?.mode === 'last_frame') return 'last_frame'
+  if (directEdge?.mode === 'character_ref' || source.kind === 'character') return 'character'
+  if (directEdge?.mode === 'style_ref' || source.kind === 'scene') return 'scene'
+  if (directEdge?.mode === 'composition_ref') return 'composition'
+  const meta = source.meta && typeof source.meta === 'object' ? source.meta as Record<string, unknown> : {}
+  if (directEdge?.mode === 'reference' || meta.referenceSheet) return 'prop'
+  return 'generic'
+}
+
 export function resolveGenerationReferences(
   node: GenerationCanvasNode,
   context: { nodes?: GenerationCanvasNode[]; edges?: GenerationCanvasEdge[] } = {},
@@ -147,6 +223,8 @@ export function resolveGenerationReferences(
     return {
       parameterReferenceUrls,
       referenceImages: [],
+      referenceImageRoles: [],
+      referenceImagePurposes: [],
       referenceVideos: [],
       referenceAudios: [],
       styleReferenceImages: [],
@@ -276,6 +354,12 @@ export function resolveGenerationReferences(
   return {
     ...(parameterSlots.length ? { parameterReferenceUrls } : {}),
     referenceImages: imageReferenceImages,
+    referenceImageRoles: imageReferenceImages.map((url, index) => (
+      referenceImageRole(node.id, url, index, nodes, edges, nodesById)
+    )),
+    referenceImagePurposes: imageReferenceImages.map((url) => (
+      referenceImagePurpose(node.id, url, nodes, edges, nodesById)
+    )),
     referenceVideos,
     referenceAudios,
     firstFrameUrl,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { writeFileSync, readFileSync } from 'node:fs'
-import { MODEL_ARCHETYPES } from '../../../config/modelArchetypes'
+import { MODEL_ARCHETYPES } from '../../../../electron/shared/modelArchetypes'
 import type { ModelOption } from '../../../config/models'
 import { resolveStoryboardImageDefault, resolveStoryboardVideoDefault } from './availableModels'
 const catalog = vi.hoisted(() => ({ options: [] as ModelOption[] }))
@@ -21,9 +21,10 @@ describe('all archetype storyboard defaults', () => {
     }
     catalog.options = all
     snapshot.all = { image: await resolveStoryboardImageDefault(), video: await resolveStoryboardVideoDefault() }
-    const path = 'docs/plan/storyboard-anchor-policy-evidence/defaults-before.json'
+    // Keep the official historical before/after evidence immutable; this integration
+    // deliberately adds custom providers and variant-specific default parameters.
+    const path = 'docs/plan/storyboard-anchor-policy-evidence/defaults-v0232-custom.json'
     if (process.env.ANCHOR_CAPTURE_DEFAULTS === '1') writeFileSync(path, JSON.stringify(snapshot, null, 2) + '\n')
     expect(snapshot).toEqual(JSON.parse(readFileSync(path, 'utf8')))
-    if (process.env.ANCHOR_CAPTURE_DEFAULTS === 'after') writeFileSync('docs/plan/storyboard-anchor-policy-evidence/defaults-after.json', JSON.stringify(snapshot, null, 2) + '\n')
   })
 })

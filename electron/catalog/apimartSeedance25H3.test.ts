@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { buildHttpRequest, buildTemplateContext } from "../ai/requestPipeline";
 import { applyRequestTransform } from "../tasks/requestTransforms";
 import { buildArchetypeInputParams } from "../../src/workbench/generationCanvas/nodes/controls/archetypeMeta";
-import { getArchetypeById } from "../../src/config/modelArchetypes";
+import { getArchetypeById } from "../shared/modelArchetypes";
 import { applyBuiltinSeeds } from "./seedBuiltins";
 import { APIMART_VIDEO_MODELS } from "./apimartVideos";
 import { applyParamMap } from "./paramTranslate";
 import { taskTemplateParams } from "./taskParams";
+import type { CatalogState } from "./types";
 
-const emptyCatalog = () => ({ version: 4, vendors: [], models: [], mappings: [], apiKeysByVendor: {} });
+const emptyCatalog = (): CatalogState => ({ version: 4, vendors: [], models: [], mappings: [], apiKeysByVendor: {} });
 
 function renderH3I2vBody(extras: Record<string, unknown>) {
   const mapping = APIMART_VIDEO_MODELS.find((model) => model.modelKey === "MiniMax-H3")?.mappings.find((item) => item.taskKind === "image_to_video");
@@ -51,6 +52,8 @@ describe("APIMart Seedance 2.5 / MiniMax-H3 curated 接入", () => {
       return_last_frame: "{{request.params.return_last_frame}}",
     });
 
+    // 按 vendorKey 收窄：MiniMax-H3 是跨家 modelKey（apimart 扁平线缆 / pixstag content 数组线缆），
+    // 只按 modelKey 过滤会把 pixstag 的同名 mapping 一并捞进来。
     const h3 = state.mappings.filter((m) => m.vendorKey === "apimart" && m.modelKey === "MiniMax-H3");
     expect(h3.map((m) => m.taskKind)).toEqual(["text_to_video", "image_to_video"]);
     expect(h3[1].create.body).toMatchObject({

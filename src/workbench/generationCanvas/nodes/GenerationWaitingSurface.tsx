@@ -1,33 +1,8 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { ImageGeneration, type ImageGenerationHandle, type ImageGenerationCycleEvent, type ImageGenerationPreset } from 'img-fx'
 import { cn } from '../../../utils/cn'
 import { useReducedProcessMotion } from './useReducedProcessMotion'
-
-const MAX_EFFECTS = 4
-const effectOwners = new Set<symbol>()
-const effectListeners = new Set<() => void>()
-function notifyEffects(): void { for (const listener of effectListeners) listener() }
-
-/** First mounted visible nodes own the four slots; releasing one wakes static waiters. */
-function useEffectSlot(eligible: boolean): boolean {
-  const owner = React.useRef(Symbol('waiting-effect'))
-  const [admitted, setAdmitted] = React.useState(false)
-  React.useEffect(() => {
-    const token = owner.current
-    const claim = () => {
-      if (eligible && !effectOwners.has(token) && effectOwners.size < MAX_EFFECTS) effectOwners.add(token)
-      setAdmitted(effectOwners.has(token))
-    }
-    effectListeners.add(claim)
-    claim()
-    return () => {
-      effectListeners.delete(claim)
-      if (effectOwners.delete(token)) notifyEffects()
-    }
-  }, [eligible])
-  return eligible && admitted
-}
-
+import { ProgressRevealCanvas } from './ProgressRevealCanvas'
 function readPalette() {
   const style = getComputedStyle(document.documentElement)
   const read = (name: string) => style.getPropertyValue(name).trim()
@@ -46,7 +21,7 @@ function WaitingEffect({ source, final, paused, preset, onComplete }: {
   onComplete?: () => void
 }): JSX.Element {
   const handle = React.useRef<ImageGenerationHandle>(null)
-  const lastSource = React.useRef<string>()
+  const lastSource = React.useRef<string | undefined>(undefined)
   const [cycle, setCycle] = React.useState<ImageGenerationCycleEvent>({ phase: 'idle', src: null })
   const [palette, setPalette] = React.useState(readPalette)
   const images = React.useMemo(() => source ? [source] : [], [source])
@@ -74,7 +49,7 @@ function WaitingEffect({ source, final, paused, preset, onComplete }: {
 
 /** Shared image/video boundary: no fabricated image, and final output cannot retain an overlay. */
 export function GenerationWaitingSurface({ audio = false, previewUrl, finalUrl, completed = false, onComplete,
-  previewLabel, percent, zoom = 1, inViewport = true, preset = 'sweep-gradient', motion }: {
+  previewLabel, percent, zoom = 1, inViewport = true, preset = 'sweep-gradient', motion, progressReveal, label }: {
   audio?: boolean
   motion?: 'reduced'
   previewUrl?: string
@@ -86,9 +61,17 @@ export function GenerationWaitingSurface({ audio = false, previewUrl, finalUrl, 
   zoom?: number
   inViewport?: boolean
   preset?: ImageGenerationPreset
+  /**
+   * 进度驱动的渐显（导入用）：格子数 = ratio，不跑 img-fx 的时间揭示。
+   * 生成没有真进度，所以生成路径不传它，继续按时间揭示。
+   */
+  progressReveal?: { ratio: number; imageUrl?: string }
+  /** 过程中的左上角小标签（完成即消失；不新增常驻控件）。 */
+  label?: string
 }): JSX.Element {
   const reduced = useReducedProcessMotion() || motion === 'reduced'
-  const admitted = useEffectSlot(!audio && !reduced && inViewport && zoom >= 0.4)
+  // Visible nodes keep the chosen grid effect; measured workloads replace the old four-owner quota.
+  const admitted = typeof window !== 'undefined' && !audio && !reduced && inViewport && zoom >= 0.4
   const [documentHidden, setDocumentHidden] = React.useState(false)
   React.useEffect(() => {
     const update = () => setDocumentHidden(document.hidden)
@@ -103,16 +86,19 @@ export function GenerationWaitingSurface({ audio = false, previewUrl, finalUrl, 
     const deadline = window.setTimeout(() => onComplete?.(), 1100)
     return () => window.clearTimeout(deadline)
   }, [completed, admitted, finalUrl, documentHidden, onComplete])
-  const source = completed ? finalUrl : previewUrl
+  // 进度驱动时 img-fx 只负责底下的 shader：真图由 ProgressRevealCanvas 按字节比例一格格盖上去。
+  const source = progressReveal ? undefined : completed ? finalUrl : previewUrl
   return <div data-generation-waiting data-process-zoom={zoom} data-process-motion={reduced ? 'reduced' : 'full'}
     className="absolute inset-0 overflow-hidden rounded-nomi bg-nomi-ink-05 pointer-events-none">
-    {admitted ? <WaitingEffect key={completed ? 'final' : 'preview'} source={source} final={completed}
+    {admitted ? <WaitingEffect key={completed ? 'final' : 'preview'} source={source} final={completed && !progressReveal}
       paused={documentHidden || !inViewport} preset={preset} onComplete={onComplete} />
-      : <div data-process-static-band className="absolute inset-x-0 top-1/2 h-8 bg-nomi-accent-soft" />}
+      : !audio ? <div data-process-static-grid aria-hidden className="absolute inset-0 bg-[linear-gradient(135deg,var(--nomi-ink-20),var(--nomi-ink-05)_70%)] [mask-image:repeating-linear-gradient(90deg,var(--nomi-ink)_0_14px,transparent_14px_16px),repeating-linear-gradient(0deg,var(--nomi-ink)_0_14px,transparent_14px_16px)] [mask-composite:intersect]" /> : null}
+    {progressReveal && admitted ? <ProgressRevealCanvas imageUrl={progressReveal.imageUrl} ratio={progressReveal.ratio} /> : null}
     {audio ? <div data-process-audio-waiting className="absolute inset-x-4 top-1/2 flex h-8 -translate-y-1/2 items-center justify-center gap-1" aria-hidden>
       {Array.from({ length: 24 }, (_, index) => <span key={index} className="h-6 w-1 shrink-0 rounded-full bg-nomi-ink-30" />)}
     </div> : null}
     {!admitted && source ? <img src={source} alt="" className="absolute inset-0 size-full object-contain" draggable={false} /> : null}
+    {label ? <span data-process-label className="absolute top-3 left-3 rounded-full bg-[var(--nomi-overlay-chip)] px-3 py-1 text-caption text-nomi-media-ink">{label}</span> : null}
     {previewUrl && !completed ? <>
       <div data-process-preview-scrim className="absolute inset-0 bg-[var(--nomi-scrim)]" />
       <span className="absolute top-12 left-3 rounded-full bg-[var(--nomi-overlay-chip)] px-3 py-1 text-body text-nomi-media-ink">{previewLabel}</span>

@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { writeJsonFileAtomic } from "../jsonFile";
 import { fsyncDirectoryIfDurable } from "../durability";
+import { logInfo, logWarn } from "../logging/logger";
 import type { ProjectBinding } from "../shared/projectBinding";
 import {
   parseProjectAgentCommittedProposal,
@@ -15,6 +16,7 @@ import {
   type ProjectAgentProposalReceiptWrite,
 } from "../shared/projectAgentProposalReceipt";
 import { assertProjectAgentBinding, sameProjectAgentBinding } from "../shared/projectBinding";
+import { MODEL_TOOL_WRITE_TIMEOUT_MS_VALUE } from "../shared/agentCapabilities/verbDeclaration";
 
 type ReceiptOperation = Readonly<{
   operationId: string;
@@ -58,6 +60,14 @@ export class ProjectAgentProposalReceiptError extends Error {
 }
 
 const MAX_OPERATIONS = 64;
+
+/**
+ * 「准备中」最长能停多久——**这份回执的主人定的时限**。一次写入从登记准备到提交/放弃，最长不过写工具自己的预算
+ * （`MODEL_TOOL_WRITE_TIMEOUT_MS_VALUE`），再留一格收尾余量；过了这一点还停在 `preparing`，就说明那次写入已经死了
+ * （工具超时、回执没拿到、进程被打断），没有人会再去收它。没有这条时限时，这样一次死掉的写入会把之后**每一次**
+ * 写入都挡在「已有未完成操作」后面，直到用户手工清文件（pb04 走查 `agent-write-receipt-stuck`）。
+ */
+export const PROJECT_AGENT_PREPARING_DEADLINE_MS = MODEL_TOOL_WRITE_TIMEOUT_MS_VALUE + 15_000;
 
 function receiptPath(projectRoot: string): string {
   return path.join(path.resolve(projectRoot), ".nomi", "project-agent-proposal-receipt.json");
@@ -123,7 +133,7 @@ function hashJournal(value: Omit<ProjectAgentProposalReceipt, "journalHash">): s
   return digest("nomi-project-agent-proposal-journal:v2", value);
 }
 
-function operationHash(kind: "write" | "transition" | "clear", value: unknown): string {
+function operationHash(kind: "write" | "transition" | "clear" | "expire" | "migration", value: unknown): string {
   return digest(`nomi-project-agent-proposal-operation:${kind}:v2`, value);
 }
 
@@ -157,7 +167,22 @@ function parseOperation(value: unknown): ReceiptOperation | null {
   });
 }
 
-function parseReceipt(value: unknown): ProjectAgentProposalReceipt | null {
+type ReceiptQuarantineReason =
+  | "invalid-json"
+  | "truncated-jsonl"
+  | "unsupported-schema"
+  | "shape-invalid"
+  | "binding-invalid"
+  | "proposal-invalid"
+  | "hash-mismatch"
+  | "binding-mismatch";
+
+type ReceiptParseResult = Readonly<{
+  receipt: ProjectAgentProposalReceipt | null;
+  reason?: ReceiptQuarantineReason;
+}>;
+
+function parseReceipt(value: unknown): ReceiptParseResult {
   const raw = asRecord(value);
   if (
     !raw ||
@@ -188,31 +213,31 @@ function parseReceipt(value: unknown): ProjectAgentProposalReceipt | null {
     raw.operations.length < 1 ||
     raw.operations.length > MAX_OPERATIONS
   ) {
-    return null;
+    return { receipt: null, reason: raw?.schemaVersion === 2 ? "shape-invalid" : "unsupported-schema" };
   }
   try {
     assertProjectAgentBinding(raw.binding as ProjectBinding);
   } catch {
-    return null;
+    return { receipt: null, reason: "binding-invalid" };
   }
   const proposal = parseProjectAgentCommittedProposal(raw.proposal);
-  if (!proposal || proposal.proposalId !== raw.proposalId) return null;
+  if (!proposal || proposal.proposalId !== raw.proposalId) return { receipt: null, reason: "proposal-invalid" };
   let proposalHash: string;
   try {
     proposalHash = hashProjectAgentCommittedProposal(proposal);
   } catch {
-    return null;
+    return { receipt: null, reason: "proposal-invalid" };
   }
-  if (proposalHash !== raw.proposalHash) return null;
+  if (proposalHash !== raw.proposalHash) return { receipt: null, reason: "hash-mismatch" };
   const operations = raw.operations.map(parseOperation);
-  if (operations.some((operation) => operation === null)) return null;
+  if (operations.some((operation) => operation === null)) return { receipt: null, reason: "shape-invalid" };
   const parsedOperations = operations as ReceiptOperation[];
   if (
     new Set(parsedOperations.map((operation) => operation.operationId)).size !== parsedOperations.length ||
     parsedOperations.some((operation) => operation.appliedRevision > (raw.revision as number)) ||
     parsedOperations.at(-1)?.operationId !== raw.operationId
   ) {
-    return null;
+    return { receipt: null, reason: "shape-invalid" };
   }
   const core: Omit<ProjectAgentProposalReceipt, "journalHash"> = {
     schemaVersion: 2,
@@ -226,24 +251,122 @@ function parseReceipt(value: unknown): ProjectAgentProposalReceipt | null {
     operations: Object.freeze(parsedOperations),
     updatedAt: raw.updatedAt,
   };
-  if (hashJournal(core) !== raw.journalHash) return null;
-  return Object.freeze({ ...core, journalHash: raw.journalHash });
+  if (hashJournal(core) !== raw.journalHash) return { receipt: null, reason: "hash-mismatch" };
+  return { receipt: Object.freeze({ ...core, journalHash: raw.journalHash }) };
+}
+
+/**
+ * Read-time migration for the pre-journal receipt shape.  It is deliberately a
+ * pure function: callers can run it repeatedly and receive the same canonical
+ * schema-2 receipt without touching disk or changing the proposal payload.
+ */
+export function migrateProjectAgentProposalReceipt(value: unknown): ProjectAgentProposalReceipt | null {
+  const raw = asRecord(value);
+  if (
+    !raw ||
+    (raw.schemaVersion !== 1 &&
+      !(raw.schemaVersion === 2 && raw.proposalHash === undefined && raw.operations === undefined && raw.journalHash === undefined))
+  ) return null;
+  if (
+    !Number.isSafeInteger(raw.revision) ||
+    (raw.revision as number) < 1 ||
+    !["preparing", "committed", "undoing", "undone"].includes(String(raw.lifecycle)) ||
+    !validId(raw.proposalId) ||
+    !validId(raw.operationId) ||
+    typeof raw.updatedAt !== "string" ||
+    !Number.isFinite(Date.parse(raw.updatedAt))
+  ) return null;
+  try {
+    assertProjectAgentBinding(raw.binding as ProjectBinding);
+  } catch {
+    return null;
+  }
+  const proposal = parseProjectAgentCommittedProposal(raw.proposal);
+  if (!proposal || proposal.proposalId !== raw.proposalId) return null;
+  const proposalHash = hashProjectAgentCommittedProposal(proposal);
+  const revision = raw.revision as number;
+  const core: Omit<ProjectAgentProposalReceipt, "journalHash"> = {
+    schemaVersion: 2,
+    binding: Object.freeze({ ...(raw.binding as ProjectBinding) }),
+    revision,
+    lifecycle: raw.lifecycle as ProjectAgentProposalReceiptLifecycle,
+    proposalId: raw.proposalId,
+    operationId: raw.operationId,
+    proposal,
+    proposalHash,
+    operations: Object.freeze([
+      Object.freeze({
+        operationId: raw.operationId,
+        requestHash: operationHash("migration", { operationId: raw.operationId, revision }),
+        appliedRevision: revision,
+      }),
+    ]),
+    updatedAt: raw.updatedAt,
+  };
+  return Object.freeze({ ...core, journalHash: hashJournal(core) });
 }
 
 /** Main-owned durable journal. All semantic mutation goes through the bound service below. */
-export function createProjectAgentProposalReceiptStore(projectRoot: string) {
+export function createProjectAgentProposalReceiptStore(projectRoot: string, expectedBinding?: ProjectBinding) {
   const target = receiptPath(projectRoot);
+  const quarantine = (reason: ReceiptQuarantineReason): void => {
+    if (!fs.existsSync(target)) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    let destination = `${target}.quarantined-${stamp}`;
+    let suffix = 1;
+    while (fs.existsSync(destination)) destination = `${target}.quarantined-${stamp}-${suffix++}`;
+    try {
+      fs.renameSync(target, destination);
+      fsyncReceiptDirectory(projectRoot);
+      logWarn("agent", "project-agent-receipt-quarantined", {
+        reason,
+        file: path.basename(target),
+      });
+    } catch (error) {
+      logWarn("agent", "project-agent-receipt-quarantine-failed", { reason, file: path.basename(target) }, error);
+    }
+  };
   return Object.freeze({
     exists(): boolean {
       return fs.existsSync(target);
     },
     read(): ProjectAgentProposalReceipt | null {
+      let contents: string;
       try {
-        return parseReceipt(JSON.parse(fs.readFileSync(target, "utf8")) as unknown);
+        contents = fs.readFileSync(target, "utf8");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        quarantine("invalid-json");
         return null;
       }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(contents) as unknown;
+      } catch {
+        quarantine(/\r?\n/.test(contents.trim()) ? "truncated-jsonl" : "invalid-json");
+        return null;
+      }
+      const parsed = parseReceipt(raw);
+      const migrated = parsed.receipt ? null : migrateProjectAgentProposalReceipt(raw);
+      const receipt = parsed.receipt ?? migrated;
+      if (!receipt) {
+        quarantine(parsed.reason ?? "shape-invalid");
+        return null;
+      }
+      if (expectedBinding && !sameProjectAgentBinding(receipt.binding, expectedBinding)) {
+        quarantine("binding-mismatch");
+        return null;
+      }
+      if (migrated) {
+        const journal = Object.freeze({ ...migrated });
+        writeJsonFileAtomic(target, journal, { mode: 0o600 });
+        fsyncReceiptDirectory(projectRoot);
+        logInfo("agent", "project-agent-receipt-migrated", {
+          fromSchema: (asRecord(raw)?.schemaVersion as number | undefined) ?? 1,
+          toSchema: 2,
+        });
+      }
+      return receipt;
     },
     write(receipt: Omit<ProjectAgentProposalReceipt, "journalHash">): ProjectAgentProposalReceipt {
       const journal = Object.freeze({ ...receipt, journalHash: hashJournal(receipt) });
@@ -290,22 +413,43 @@ export function createProjectAgentProposalReceiptService(
   input: Readonly<{
     projectRoot: string;
     binding: ProjectBinding;
+    /** 时钟只给测试注入；生产用系统时间。 */
+    now?: () => number;
   }>,
 ): ProjectAgentProposalReceiptService {
   assertProjectAgentBinding(input.binding);
+  const now = input.now ?? Date.now;
+  /** 回执上的时间戳与「过没过时限」读同一个时钟（测试注入的也是它）。 */
+  const make = (value: Parameters<typeof makeReceipt>[0]) => makeReceipt({ ...value, updatedAt: value.updatedAt ?? new Date(now()).toISOString() });
   const trustedBinding = Object.freeze({ ...input.binding });
-  const store = createProjectAgentProposalReceiptStore(input.projectRoot);
+  const store = createProjectAgentProposalReceiptStore(input.projectRoot, trustedBinding);
+
+  /**
+   * 停在 `preparing` 超过主人时限的回执，在**任何一扇门第一次碰到它时**落到终态（`undone`，与写入被确定拒绝时
+   * `abandonDocumentProposalReceipt` 收的是同一个终态）。为什么在这里而不是调用方：四扇门（read / write /
+   * transition / clear）都先过 `current()`，放在这里就没有哪条入口能绕过去读到一份永远停着的「准备中」。
+   * 这是**收场**不是重试：写入有没有真的落到文稿不在这里猜——之后的写入自带文稿前提（revision / 内容哈希），
+   * 落没落会在它那一步被核出来。
+   */
+  const settleExpired = (receipt: ProjectAgentProposalReceipt): ProjectAgentProposalReceipt => {
+    if (receipt.lifecycle !== "preparing" || now() - Date.parse(receipt.updatedAt) <= PROJECT_AGENT_PREPARING_DEADLINE_MS) return receipt;
+    return store.write(
+      make({
+        previous: receipt,
+        binding: trustedBinding,
+        lifecycle: "undone",
+        proposalId: receipt.proposalId,
+        operationId: `preparing-expired:${receipt.operationId}`,
+        proposal: receipt.proposal,
+        requestHash: operationHash("expire", { operationId: receipt.operationId, revision: receipt.revision }),
+        updatedAt: new Date(now()).toISOString(),
+      }),
+    );
+  };
 
   const current = (): ProjectAgentProposalReceipt | null => {
     const receipt = store.read();
-    if (!receipt) {
-      if (store.exists()) throw new ProjectAgentProposalReceiptError("Project Agent proposal receipt is invalid");
-      return null;
-    }
-    if (!sameProjectAgentBinding(receipt.binding, trustedBinding)) {
-      throw new ProjectAgentProposalReceiptError("Project Agent proposal receipt binding mismatch");
-    }
-    return receipt;
+    return receipt ? settleExpired(receipt) : null;
   };
   const replay = (
     receipt: ProjectAgentProposalReceipt | null,
@@ -357,8 +501,10 @@ export function createProjectAgentProposalReceiptService(
       assertCas(receipt, value.expectedRevision);
       if (value.lifecycle === "preparing") {
         if (receipt && receipt.lifecycle !== "committed" && receipt.lifecycle !== "undone") {
+          const settlesInMs = Math.max(0, PROJECT_AGENT_PREPARING_DEADLINE_MS - (now() - Date.parse(receipt.updatedAt)));
           throw new ProjectAgentProposalReceiptError(
-            "Project Agent proposal receipt already has an unfinished operation",
+            "Project Agent proposal receipt already has an unfinished operation: the previous write has not reported its result. "
+              + `Its outcome is settled automatically in about ${Math.ceil(settlesInMs / 1000)}s. Read the script to see what landed, then write again after that.`,
           );
         }
       } else {
@@ -373,7 +519,7 @@ export function createProjectAgentProposalReceiptService(
       }
       return toView(
         store.write(
-          makeReceipt({
+          make({
             previous: receipt,
             binding: trustedBinding,
             lifecycle: value.lifecycle,
@@ -408,7 +554,7 @@ export function createProjectAgentProposalReceiptService(
       }
       return toView(
         store.write(
-          makeReceipt({
+          make({
             previous: receipt,
             binding: trustedBinding,
             lifecycle: value.lifecycle,
@@ -436,7 +582,7 @@ export function createProjectAgentProposalReceiptService(
       }
       const cleared = toView(
         store.write(
-          makeReceipt({
+          make({
             previous: receipt,
             binding: trustedBinding,
             lifecycle: "undone",

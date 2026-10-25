@@ -7,6 +7,7 @@ export type BrowserViewRecord = {
   view: WebContentsView;
   lastBounds: Rectangle;
   resourceCaptureEnabled: boolean;
+  promptCategories: BrowserPromptCategory[];
   // 捕捞触发那一刻记下的候选快照（url+元素矩形）：capturePage 视觉降级按 url 匹配复用（120s 新鲜窗）。
   lastResourceCapture?: {
     url: string;
@@ -34,7 +35,6 @@ export type BrowserViewResizePayload = BrowserViewIdPayload & {
 };
 
 export type BrowserViewImportMediaPayload = BrowserViewIdPayload & {
-  projectId?: unknown;
   url?: unknown;
   fileName?: unknown;
   title?: unknown;
@@ -42,14 +42,12 @@ export type BrowserViewImportMediaPayload = BrowserViewIdPayload & {
 };
 
 export type BrowserViewPromptImagePayload = BrowserViewIdPayload & {
-  projectId?: unknown;
   url?: unknown;
   fileName?: unknown;
   title?: unknown;
 };
 
 export type BrowserViewPromptScreenshotPayload = BrowserViewIdPayload & {
-  projectId?: unknown;
   fileName?: unknown;
   title?: unknown;
   sourceRect?: BrowserResourceCaptureRectPayload;
@@ -86,6 +84,11 @@ export type BrowserResourceCapturePayload = {
   pageTitle?: unknown;
   extractionMode?: unknown;
   sourceRect?: BrowserResourceCaptureRectPayload;
+};
+
+export type BrowserPromptCategory = {
+  id: string;
+  label: string;
 };
 
 export type BrowserPromptScreenshotSelectionResult =

@@ -1,0 +1,57 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-approved-current-ui-baselines",
+  "change_kind": "structural",
+  "problem_type": "已批准新版界面与旧视觉快照未对账",
+  "symptom": "当前本机校准平台已捕获至少75个像素差异，原基线尚未更新。",
+  "direct_cause": "现行组件、文案和平台渲染与旧批准图片不同，需要人工选择采用的版本。",
+  "class_root": "视觉基准必须绑定用户批准的现行组件与真实渲染，不能放宽容差或默默接受未来差异。",
+  "scope_paths": [
+    "tests/ux/design-lab/__baselines__",
+    "tests/ux/design-lab/calibration.json"
+  ],
+  "affected_population": [
+    "当前已批准集成版本的设计实验室注册状态"
+  ],
+  "entry_points": [
+    "pnpm run design-lab:update",
+    "pnpm run check:design-lab"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "用户查看对照请求后明确回复用新版；本轮仅对已审现行组件在原calibratedPlatform上生成快照。",
+  "invariants": [
+    "用户已明确采用新版；不修改容差、状态或视觉断言，不新增skip；撤销三条旧待确认登记，使只读验证由188项扩大为315项。",
+    "原更新命令已在macOS校准平台录制315项；夹具修正后沿用原配置仅重录受影响的8状态及1注册对账。不得用Linux未校准跳过作为视觉通过。",
+    "更新后仍须原只读check:design-lab再次全过；更新命令不是验收结果。",
+    "源组件保持固定，生成/网络/账号/日常项目不参与截图；新图须实际查看，运行错误不得靠更新PNG掩盖。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "tests/ux/design-lab/__baselines__",
+      "tests/ux/design-lab/calibration.json"
+    ],
+    "preserved_exports": [],
+    "behavior_preservation": "更新批准的PNG并撤销三条旧待确认登记，让原只读检查覆盖20屏295状态；容差与原断言不变。节点夹具另按2026-10-25-composer-lab-current-dto合同修正，不把裁剪和空模型固定成正确外观。",
+    "verification_limits": "用户批准当前新版，不批准未来任意变化；原75图只是先前部分捕获，最终完整计数以本轮实际运行报告为准。"
+  },
+  "regression_tests": [
+    "tests/ux/design-lab/design-lab.visual.spec.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "保留原注册表与全部状态，仅替换批准的视觉参考。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "不改Playwright/Chromium或字体配置，仅使用已安装的原测试依赖与当前校准平台。",
+    "exit_criteria": []
+  },
+  "migration": "仅测试PNG与批准登记，不迁移用户数据、模型、权限或素材。",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "全量录制315项、修后8状态走查和9项局部录制已过；尚须完整只读315项比对，不能用更新命令代替验收。",
+    "任何运行时/布局/交互错误仍须修源，不因人工批准新版自动免责。"
+  ]
+}

@@ -29,12 +29,12 @@ const PLAN: StoryboardPlan = {
 }
 
 describe('StoryboardPlan provenance', () => {
-  it('does not project legacy editorial fields into generation or accept them as shot fields', () => {
-    const legacy = { ...PLAN, shots: [{ ...PLAN.shots[0], subtitle: '旧字幕', dialogue: '旧台词', transition: { type: 'fade' } }] }
+  it('preserves authored table fields in the plan without inventing parallel node metadata', () => {
+    const legacy: StoryboardPlan = { ...PLAN, shots: [{ ...PLAN.shots[0], subtitle: '旧字幕', dialogue: '旧台词', transition: { type: 'fade' } }] }
     const parsed = parseStoryboardPlan(legacy)
     const metadata = storyboardPlanToCreateNodesArgs(legacy).nodes.find((node) => node.clientId === 'shot-stable-1')?.metadata
     for (const key of ['subtitle', 'dialogue', 'transition']) {
-      expect(parsed.shots[0]).not.toHaveProperty(key)
+      expect(parsed.shots[0]).toHaveProperty(key, legacy.shots[0][key as keyof StoryboardPlan['shots'][number]])
       expect(metadata).not.toHaveProperty(key)
     }
   })
@@ -87,5 +87,19 @@ describe('StoryboardPlan provenance', () => {
       expect.objectContaining({ materializationOperationId: 'materialize:run-1:v1', materializationClientId: 'hero', anchorId: 'hero' }),
       expect.objectContaining({ materializationOperationId: 'materialize:run-1:v1', materializationClientId: 'shot-stable-1' }),
     ]))
+  })
+
+  it('keeps the edited image prompt and custom table snapshot alongside official shot metadata', () => {
+    const plan: StoryboardPlan = {
+      ...PLAN,
+      shots: [{ ...PLAN.shots[0], imagePrompt: 'Edited static frame', videoPrompt: 'Edited motion',
+        keyframe: { enabled: true, prompt: 'Older static frame' } }],
+    }
+    const args = storyboardPlanToCreateNodesArgs(plan)
+    expect(args.nodes.find((node) => node.clientId === 'storyboard-group')?.storyboardPlanSnapshot).toEqual(plan)
+    expect(args.nodes.find((node) => node.clientId === 'shot-stable-1-keyframe')).toMatchObject({
+      prompt: 'Edited static frame', storyboardKeyframe: true, metadata: { shotId: 'shot-stable-1' },
+    })
+    expect(args.nodes.find((node) => node.clientId === 'shot-stable-1')?.prompt).toBe('Edited motion')
   })
 })

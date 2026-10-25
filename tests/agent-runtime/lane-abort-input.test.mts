@@ -13,7 +13,7 @@ function pendingApproval(lane: LaneHandle): Promise<void> {
 }
 
 const replies = [
-  { type: 'tool' as const, calls: [{ id: 'append-fixture', name: 'append_to_end', arguments: { content: ' fixture ending.' } }] },
+  { type: 'tool' as const, calls: [{ id: 'append-fixture', name: 'write_script', arguments: { where: 'end', content: ' fixture ending.' } }] },
   { type: 'text' as const, text: 'Fixture complete.' },
 ];
 const policy = { mode: 'step' as const, spend: 'confirm' as const };
@@ -75,7 +75,7 @@ test('successful cancellation restores exactly that captured queued draft and mi
   t.after(() => lane.close());
   const running = lane.execute({ kind: 'prompt', text: 'Append the fixture ending.' });
   await pendingApproval(lane);
-  draft = { approvalPolicy: policy, attachments: [{ assetId: 'cancelled-fixture', version: 7 }] };
+  draft = { approvalPolicy: policy, skillKey: 'original-queued-skill', displayText: 'Short queued display', attachments: [{ assetId: 'cancelled-fixture', version: 7 }] };
   const queued = await lane.execute({ kind: 'follow-up', text: 'Return this draft.' });
   draft = { approvalPolicy: policy };
   const cancelled = await lane.execute({ kind: 'cancel-queued', entryId: queued.queuedEntryId! });
@@ -83,7 +83,7 @@ test('successful cancellation restores exactly that captured queued draft and mi
   await lane.execute({ kind: 'abort' });
   await running.catch(() => undefined);
   assert.deepEqual(cancelled, { cancelQueued: 'cancelled', restoredInput: [
-    { text: 'Return this draft.', attachments: [{ assetId: 'cancelled-fixture', version: 7 }] },
+    { text: 'Return this draft.', skillKey: 'original-queued-skill', displayText: 'Short queued display', attachments: [{ assetId: 'cancelled-fixture', version: 7 }] },
   ] });
   assert.deepEqual(missing, { cancelQueued: 'not_found' });
 });

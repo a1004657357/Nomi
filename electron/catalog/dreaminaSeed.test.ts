@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import type { CatalogState } from "./types";
 import { selectTaskMapping } from "./types";
 import { applyBuiltinSeeds } from "./seedBuiltins";
-import { getArchetypeById } from "../../src/config/modelArchetypes";
+import { getArchetypeById, specializeArchetypeForVariant } from "../shared/modelArchetypes";
 
 function emptyCatalog(): CatalogState {
   return { version: 3, vendors: [], models: [], mappings: [], apiKeysByVendor: {} };
@@ -18,10 +18,13 @@ describe("即梦 dreamina 全量接线", () => {
     expect(v).toMatchObject({ key: "dreamina", enabled: true, authType: "none" });
   });
 
-  it("模型：视频 1 + 图片 2，kind/档案正确", () => {
-    const video = state.models.find((m) => m.modelKey === "dreamina-seedance-2.0");
-    expect(video).toMatchObject({ vendorKey: "dreamina", kind: "video" });
-    expect(video?.meta).toMatchObject({ archetypeId: "dreamina-seedance-2" });
+  it("模型：Seedance 2.0 / 2.5 + 图片模型，kind/档案正确", () => {
+    const seedance20 = state.models.find((m) => m.modelKey === "dreamina-seedance-2.0");
+    const seedance25 = state.models.find((m) => m.modelKey === "dreamina-seedance-2.5");
+    expect(seedance20).toMatchObject({ vendorKey: "dreamina", kind: "video" });
+    expect(seedance20?.meta).toMatchObject({ archetypeId: "dreamina-seedance-2" });
+    expect(seedance25).toMatchObject({ vendorKey: "dreamina", kind: "video" });
+    expect(seedance25?.meta).toMatchObject({ archetypeId: "dreamina-seedance-2.5" });
     expect(state.models.find((m) => m.modelKey === "dreamina-image")).toMatchObject({ kind: "image" });
     expect(state.models.find((m) => m.modelKey === "dreamina-upscale")).toMatchObject({ kind: "image" });
   });
@@ -32,7 +35,9 @@ describe("即梦 dreamina 全量接线", () => {
     const t2i = selectTaskMapping(state.mappings, "dreamina", "text_to_image", "dreamina-image");
     const i2i = selectTaskMapping(state.mappings, "dreamina", "image_edit", "dreamina-image");
     const upscale = selectTaskMapping(state.mappings, "dreamina", "image_edit", "dreamina-upscale");
-    for (const m of [t2v, i2v, t2i, i2i, upscale]) {
+    const t2v25 = selectTaskMapping(state.mappings, "dreamina", "text_to_video", "dreamina-seedance-2.5");
+    const i2v25 = selectTaskMapping(state.mappings, "dreamina", "image_to_video", "dreamina-seedance-2.5");
+    for (const m of [t2v, i2v, t2v25, i2v25, t2i, i2i, upscale]) {
       expect(m).toBeTruthy();
       expect(m?.create.process?.parser).toBe("dreamina-cli"); // process transport，不是 HTTP path
       expect(m?.query?.process?.args?.[0]).toBe("query_result");
@@ -49,7 +54,9 @@ describe("即梦 dreamina 全量接线", () => {
     expect(i2v?.create.process?.args?.[0]).toBe("{{request.params.dreamina_cmd}}");
     const fileParams = i2v?.create.process?.fileParams || [];
     const params = fileParams.map((f) => f.param);
-    expect(params).toEqual(expect.arrayContaining(["i2v_image", "frames_first", "frames_last", "mm_images", "mm_videos", "mm_audios"]));
+    expect(params).toEqual(
+      expect.arrayContaining(["i2v_image", "frames_first", "frames_last", "mm_images", "mm_videos", "mm_audios"]),
+    );
     // 全能参考多文件用重复 flag
     expect(fileParams.find((f) => f.param === "mm_images")?.mode).toBe("repeat");
   });
@@ -61,14 +68,51 @@ describe("即梦 dreamina 全量接线", () => {
     expect(upscale?.create.process?.fileParams?.[0]).toMatchObject({ param: "input_image", mode: "single" });
   });
 
-  it("档案：seedance 4 模式（fixedParams 选子命令）+ 6 变体（含 2.5）", () => {
+  it("档案：seedance 2.0 四模式（fixedParams 选子命令）+ 五变体", () => {
     const arch = getArchetypeById("dreamina-seedance-2");
     expect(arch?.kind).toBe("video");
     const cmds = (arch?.modes || []).map((m) => m.fixedParams?.dreamina_cmd);
     expect(cmds).toEqual(["text2video", "image2video", "frames2video", "multimodal2video"]);
     // 命名裁决（matrix §5）：2.5 的 model_version 现役 -h 原文写作 `seedance2.5`（小数点、无「3」）。
     expect(arch?.variants?.map((v) => v.modelKey)).toEqual([
-      "seedance2.0fast", "seedance2.0", "seedance2.0_vip", "seedance2.0fast_vip", "seedance2.0mini", "seedance2.5",
+      "seedance2.0fast",
+      "seedance2.0",
+      "seedance2.0_vip",
+      "seedance2.0fast_vip",
+      "seedance2.0mini",
+    ]);
+    const vip = arch ? specializeArchetypeForVariant(arch, "vip") : null;
+    const fastVip = arch ? specializeArchetypeForVariant(arch, "fast_vip") : null;
+    const resolutionValues = (candidate: typeof arch) =>
+      candidate?.modes[0]?.params
+        .find((param) => param.key === "video_resolution")
+        ?.options.map((option) => option.value);
+    expect(resolutionValues(vip)).toEqual(["720p", "1080p", "4k"]);
+    expect(resolutionValues(fastVip)).toEqual(["720p"]);
+  });
+
+  it("Seedance 2.5：独立模型，4 模式统一发 seedance2.5 并暴露官方参数边界", () => {
+    const arch = getArchetypeById("dreamina-seedance-2.5");
+    expect(arch?.modes.map((mode) => mode.fixedParams?.dreamina_cmd)).toEqual([
+      "text2video",
+      "image2video",
+      "frames2video",
+      "multimodal2video",
+    ]);
+    expect(arch?.modes.every((mode) => mode.modelEnum === "seedance2.5")).toBe(true);
+
+    const t2v = arch?.modes.find((mode) => mode.id === "t2v");
+    expect(
+      t2v?.params.find((param) => param.key === "video_resolution")?.options.map((option) => option.value),
+    ).toEqual(["480p", "720p", "1080p"]);
+    expect(t2v?.params.find((param) => param.key === "duration")).toMatchObject({ min: 4, max: 30 });
+
+    const multimodal = arch?.modes.find((mode) => mode.id === "multimodal");
+    expect(multimodal?.promptRequired).toBe(false);
+    expect(multimodal?.slots.map((slot) => [slot.kind, slot.max])).toEqual([
+      ["image_ref", 30],
+      ["video_ref", 10],
+      ["audio_ref", 10],
     ]);
   });
 

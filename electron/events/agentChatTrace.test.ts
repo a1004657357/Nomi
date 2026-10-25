@@ -107,6 +107,45 @@ describe("agentChatTrace — S6-0 对账的米", () => {
     expect(events.some((e) => e.type === "agent.proposal.rejected")).toBe(false);
   });
 
+  it("records harness configuration, per-step progress and the final step count", () => {
+    beginTurnTrace(SESSION, { history, skillKey: "brand.promo", playbookStageId: "build", prompt: "继续" });
+    traceChatEvent(SESSION, {
+      type: "harness-config",
+      vendorKey: "ark-plan",
+      modelKey: "doubao-seed-code",
+      skillKey: "brand.promo",
+      allowedTools: ["create_canvas_nodes"],
+      playbook: { stageId: "build", index: 1, total: 4 },
+    });
+    traceChatEvent(SESSION, { type: "step-finish", finishReason: "tool-calls" });
+    traceChatEvent(SESSION, { type: "step-finish", finishReason: "stop" });
+    traceChatEvent(SESSION, { type: "result", result: { text: "done", finishReason: "stop" } });
+
+    const events = readEvents("p1");
+    expect(events.find((event) => event.type === "agent.turn.configured")?.payload).toMatchObject({
+      vendorKey: "ark-plan",
+      modelKey: "doubao-seed-code",
+      allowedTools: ["create_canvas_nodes"],
+      playbook: { stageId: "build" },
+    });
+    expect(events.filter((event) => event.type === "agent.step.finished").map((event) => event.payload.stepIndex)).toEqual([1, 2]);
+    expect(events.find((event) => event.type === "agent.turn.finished")?.payload.stepCount).toBe(2);
+  });
+
+  it("reads the real renderer skill shape from chatContext", () => {
+    beginTurnTrace(SESSION, {
+      history,
+      chatContext: { skill: { key: "brand.promo", name: "品牌宣传片" } },
+      playbookStageId: "storyboard",
+      displayPrompt: "做宣传片",
+    });
+
+    expect(readEvents("p1").find((event) => event.type === "agent.turn.started")?.payload).toMatchObject({
+      skillKey: "brand.promo",
+      playbookStageId: "storyboard",
+    });
+  });
+
   it.each(['finished', 'cancelled', 'error'])('records the actual %s status and explicit thread identity', (status) => {
     beginTurnTrace(SESSION, { history, prompt: 'go' });
     traceChatEvent(SESSION, { type: 'result', result: { status, text: 'actual', usage: { totalTokens: 9 } } });

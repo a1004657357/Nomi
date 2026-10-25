@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:batch-machines /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-batch-machines.mjs
+
+✅ 批量机器门岗通过：rogue-renderer-batch=0 · rogue-durable-submit=0 · legacy-routes-shrunk=0 · third-frozen-judgment=0（棘轮只减不增）

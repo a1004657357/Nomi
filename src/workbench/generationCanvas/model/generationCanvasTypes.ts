@@ -1,6 +1,8 @@
 import type { ProgressNarrationContext } from '../../observability/narrate'
+import type { AssetRevisionStatus } from '../../domain/cinematicTypes'
 import type { GenerationNodeKind } from './generationNodeKinds'
 import type { NodeRenderKind } from '../../project/projectCategories'
+import type { CreativeResource } from '../../../config/capabilityRecipes'
 import type { GenerationNodeStatus as SharedGenerationNodeStatus } from '../../../../electron/shared/canvas/generationNodeStatus'
 import type { CanvasPluginNodeState } from '../plugins/canvasPluginTypes'
 import type { CanvasWorkflowTemplate } from '../plugins/canvasWorkflowTemplates'
@@ -14,6 +16,32 @@ export type GenerationNodeStatus = SharedGenerationNodeStatus
 export type GenerationResultType = 'image' | 'video' | 'text' | 'audio' | 'model3d'
 
 export type GenerationNodeTaskKind = 'text' | 'image' | 'video' | 'audio' | 'model3d' | 'workflow' | 'asset' | 'unknown'
+
+export type Model3dValidationSummary = {
+  version: 1
+  glbVersion: number
+  byteLength: number
+  meshCount: number
+  primitiveCount: number
+  nodeCount: number
+  materialCount: number
+  textureCount: number
+  imageCount: number
+  embeddedImageCount: number
+  externalImageCount: number
+  externalImageUris: string[]
+  externalBufferCount: number
+  externalBufferUris: string[]
+  animationCount: number
+  skinCount: number
+  bounds: {
+    min: [number, number, number]
+    max: [number, number, number]
+    size: [number, number, number]
+    diagonal: number
+  }
+  warnings: string[]
+}
 
 export const CATEGORY_IDS = ['shots', 'cast', 'scene', 'prop', 'audio'] as const
 
@@ -38,8 +66,11 @@ export function getDefaultCategoryForNodeKind(kind: GenerationNodeKind): Builtin
       return 'cast'
     case 'scene':
     case 'panorama':
+    case 'scene3d':
+    case 'vibingDirector':
     case 'director':
     case 'model3d':
+    case 'resource':
       return 'scene'
     case 'audio':
       return 'audio'
@@ -85,10 +116,100 @@ export type GenerationNodeResult = {
   taskKind?: GenerationNodeTaskKind
   assetId?: string
   assetRefId?: string
+  model3dValidation?: Model3dValidationSummary
   raw?: unknown
   createdAt: number
+  /** Additional assets returned by the same provider request; folded into node.history when persisted. */
+  alternatives?: GenerationNodeResult[]
   /** Phase E E11: Complete provenance for reproducibility. */
   provenance?: GenerationProvenance
+  // ── Gate 1 Slice 3：AssetRevision v1 兼容字段（§9.6, §17）──────────────────────
+  // 全 optional，向后兼容。history[] + resultId 是 revision 模型的迁移起点（非平行数组）。
+  // §17.1 不覆盖原则：重新生成创建新条目，旧条目 status 变化但不删。
+  /** 父 revision（派生编辑/重生成时指向来源）。 */
+  parentRevisionId?: string
+  /** Revision 种类（§9.6）。迁移期可空；新生成默认 'generated'。 */
+  revisionKind?: 'imported' | 'generated' | 'edited' | 'blender-preview' | 'exported'
+  /**
+   * Revision 生命周期状态（§17）。迁移期缺省 = 'candidate'（既有条目无此字段时按 candidate 处理）。
+   * selected = 当前选中版本（只是指针，旧条目不删）；rejected = 淘汰；archived = 归档。
+   */
+  revisionStatus?: AssetRevisionStatus
+  /** 内容哈希（结果去重用，§21.5）。 */
+  sha256?: string
+  /** 实际费用（人民币；Provider 未返回时空）。 */
+  costCny?: number
+  /** 关联的验收报告 id（Gate 5 起）。 */
+  evaluationReportId?: string
+  /** prompt 快照（便于 revision 比较，§17.2）。 */
+  promptSnapshot?: string
+}
+
+export const GENERATION_COLLECTION_ITEM_STATUSES = ['pending', 'running', 'success', 'error'] as const
+export type GenerationResultCollectionItem = {
+  id: string
+  label: string
+  azimuth?: number
+  elevation?: number
+  shotSize?: string
+  energy?: number
+  affinity?: number
+  status: (typeof GENERATION_COLLECTION_ITEM_STATUSES)[number]
+  result?: GenerationNodeResult
+  /** All assets returned for this logical output by one provider request. */
+  candidates?: GenerationNodeResult[]
+  /** The candidate currently used as this output and as the node's downstream result. */
+  selectedResultId?: string
+  error?: string
+}
+
+export type GenerationResultCollectionSource = {
+  nodeId: string
+  resultId: string
+  label: string
+  url?: string
+  thumbnailUrl?: string
+  providerUrl?: string
+}
+
+export const GENERATION_QUALITY_STATUSES = ['pass', 'warning', 'fail', 'unavailable'] as const
+export type GenerationQualityStatus = (typeof GENERATION_QUALITY_STATUSES)[number]
+
+export type GenerationQualityCheck = {
+  id: string
+  label: string
+  status: GenerationQualityStatus
+  summary: string
+  details?: string[]
+  itemIds?: string[]
+  metrics?: Record<string, string | number | boolean>
+}
+
+export type GenerationQualityHumanReview = {
+  verdict: 'accepted' | 'rejected'
+  reviewedAt: number
+  note?: string
+}
+
+export type GenerationQualityReport = {
+  version: 1
+  kind: 'grid9' | 'multiview' | 'panorama' | 'portrait' | 'mood' | 'style' | 'video' | 'model3d'
+  evaluator: string
+  status: GenerationQualityStatus
+  evaluatedAt: number
+  checks: GenerationQualityCheck[]
+  metrics?: Record<string, string | number | boolean>
+  /** Human acceptance is recorded separately and never rewrites automatic checks. */
+  humanReview?: GenerationQualityHumanReview
+}
+
+export type GenerationResultCollection = {
+  id: string
+  recipeId: string
+  createdAt: number
+  source?: GenerationResultCollectionSource
+  items: GenerationResultCollectionItem[]
+  quality?: GenerationQualityReport
 }
 
 export type GenerationNodeProgress = {
@@ -104,15 +225,29 @@ export type GenerationNodeProgress = {
 
 export type GenerationNodeRunStatus = Exclude<GenerationNodeStatus, 'idle'> | 'cancelled'
 
+/**
+ * 一次运行**实际发给的**是哪家供应商的哪个模型。运行开始那一刻从被执行的节点读出、随运行记录落盘，
+ * 之后失败、找回都读这一份——失败属于「发出去的那一次」，不属于「节点现在选着谁」。
+ * （2026-09-29：用户点了提示里的「切到另一家」，旧失败还挂在节点上，提示按新选的那家去点名，说它失败了。）
+ * 旧记录没有这一栏：读不出是谁失败的，就不替它点名。
+ */
+export type GenerationNodeRunAttempt = { vendorKey: string; modelKey: string }
+
 export type GenerationNodeRunRecord = {
   id: string
   status: GenerationNodeRunStatus
+  /** 这次运行发给谁（提交那一刻固定，见 GenerationNodeRunAttempt）。制作流程写的记录不带它。 */
+  attempt?: GenerationNodeRunAttempt
+  /** 运行所属项目（提交那一刻固定）。旧记录没有这一栏：由记录所在项目派生，派生不出即拒绝找回。 */
+  projectId?: string
   taskId?: string
   taskKind?: GenerationNodeTaskKind
   assetId?: string
   assetRefId?: string
   progress?: GenerationNodeProgress
   resultId?: string
+  /** Sealed atomically with this run's generated document, never ordinary editing. */
+  textDocumentDigest?: string
   error?: string
   raw?: unknown
   startedAt: number
@@ -141,6 +276,10 @@ export type GenerationCanvasNode = {
   references?: string[]
   result?: GenerationNodeResult
   history?: GenerationNodeResult[]
+  /** Optional reusable style/effect/identity/palette resource pinned to the canvas. */
+  creativeResource?: CreativeResource
+  /** Multi-output recipe runs stay grouped instead of expanding into many overlapping nodes. */
+  resultCollections?: GenerationResultCollection[]
   progress?: GenerationNodeProgress
   runs?: GenerationNodeRunRecord[]
   status?: GenerationNodeStatus

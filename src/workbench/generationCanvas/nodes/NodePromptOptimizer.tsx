@@ -4,7 +4,7 @@
  * 完成后高亮展示「改了哪些」(diff),用户确认再应用到提示词(creator control:不擅自覆盖)。
  * 复用现成文本流式管线(runWorkbenchTextTaskStream + prompt_refine),不新建改写通道。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconX } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
@@ -12,6 +12,7 @@ import { NomiLogoMark, WorkbenchButton } from '../../../design'
 import { NodePromptToolIconButton } from './NodePromptToolCluster'
 import { getTextBrain } from '../../api/promptLibraryApi'
 import { runWorkbenchTextTaskStream } from '../../api/taskApi'
+import { isProjectExecutionContextCurrent, withProjectAction } from '../../project/projectCanvasReadSurface'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { diffPromptWords } from './promptDiff'
@@ -62,7 +63,10 @@ export function NodePromptOptimizer({ node, isVideo }: { node: GenerationCanvasN
     originalRef.current = node.prompt || ''
     const ctrl = new AbortController()
     abortRef.current = ctrl
+    // 改写属于节点所在项目：点击那一刻签发，换项目后不再把结果写回。
+    const project = withProjectAction((issued) => issued)
     try {
+      if (!project) return
       const brain = await getTextBrain()
       if (!brain) {
         setError(t('generationCommon.optimizer.configureTextModel'))
@@ -73,14 +77,17 @@ export function NodePromptOptimizer({ node, isVideo }: { node: GenerationCanvasN
       await runWorkbenchTextTaskStream(
         brain.vendor,
         { kind: 'prompt_refine', prompt, extras: { modelKey: brain.modelKey } },
+        project.binding.projectId,
         {
           signal: ctrl.signal,
           onDelta: (delta) => {
+            if (!isProjectExecutionContextCurrent(project)) return
             acc += delta
             setStreamed(acc)
           },
         },
       )
+      if (!isProjectExecutionContextCurrent(project)) return
       const final = acc.trim()
       if (final) setResult(final)
       else setError(t('generationCommon.optimizer.emptyResult'))

@@ -8,7 +8,7 @@
 //
 // 反向那条同样重要：拿不到 taskId 就没有可续查的东西，免费按钮按下去也只会报「找不到任务」。
 // 那种情况下 `error` 才是诚实的——不许为了让状态好看而给出一颗按不动的按钮。
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest'
 import { runGenerationNodesBatch } from './generationRunController'
 import { useGenerationQueueStore } from './generationQueueStore'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -19,9 +19,12 @@ import { describeOutboundRefusal } from '../../../../electron/networkOutboundMes
 import { authorizeOutboundDestination } from '../../../../electron/networkOutboundPolicy'
 import { classifyGenerationError } from '../../observability/classifyError'
 import { recoverNodeResult } from './recoverTaskActions'
+import { withProjectAction } from '../../project/projectCanvasReadSurface'
 import { fetchWorkbenchTaskResultByVendor, mintSpendGrant } from '../../api/taskApi'
 import { VendorRequestError, encodeVendorErrorMessage } from '../../../../electron/vendor/vendorHttp'
 import { RecoverableTimeoutError } from './recoverableTimeout'
+import { createProjectSessionTestHarness, type ProjectSessionTestHarness } from '../../project/projectSessionTestHarness'
+import type { ProjectBinding } from '../../../../electron/shared/projectBinding'
 
 vi.mock('../../api/taskApi', () => ({
   mintSpendGrant: vi.fn(async () => 'grant-test'),
@@ -58,6 +61,14 @@ function addNode(): string {
   return useGenerationCanvasStore.getState().addNode({ kind: 'image', prompt: '镜头 1' }).id
 }
 
+let projectSession: ProjectSessionTestHarness
+let projectTarget: ProjectBinding
+beforeEach(async () => {
+  projectSession = createProjectSessionTestHarness()
+  projectTarget = await projectSession.open('project-test')
+})
+afterEach(() => projectSession.dispose())
+
 describe('出站被拦 = 已付费但没取回来', () => {
   beforeEach(() => {
     useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], selectedNodeIds: [], groups: [] })
@@ -69,7 +80,7 @@ describe('出站被拦 = 已付费但没取回来', () => {
 
   it('已拿到 taskId 时落 recoverable —— 用户看到的是免费续查，不是付费重试', async () => {
     const id = addNode()
-    await runGenerationNodesBatch([id], {
+    await runGenerationNodesBatch([id], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async (node) => {
@@ -86,7 +97,7 @@ describe('出站被拦 = 已付费但没取回来', () => {
 
   it('没有 taskId 时仍落 error —— 不给一颗按不动的免费按钮', async () => {
     const id = addNode()
-    await runGenerationNodesBatch([id], {
+    await runGenerationNodesBatch([id], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async () => {
@@ -101,7 +112,7 @@ describe('出站被拦 = 已付费但没取回来', () => {
   // 上面那条绿灯也可能只是因为「什么都落 recoverable」。
   it('阳性对照：普通上游失败照旧落 error（付费重试才是对的下一步）', async () => {
     const id = addNode()
-    await runGenerationNodesBatch([id], {
+    await runGenerationNodesBatch([id], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async (node) => {
@@ -120,7 +131,7 @@ describe('出站被拦 = 已付费但没取回来', () => {
   // 不必凑够阈值把队列真的停住（那会让 worker 挂着等人拿主意，测试还得替用户点取消）。
   it('出站被拦计入刹车，超时可找回不计——两者的省钱方向相反', async () => {
     const blockedId = addNode()
-    await runGenerationNodesBatch([blockedId], {
+    await runGenerationNodesBatch([blockedId], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async (node) => {
@@ -134,7 +145,7 @@ describe('出站被拦 = 已付费但没取回来', () => {
     useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], selectedNodeIds: [], groups: [] })
 
     const timeoutId = addNode()
-    await runGenerationNodesBatch([timeoutId], {
+    await runGenerationNodesBatch([timeoutId], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async () => {
@@ -168,9 +179,10 @@ describe('被拦之后：免费重取片可达（零额度夹具）', () => {
     const id = useGenerationCanvasStore.getState().addNode({
       kind: 'image',
       prompt: '镜头 1',
-      meta: { modelVendor: 'apimart', modelKey: 'MiniMax-H3' },
+      // MiniMax-H3 is canonically video; this image-recovery fixture needs an actual image model.
+      meta: { modelVendor: 'apimart', modelKey: 'doubao-seedream-4.5' },
     }).id
-    await runGenerationNodesBatch([id], {
+    await runGenerationNodesBatch([id], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async (node) => {
@@ -189,10 +201,14 @@ describe('被拦之后：免费重取片可达（零额度夹具）', () => {
         assets: [{ url: 'https://cdn.example.com/shot-1.png', type: 'image' }],
       },
     } as never)
-    await recoverNodeResult(id)
+    await withProjectAction((project) => recoverNodeResult(id, project))
 
     const query = vi.mocked(fetchWorkbenchTaskResultByVendor).mock.calls[0]?.[0]
-    expect(query).toMatchObject({ taskId: 'task-paid-free-1', vendor: 'apimart' })
+    expect(query).toMatchObject({
+      taskId: 'task-paid-free-1', vendor: 'apimart', modelKey: 'doubao-seedream-4.5',
+      taskKind: 'text_to_image', projectId: projectTarget.projectId,
+    })
+    expect(vi.mocked(fetchWorkbenchTaskResultByVendor)).toHaveBeenCalledTimes(1)
     const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)
     expect(node?.status).toBe('success')
     expect(node?.result?.url).toBe('https://cdn.example.com/shot-1.png')
@@ -200,9 +216,19 @@ describe('被拦之后：免费重取片可达（零额度夹具）', () => {
     expect(vi.mocked(mintSpendGrant)).not.toHaveBeenCalled()
   })
 
+  it('refuses a video model on an image node without querying or minting a spend grant', async () => {
+    const id = useGenerationCanvasStore.getState().addNode({
+      kind: 'image', prompt: 'invalid model binding', meta: { modelVendor: 'apimart', modelKey: 'MiniMax-H3' },
+    }).id
+    useGenerationCanvasStore.getState().setNodeProgress(id, { phase: 'still-generating', taskId: 'task-invalid-kind' })
+    await expect(withProjectAction((project) => recoverNodeResult(id, project))).rejects.toThrow(/Model kind mismatch/)
+    expect(vi.mocked(fetchWorkbenchTaskResultByVendor)).not.toHaveBeenCalled()
+    expect(vi.mocked(mintSpendGrant)).not.toHaveBeenCalled()
+  })
+
   it('【阳性对照】节点上没有 taskId 时，同一颗按钮报「找不到任务」而不是假装拉到了', async () => {
     const id = useGenerationCanvasStore.getState().addNode({ kind: 'image', prompt: '镜头 2' }).id
-    await recoverNodeResult(id)
+    await withProjectAction((project) => recoverNodeResult(id, project))
     expect(vi.mocked(fetchWorkbenchTaskResultByVendor)).not.toHaveBeenCalled()
     expect(useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)?.status).toBe('error')
   })
@@ -241,7 +267,7 @@ describe('提交侧被拦 = 没扣费（与取回侧刻意分家）', () => {
 
   it('提交被拦即使已有 taskId 也落 error —— 不给一颗「免费重取」的假按钮', async () => {
     const id = useGenerationCanvasStore.getState().addNode({ kind: 'image', prompt: '镜头 3' }).id
-    await runGenerationNodesBatch([id], {
+    await runGenerationNodesBatch([id], { target: projectTarget,
       assetUploadConsent: 'not-needed',
       retry: { maxAttempts: 1 },
       executor: async (node) => {
@@ -253,12 +279,14 @@ describe('提交侧被拦 = 没扣费（与取回侧刻意分家）', () => {
     expect(useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)?.status).toBe('error')
   })
 
-  it('用户读到的是「没扣费、重新生成」，而不是取回侧那句「钱已经付过」', async () => {
+  it('用户读到的是「请求没发出去、重新生成」，而不是取回侧那句「钱已经付过」', async () => {
     const report = classifyGenerationError((await submitBlockedError()).message)
     expect(report.kind).toBe('outbound-blocked-submit')
     // 主动作把用户送去「模型接入 → 网络」那一行——那是这堵墙唯一的开关所在。
     expect(report.primary).toBe('open-model-access')
-    expect(report.hint).toMatch(/没有扣费|nothing was charged/i)
+    // 只说事实（请求没发出去、服务商没被请求到），不谈钱：现在都走中转站，扣没扣钱 Nomi 不知道。
+    expect(report.hint).toMatch(/没被请求到|never called/i)
+    expect(report.hint).not.toMatch(/没有扣费|nothing was charged/i)
     // 阳性对照：取回侧那条必须仍然是另一个 kind、另一套说法。
     const retrieval = classifyGenerationError((await outboundBlockedError()).message)
     expect(retrieval.kind).toBe('outbound-blocked')
@@ -288,5 +316,68 @@ describe('提交侧被拦 = 没扣费（与取回侧刻意分家）', () => {
     expect(report.primary).toBe('open-model-access')
     // 也不许把我们自己的拒绝塞进「服务商说：」那个框——那家根本没被请求到。
     expect(report.providerMessage || '').toBe('')
+  })
+})
+
+// #1213：出站被拦只是「结果取回」族的一员。查询报错 / 上游说成了却读不出结果 / 下载没成，同样是「任务已受理、
+// 丢的只是取回」——同一个判据（带 retrieval-* 码）、同一个去处（可找回），绝不落红色失败、绝不重新提交。
+describe('结果取回族（#1213）：带阶段码的取回失败一律可找回', () => {
+  beforeEach(() => {
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], selectedNodeIds: [], groups: [] })
+    useGenerationQueueStore.setState({ entries: [], batches: {} })
+    __resetCanvasUndoJournalForTests()
+    setCanvasEventSinkForTests(() => {})
+    resetModelHealthMemory()
+    vi.mocked(fetchWorkbenchTaskResultByVendor).mockReset()
+    vi.mocked(mintSpendGrant).mockClear()
+  })
+
+  it.each([
+    ['retrieval-query', 'NOMI_ERR::retrieval-query:: 取回卡在「查询任务」这一步：HTTP 503 无可用渠道'],
+    ['retrieval-parse', 'NOMI_ERR::retrieval-parse:: 取回卡在「读结果」这一步：上游说任务已完成，但响应里没找到结果地址。'],
+    ['retrieval-download', 'NOMI_ERR::retrieval-download:: 取回卡在「下载结果」这一步：HTTP 403'],
+  ])('%s → recoverable（带原话），不进红色失败', async (_code, message) => {
+    const id = addNode()
+    await runGenerationNodesBatch([id], { target: projectTarget,
+      assetUploadConsent: 'not-needed',
+      retry: { maxAttempts: 1 },
+      executor: async (node) => {
+        useGenerationCanvasStore.getState().setNodeProgress(node.id, { phase: 'still-generating', taskId: 'task-paid-retrieval' })
+        throw new Error(message)
+      },
+    }).catch(() => undefined)
+    const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === id)
+    expect(node?.status).toBe('recoverable')
+    expect(node?.error).toBe(message)
+  })
+
+  it('重新取回时上游说成了却仍没地址：留在可找回（带原话），不翻成红色失败', async () => {
+    const id = useGenerationCanvasStore.getState().addNode({
+      kind: 'video',
+      prompt: '镜头 3',
+      meta: { modelVendor: 'relay', modelKey: 'doubao-seedance-2-0-fast-260128' },
+    }).id
+    await runGenerationNodesBatch([id], { target: projectTarget,
+      assetUploadConsent: 'not-needed',
+      retry: { maxAttempts: 1 },
+      executor: async (node) => {
+        useGenerationCanvasStore.getState().setNodeProgress(node.id, { phase: 'still-generating', taskId: 'task-paid-parse' })
+        throw new Error('NOMI_ERR::retrieval-query:: HTTP 503')
+      },
+    }).catch(() => undefined)
+    expect(useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)?.status).toBe('recoverable')
+    vi.mocked(fetchWorkbenchTaskResultByVendor).mockResolvedValue({
+      result: { id: 'task-paid-parse', status: 'succeeded', kind: 'text_to_video', assets: [] },
+    } as never)
+    await withProjectAction((project) => recoverNodeResult(id, project))
+    const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)
+    expect(node?.status).toBe('recoverable')
+    expect(node?.error).toMatch(/NOMI_ERR::retrieval-parse::/)
+    expect(vi.mocked(mintSpendGrant)).not.toHaveBeenCalled()
+  })
+
+  it('纯等待超时带 retrieval-timeout 阶段码（失败看得见：每次取回失败都说清卡在哪一步）', () => {
+    const error = new RecoverableTimeoutError({ taskId: 'timeout-2', vendor: 'relay', taskKind: 'text_to_video', modelKey: 'demo' })
+    expect(error.message).toMatch(/^NOMI_ERR::retrieval-timeout::[\s\S]*timeout-2/)
   })
 })

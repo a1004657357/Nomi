@@ -39,6 +39,10 @@ for (const screen of LAB_SCREEN_IDS) {
           // Fix only Date: real animation/timers still run, while elapsed narration is deterministic.
           await page.clock.setFixedTime(new Date('2026-09-10T00:00:00Z'))
         }
+        if (screen === 'agent-panel-v4' && state.id === 'v4-feedback-report-idle') {
+          // The approved card shows its opening time; keep Date fixed, not timers or the content.
+          await page.clock.setFixedTime(new Date('2026-10-25T02:20:00Z'))
+        }
         const errors = []
         page.on('pageerror', (error) => errors.push(String(error)))
         if (screen === 'process-feedback') {
@@ -59,7 +63,8 @@ for (const screen of LAB_SCREEN_IDS) {
         if (screen === 'process-feedback') {
           await page.clock.runFor(state.id === 'pf-fx-final-reveal' ? 400 : state.id === 'pf-fx-done-clean' ? 3201 : 1000)
           // Cross-surface acceptance runs in the real App: process-feedback-electron.e2e.mjs.
-          if (!state.id.includes('preview') && !['pf-fx-final-reveal', 'pf-fx-done-clean'].includes(state.id)) {
+          // 导入中的卡没有生成状态药丸（它本来就不是生成）——这两条跨面断言只对生成态成立。
+          if (!state.id.startsWith('pf-import') && !state.id.includes('preview') && !['pf-fx-final-reveal', 'pf-fx-done-clean'].includes(state.id)) {
             await expect(page.locator('[data-node-id] [data-generation-status]')).not.toContainText('%')
             await expect(page.locator('[data-process-lab-ready]')).not.toContainText(/前面\s*\d+\s*个/)
           }

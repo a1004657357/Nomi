@@ -59,7 +59,7 @@ async function loadSource(source: PromptSource): Promise<LibraryPrompt[]> {
   const parsed: LibraryPrompt[] = [];
   const seen = new Set<string>();
   for (const file of source.files) {
-    let markdown = "";
+    let markdown: string;
     try {
       const res = await hardenedFetchText(`${source.rawBase}/${file}`, { maxBytes: FETCH_MAX_BYTES, timeoutMs: FETCH_TIMEOUT_MS });
       markdown = res.text;
@@ -116,7 +116,7 @@ async function getExternalPrompts(): Promise<LibraryPrompt[]> {
 /** 取全部提示词 = 内置包(随构建,恒在最前) + 外部源。唯一对外出口,内置永不被在线拉取顶掉。 */
 export async function getPromptLibrary(): Promise<LibraryPrompt[]> {
   hydrateFromDisk();
-  const local = withBuiltinPrompts(floor());
+  const local = await withBuiltinPrompts(floor());
   // Remote freshness must not delay bundled media; the existing single-flight
   // refresh persists its result for the next read, including manual reloads.
   void getExternalPrompts();

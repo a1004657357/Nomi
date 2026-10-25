@@ -12,21 +12,35 @@ import type { AiSdkProviderKind } from "../../catalog/types";
 import { appFetch } from "../../appFetch";
 import {
   appendQueryParams,
+  authHeaders,
   buildHttpRequest,
   type AuthType,
   type BuiltRequest,
+  type VendorAuthSpec,
 } from "../requestPipeline";
 import { describeIllegalHeader, findIllegalHeader, isJsonRecord, mergeHeadersCaseInsensitive, pickUpstreamMessage } from "../../jsonUtils";
 import { parseModelListPage, type ModelListResult, type ModelListDescriptor, type ModelListFailureKind } from "./modelListResponse";
 import { modelListErrorRedactor } from "./modelListSafety";
 import { createExplicitProxyDispatcher } from "../../systemProxy";
+import { desktopT } from "../../desktopStrings";
+import { isRedirectRefusal, safeNetworkUrl } from "../../networkErrorDetails";
 import type { Dispatcher } from "undici";
 export type { ModelListFailureKind } from "./modelListResponse";
 
+function redirectRefusalMessage(location: string | null, from: URL): string {
+  if (location) {
+    try {
+      return desktopT("network.credentialRedirectTo", { target: safeNetworkUrl(new URL(location, from).toString()) });
+    } catch { /* 不可解析的 Location：退回不带地址的那句 */ }
+  }
+  return desktopT("network.credentialRedirect");
+}
+
 export async function describeNetworkErrorLazy(error: unknown): Promise<string> {
+  if (isRedirectRefusal(error)) return desktopT("network.credentialRedirect");
   const { describeNetworkError } = await import("../../systemProxy");
-  const reason = describeNetworkError(error);
-  return `Network error: ${reason}. Next: check the relay URL, local network, and proxy settings, then retry.`;
+  // 这句话直接出现在设置页地址栏下面（连接状态说明），不能是英文原话（2026-09-29）。
+  return desktopT("network.unreachable", { reason: describeNetworkError(error) });
 }
 
 /** 上游失败体 → 那句人话。键优先级表住 jsonUtils（全仓唯一），挑不出来才退回原文/HTTP 码。 */
@@ -63,16 +77,27 @@ export function readExtraHeaders(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** 按协议给鉴权头（anthropic 用 x-api-key + 版本；其余 Bearer）。拉模型/可达性探测共用。 */
+/**
+ * 按协议给鉴权头（anthropic 用 x-api-key + 版本；其余 Bearer）。拉模型/可达性探测共用。
+ *
+ * 2026-09-21：这里原来自己写死 `authorization: Bearer ${apiKey}` —— 全仓第二处拼鉴权头的地方，
+ * 于是 vendor.authScheme（Higgsfield 的 `Key id:secret`）在「测试连接 / 可达性探测」这条路上
+ * 根本没有出现的机会。现在头由 requestPipeline.authHeaders 这一个 owner 拼；`auth` 给了就以它为准
+ * （调用方从已保存的连接派生，见 catalog/vendorAuthSpec.connectionAuthSpec），没给才按协议缺省。
+ */
 export function buildAuthHeaders(
   providerKind: AiSdkProviderKind,
   apiKey: string,
   extraHeaders: Record<string, string>,
+  auth?: VendorAuthSpec,
 ): Record<string, string> {
+  const spec: VendorAuthSpec = auth
+    ?? (providerKind === "anthropic" ? { authType: "x-api-key", headerName: "x-api-key" } : { authType: "bearer" });
   return mergeHeadersCaseInsensitive(
-    providerKind === "anthropic"
-      ? { "anthropic-version": "2023-06-01", ...(apiKey ? { "x-api-key": apiKey } : {}) }
-      : { ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+    {
+      ...(providerKind === "anthropic" ? { "anthropic-version": "2023-06-01" } : {}),
+      ...authHeaders(spec, apiKey),
+    },
     extraHeaders,
   );
 }
@@ -81,7 +106,7 @@ export type { ModelListResult } from "./modelListResponse";
 
 type Failure = Extract<ModelListResult, { ok: false }> & { failureKind: ModelListFailureKind };
 const FAILURE_PRIORITY: Record<ModelListFailureKind, number> = {
-  unsupported: 0, invalid_response: 1, upstream: 2, network: 3, rate_limit: 4, auth: 5,
+  unsupported: 0, invalid_response: 1, upstream: 2, network: 3, redirect: 3, rate_limit: 4, auth: 5,
 };
 const MAX_PAGES = 10;
 const MAX_MODELS = 2000;
@@ -211,6 +236,12 @@ export async function fetchModelList(
       }
       if (res.status === 304 && pageNumber === 0 && options.validator?.url === url.toString()) {
         return { ok: true, models: [], statuses, notModified: true, validator: options.validator };
+      }
+      if (res.status >= 300 && res.status < 400) {
+        // 手动模式把 3xx 原样交回来：不跟随，但这里拿得到 Location，就把目标地址告诉用户（只给主机和路径，不带查询串）。
+        const failed = remember(failure("redirect", redirectRefusalMessage(res.headers.get("location"), url), res.status));
+        if (pageNumber > 0) return failed;
+        break;
       }
       if (!res.ok) {
         const failed = remember(failure(failureKindForStatus(res.status), upstreamErrorText(body, res.status, redact), res.status));

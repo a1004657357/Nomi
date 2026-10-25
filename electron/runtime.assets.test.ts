@@ -5,7 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProject, importRemoteAsset, listProjectAssets, localizeTaskAsset, localizedTaskAssetFileName } from "./runtime";
-import { importLocalFile } from "./assets/localFileImport";
+import { importLocalFile, importLocalPath } from "./assets/localFileImport";
+import { scheduleTechnicalReview } from "./review/reviewTrace";
 import { resolveFfmpegPath } from "./export/ffmpegRunner";
 
 vi.mock("./export/mediaProbe", () => ({
@@ -53,6 +54,11 @@ type AssetRecord = {
     absolutePath: string;
     url: string;
     contentType: string;
+    model3dValidation?: {
+      meshCount: number;
+      primitiveCount: number;
+      bounds: { diagonal: number };
+    };
   };
 };
 
@@ -72,6 +78,7 @@ vi.mock("electron", () => ({
 }));
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-05-31T12:00:00Z"));
   mockedDocumentsRoot = makeTempDir("nomi-runtime-assets-documents-");
@@ -214,6 +221,12 @@ describe("runtime workspace asset storage", () => {
 
     expect(asset.url).toContain("nomi-local://asset/");
     expect(asset.durationSeconds).toBe(3.0625);
+    expect(vi.mocked(scheduleTechnicalReview)).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: "node-1",
+      projectId: workspace.id,
+      assetUrl: asset.url,
+      type: "video",
+    }));
   });
 
   it("writes generated remote assets under assets/generated/YYYY-MM-DD", async () => {
@@ -224,12 +237,51 @@ describe("runtime workspace asset storage", () => {
       url: `data:image/png;base64,${PNG_BYTES.toString("base64")}`,
       fileName: "render.png",
       kind: "generated",
+      expectedKind: "image",
     })) as AssetRecord;
 
     expect(asset.data.relativePath).toBe("assets/generated/2026-05-31/render.png");
-    expect(asset.data.absolutePath).toBe(path.join(workspace.rootPath, "assets", "generated", "2026-05-31", "render.png"));
+    expect(asset.data.absolutePath).toBe(path.join(fs.realpathSync(workspace.rootPath), "assets", "generated", "2026-05-31", "render.png"));
     expect(fs.readFileSync(asset.data.absolutePath)).toEqual(PNG_BYTES);
     expect(asset.data.url).toBe(`nomi-local://asset/${encodeURIComponent(workspace.id)}/assets/generated/2026-05-31/render.png`);
+  });
+
+  it("validates a generated GLB before writing it and persists the inspection summary", async () => {
+    const workspace = createWorkspace();
+    const bytes = fs.readFileSync(path.resolve(process.cwd(), "src/assets/nomi-mannequin.glb"));
+
+    const asset = (await importRemoteAsset({
+      projectId: workspace.id,
+      url: `data:model/gltf-binary;base64,${bytes.toString("base64")}`,
+      fileName: "generated-model.glb",
+      kind: "generated",
+      mediaType: "model3d",
+      expectedKind: "model3d",
+    })) as AssetRecord;
+
+    expect(asset.data.contentType).toBe("model/gltf-binary");
+    expect(asset.data.model3dValidation).toMatchObject({
+      meshCount: expect.any(Number),
+      primitiveCount: expect.any(Number),
+      bounds: { diagonal: expect.any(Number) },
+    });
+    expect(asset.data.model3dValidation?.meshCount).toBeGreaterThan(0);
+    expect(asset.data.model3dValidation?.bounds.diagonal).toBeGreaterThan(0);
+  });
+
+  it("rejects an invalid generated GLB before it reaches the project asset library", async () => {
+    const workspace = createWorkspace();
+
+    await expect(importRemoteAsset({
+      projectId: workspace.id,
+      url: "data:model/gltf-binary;base64,Z2xURg==",
+      fileName: "broken.glb",
+      kind: "generated",
+      mediaType: "model3d",
+      expectedKind: "model3d",
+    })).rejects.toThrow(/GLB.*过短/);
+
+    expect(fs.existsSync(path.join(workspace.rootPath, "assets", "generated", "2026-05-31", "broken.glb"))).toBe(false);
   });
 
   it("writes imported user files under their content identity", async () => {
@@ -244,8 +296,28 @@ describe("runtime workspace asset storage", () => {
 
     const hash = createHash("sha256").update(Buffer.from([1, 2, 3])).digest("hex");
     expect(asset.data.relativePath).toBe(`assets/imported/sha256/${hash}/photo.png`);
-    expect(asset.data.absolutePath).toBe(path.join(workspace.rootPath, "assets", "imported", "sha256", hash, "photo.png"));
+    expect(asset.data.absolutePath).toBe(path.join(fs.realpathSync(workspace.rootPath), "assets", "imported", "sha256", hash, "photo.png"));
     expect([...fs.readFileSync(asset.data.absolutePath)]).toEqual([1, 2, 3]);
+  });
+
+  it("imports a generated local path under assets/generated/YYYY-MM-DD", async () => {
+    const workspace = createWorkspace();
+    const sourcePath = path.join(makeTempDir("nomi-codex-source-"), "codex-output.png");
+    fs.writeFileSync(sourcePath, PNG_BYTES);
+
+    const asset = (await importLocalPath({
+      projectId: workspace.id,
+      path: sourcePath,
+      fileName: "codex-output.png",
+      kind: "generated",
+      ownerNodeId: "node-1",
+      expectedKind: "image",
+    })) as AssetRecord;
+
+    expect(asset.data.relativePath).toBe("assets/generated/2026-05-31/codex-output.png");
+    expect(asset.data.absolutePath).toBe(path.join(fs.realpathSync(workspace.rootPath), "assets", "generated", "2026-05-31", "codex-output.png"));
+    expect(fs.readFileSync(asset.data.absolutePath)).toEqual(PNG_BYTES);
+    expect(asset.data.contentType).toBe("image/png");
   });
 
   it("sniffs an extensionless octet-stream video before importing", async () => {
@@ -299,6 +371,7 @@ describe("runtime workspace asset storage", () => {
       url: "data:image/png;base64,aGVsbG8=",
       fileName: "capture.png",
       kind: "browser-capture",
+      expectedKind: null,
     });
     await importLocalFile({
       projectId: workspace.id,
@@ -321,8 +394,8 @@ describe("runtime workspace asset storage", () => {
     const workspace = createWorkspace();
 
     const pngUrl = `data:image/png;base64,${PNG_BYTES.toString("base64")}`;
-    await importRemoteAsset({ projectId: workspace.id, url: pngUrl, fileName: "render.png" });
-    const second = (await importRemoteAsset({ projectId: workspace.id, url: pngUrl, fileName: "render.png" })) as AssetRecord;
+    await importRemoteAsset({ projectId: workspace.id, url: pngUrl, fileName: "render.png", expectedKind: "image" });
+    const second = (await importRemoteAsset({ projectId: workspace.id, url: pngUrl, fileName: "render.png", expectedKind: "image" })) as AssetRecord;
 
     expect(second.data.relativePath).toBe("assets/generated/2026-05-31/render-2.png");
     expect(fs.readFileSync(second.data.absolutePath)).toEqual(PNG_BYTES);

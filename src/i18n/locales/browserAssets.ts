@@ -120,6 +120,8 @@ export const zhBrowserAssets = {
   sites: {
     nomiOfficial: 'Nomi 官网',
     xiaohongshu: '小红书',
+    chatgptHint: '对话生成与编辑图片',
+    jimengHint: '即梦图片与视频创作',
     pinterestHint: '视觉灵感',
     behanceHint: '设计作品集',
     dribbbleHint: 'UI 灵感',
@@ -315,6 +317,8 @@ export const enBrowserAssets = {
   sites: {
     nomiOfficial: 'Nomi site',
     xiaohongshu: 'Xiaohongshu',
+    chatgptHint: 'Generate and edit images in chat',
+    jimengHint: 'Create images and videos with Jimeng',
     pinterestHint: 'Visual inspiration',
     behanceHint: 'Design portfolios',
     dribbbleHint: 'UI inspiration',

@@ -1,11 +1,10 @@
 /**
  * 新手上手手册的唯一内容源（纯数据 + 文案，无 React、无样式）。
  *
- * 两处出口共用这一份：
- *   ① App 内 `HandbookPanel.tsx`（React overlay，把 iconKey 映射成已登记的 tabler 组件）
- *   ② `scripts/build-handbook-html.mjs`（渲成独立 marketing/handbook.html，发群 + 挂官网）
- * 改文案只改这里，两处自动同步。iconKey = tabler 图标名去掉 `Icon` 前缀的 kebab（如 `pencil`）：
- * html 渲 `ti ti-<iconKey>`；React panel 用 HANDBOOK_ICON map（key→vendor 组件，都已登记，build 安全）。
+ * 出口只有一处：App 内 `HandbookPanel.tsx`（React overlay，把 iconKey 映射成已登记的 tabler 组件）。
+ * （原来的第二处出口——渲成官网 /handbook 页——2026-09-28 随官网并进「快速上手」退役，/handbook 现在 301 到 /quickstart。）
+ * 改文案只改这里。iconKey = tabler 图标名去掉 `Icon` 前缀的 kebab（如 `pencil`）：
+ * React panel 用 HANDBOOK_ICON map（key→vendor 组件，都已登记，build 安全）。
  */
 
 export type HandbookPipelineStep = { iconKey: string; label: string; accent?: boolean }
@@ -64,7 +63,7 @@ export const HANDBOOK_INTENT_ROUTES: HandbookIntentRoute[] = [
   {
     iconKey: 'gift',
     title: '没有 API 额度，想先白嫖试试',
-    body: '模型设置接 Agnes AI，一个 Key 解锁文本 / 图 / 视频，无限期免费。',
+    body: '模型设置接 Agnes AI，一个 Key 解锁文本 / 图 / 视频的免费额度；视频免费/default通道限 1 RPM，实际额度与价格以官方控制台为准。',
     badge: '0.16 新',
   },
   {

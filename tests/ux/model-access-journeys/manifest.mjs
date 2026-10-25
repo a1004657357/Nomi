@@ -354,6 +354,17 @@ export const MODEL_ACCESS_JOURNEYS = Object.freeze([
       modeShapes: [],
     }),
   },
+  {
+    id: 'J17',
+    title: '网页登录桥连接控件（离线组件旅程）',
+    statement: '在隔离内存 bridge 上验证即梦/Pavo 的连接状态、启动/停止/登录/管理、错误和禁用边界；不生成，不声称真实登录或 Electron 导航。',
+    mode: 'stable',
+    level: 'component',
+    // Standalone fixture script, not owned by the Electron runner in this directory.
+    script: 'tests/ux/web-bridge-connection.walk.mjs',
+    profiles: [],
+    covers: covers({}),
+  },
 ])
 
 export const STABLE_ROUNDTRIP_JOURNEYS = Object.freeze(

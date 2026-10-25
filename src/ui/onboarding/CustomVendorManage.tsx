@@ -13,7 +13,7 @@
  * 地址行与内置家卡共用 VendorBaseUrlField（P1）；区别：自定义家凭证恒为单个 apiKey、
  * 地址恒可改、且可**整家删除**（内置家是 seed 的、只断 key 不删）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconKey, IconTrash } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -22,6 +22,8 @@ import { confirmDialog } from '../../design'
 import { confirmAndDeleteVendor } from './vendorDeleteAction'
 import { VendorBaseUrlField } from './VendorBaseUrlField'
 import { VendorConnectionNotice } from './VendorConnectionNotice'
+import { VendorFieldLossNotice } from './VendorFieldLossNotice'
+import { withoutVendorFieldLossNotice } from '../../../electron/shared/vendorFieldLossNotice'
 import type { VendorConnection } from './useVendorHealth'
 import type { ModelSettingsConnectionFocus } from './modelSettingsNavigation'
 
@@ -30,9 +32,14 @@ type CustomVendorManageProps = {
   vendorName: string
   baseUrl: string
   hasApiKey: boolean
+  hasStoredApiKey?: boolean
   modelCount: number
   /** 连接健康（由 CustomVendorCard 持有，与卡片胶囊同一份，不各自探）。 */
   connection: VendorConnection | null
+  /** v12→v13 迁移盖的「这家的声明我补不了」标记时间戳；空 = 没盖过。 */
+  fieldLossNoticeAt?: string | null
+  /** 这家 vendor 记录当前的 meta（关掉提示时要把它原样写回、只去掉那一个键）。 */
+  vendorMetaRaw?: unknown
   onRecheck: () => void
   /** 变更后刷新外层目录。 */
   onChanged: () => void
@@ -44,14 +51,17 @@ export function CustomVendorManage({
   vendorName,
   baseUrl,
   hasApiKey,
+  hasStoredApiKey = hasApiKey,
   modelCount,
   connection,
+  fieldLossNoticeAt,
+  vendorMetaRaw,
   onRecheck,
   onChanged,
   focus,
 }: CustomVendorManageProps): JSX.Element {
   const { t } = useTranslation()
-  const [keyEditing, setKeyEditing] = React.useState(!hasApiKey)
+  const [keyEditing, setKeyEditing] = React.useState(!hasStoredApiKey)
   const [keyDraft, setKeyDraft] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
@@ -59,8 +69,8 @@ export function CustomVendorManage({
   const handledFocusRequestRef = React.useRef<number | null>(null)
 
   React.useEffect(() => {
-    setKeyEditing(!hasApiKey)
-  }, [hasApiKey])
+    setKeyEditing(!hasStoredApiKey)
+  }, [hasStoredApiKey])
 
   // 只管 apiKey 那一路；baseUrl 的聚焦请求由 VendorBaseUrlField 自己认（它持有那个 input）。
   React.useEffect(() => {
@@ -123,6 +133,24 @@ export function CustomVendorManage({
     }
   }, [vendorKey, vendorName, onChanged, t])
 
+  // 关掉提示 = 把 meta 原样写回、只去掉那一个键。走现成的 upsertVendor，不新造 IPC。
+  const handleDismissFieldLoss = React.useCallback(async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await getDesktopBridge()?.modelCatalog.upsertVendor({
+        key: vendorKey,
+        meta: withoutVendorFieldLossNotice(vendorMetaRaw) ?? null,
+      })
+      onChanged()
+    } catch (e) {
+      // 跨进程命令被拒绝时必须说出来：否则按钮像是生效了、提示却还在，用户以为是 bug。
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [vendorKey, vendorMetaRaw, onChanged])
+
   const handleDeleteVendor = React.useCallback(async () => {
     setBusy(true)
     setError('')
@@ -135,6 +163,7 @@ export function CustomVendorManage({
     <section className="flex flex-col gap-2" data-vendor-connection-group>
       {/* 连接失败最先说：它是用户点进这一页的理由，且治它的地址/凭证就在紧接着的两行里。 */}
       <VendorConnectionNotice connection={connection} onRecheck={onRecheck} disabled={busy} />
+      <VendorFieldLossNotice noticeAt={fieldLossNoticeAt} onDismiss={handleDismissFieldLoss} disabled={busy} />
 
       <h3 className="text-caption font-semibold text-nomi-ink-60">
         {t('onboardingProviders.customVendor.connectionSection')}
@@ -176,7 +205,7 @@ export function CustomVendorManage({
               {t('onboardingProviders.vendorCard.save')}
             </button>
           </div>
-          {hasApiKey ? (
+          {hasStoredApiKey ? (
             <button
               type="button"
               onClick={() => setKeyEditing(false)}
@@ -189,7 +218,7 @@ export function CustomVendorManage({
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-caption text-nomi-ink-60">{t('onboardingProviders.vendorCard.credentialSaved')}</span>
+          <span className="text-caption text-nomi-ink-60">{t(hasApiKey ? 'onboardingProviders.vendorCard.credentialSaved' : 'onboardingProviders.workspace.credentialSavedPending')}</span>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -198,7 +227,7 @@ export function CustomVendorManage({
               disabled={busy}
               className="text-caption text-nomi-ink-60 border border-nomi-line rounded-full px-2.5 py-[3px] hover:border-nomi-ink-20"
             >
-              {t('onboardingProviders.vendorCard.replace')}
+              {t('onboardingProviders.workspace.replaceApiKey')}
             </button>
             <button
               type="button"

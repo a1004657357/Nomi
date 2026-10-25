@@ -62,6 +62,7 @@ function inferRenderKind(categoryId: string | undefined): NodeRenderKind | undef
 function recordNeedsV51ToV60Migration(nodes: readonly GenerationCanvasNode[]): boolean {
   const derivedFromCandidates: GenerationCanvasNode[] = []
   for (const node of nodes) {
+    if (!isShotNumberedNode(node) && node.shotIndex !== undefined) return true
     if (!node.renderKind && inferRenderKind(node.categoryId)) return true
     if (isShotNumberedNode(node) && typeof node.shotIndex !== 'number') return true
     if (node.derivedFrom && !node.regeneratedFrom) derivedFromCandidates.push(node)
@@ -142,7 +143,7 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
   })
 
   // 3. Missing shot identities use the same owner as normal hydration; views never receive numbers.
-  const numbered = backfillShotIndexes(upgradedNodes)
+  const numbered = backfillShotIndexes(upgradedNodes, Array.isArray(canvas.edges) ? canvas.edges : [])
   numbered.nodes.forEach((node, index) => {
     if (node.shotIndex !== upgradedNodes[index].shotIndex) shotIndicesAssigned += 1
     upgradedNodes[index] = node
@@ -156,7 +157,7 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
   // 否则 meta 残留的旧 URL 会和边重复显示。
   const referenceMetaChanged = refEdgeResult.nodes !== upgradedNodes
 
-  const anyChange =
+  const anyChange = numbered.changed ||
     renderKindBackfilled +
       derivedFromMovedToRegeneratedFrom +
       derivedFromClearedOrphan +

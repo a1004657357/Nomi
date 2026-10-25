@@ -19,6 +19,8 @@ function makeNode(overrides: Partial<GenerationCanvasNode> & { kind: GenerationN
     regeneratedFrom: overrides.regeneratedFrom,
     shotIndex: overrides.shotIndex,
     renderKind: overrides.renderKind,
+    prompt: overrides.prompt,
+    meta: overrides.meta,
   } as GenerationCanvasNode
 }
 
@@ -152,6 +154,85 @@ describe('migrateProjectV51ToV60', () => {
       const { record: out, diagnostic } = migrateProjectV51ToV60(record)
       expect(out.payload.generationCanvas.nodes[0].shotIndex).toBeUndefined()
       expect(diagnostic.shotIndicesAssigned).toBe(0)
+    })
+
+    it('does not assign shotIndex to reference cards inside the shots category', () => {
+      const record = makeRecord([
+        makeNode({ id: 'character-card', kind: 'character', categoryId: 'shots', position: { x: 0, y: 0 } }),
+        makeNode({ id: 'scene-card', kind: 'scene', categoryId: 'shots', position: { x: 0, y: 100 } }),
+        makeNode({ id: 'prop-card', kind: 'image', categoryId: 'shots', meta: { referenceSheet: true }, position: { x: 0, y: 200 } }),
+        makeNode({ id: 'shot-1', kind: 'image', title: '镜头 1', categoryId: 'shots', position: { x: 0, y: 300 } }),
+      ])
+      const { record: out, diagnostic } = migrateProjectV51ToV60(record)
+      const byId = new Map(out.payload.generationCanvas.nodes.map((n) => [n.id, n]))
+
+      expect(byId.get('character-card')?.shotIndex).toBeUndefined()
+      expect(byId.get('scene-card')?.shotIndex).toBeUndefined()
+      expect(byId.get('prop-card')?.shotIndex).toBeUndefined()
+      expect(byId.get('shot-1')?.shotIndex).toBe(1)
+      expect(diagnostic.shotIndicesAssigned).toBe(1)
+    })
+
+    it('clears reference-card numbers without rewriting valid canonical shot identities', () => {
+      const nodes = [
+        makeNode({
+          id: 'character-card',
+          kind: 'character',
+          categoryId: 'shots',
+          shotIndex: 1,
+          renderKind: 'character-card',
+        }),
+        makeNode({
+          id: 'prop-card',
+          kind: 'image',
+          categoryId: 'shots',
+          shotIndex: 2,
+          renderKind: 'shot-frame',
+          meta: { referenceSheet: true },
+        }),
+        makeNode({
+          id: 'shot-1',
+          kind: 'image',
+          title: '镜头 1',
+          categoryId: 'shots',
+          shotIndex: 3,
+          renderKind: 'shot-frame',
+          prompt: '咖啡豆落入手磨机，暖色商业广告',
+        }),
+        makeNode({
+          id: 'shot-2',
+          kind: 'image',
+          title: '镜头 2',
+          categoryId: 'shots',
+          shotIndex: 4,
+          renderKind: 'shot-frame',
+          prompt: '杯中拉花特写，微距摄影',
+        }),
+      ]
+      const base = makeRecord(nodes)
+      const record = {
+        ...base,
+        payload: {
+          ...base.payload,
+          storyboardPlan: {
+            title: '咖啡广告',
+            anchors: [],
+            shots: [
+              { index: 1, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '咖啡豆落入手磨机' },
+              { index: 2, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '杯中拉花特写' },
+            ],
+          },
+        },
+      } as WorkbenchProjectRecordV1
+
+      const { record: out, diagnostic } = migrateProjectV51ToV60(record)
+      const byId = new Map(out.payload.generationCanvas.nodes.map((n) => [n.id, n]))
+
+      expect(byId.get('character-card')?.shotIndex).toBeUndefined()
+      expect(byId.get('prop-card')?.shotIndex).toBeUndefined()
+      expect(byId.get('shot-1')?.shotIndex).toBe(3)
+      expect(byId.get('shot-2')?.shotIndex).toBe(4)
+      expect(diagnostic.shotIndicesAssigned).toBe(2)
     })
   })
 

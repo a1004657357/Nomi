@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Pavo Web Automation Adapter",
+  "version": "0.2.1",
+  "description": "Pavo 网页生成适配器，可独立运行或连接 Nomi 画布任务桥",
+  "permissions": ["activeTab", "tabs", "scripting", "storage", "alarms"],
+  "host_permissions": [
+    "https://app.pavo-ai.cn/*",
+    "https://*.pavo-ai.cn/*",
+    "https://*.agnes-ai.com/*",
+    "https://*.agnes-ai.cn/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "https://*.myqcloud.com/*",
+    "https://*.aliyuncs.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_icon": {
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.pavo-ai.cn/*"],
+      "js": ["pavo-media.js", "content.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["panel.html"],
+      "matches": ["https://app.pavo-ai.cn/*"]
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

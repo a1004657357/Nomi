@@ -3,13 +3,14 @@
 //   · 复制：text/markdown/html 取文本进剪贴板（可复制的内容才给"复制"）。
 //   · 固化为参考图：SVG 栅格化成 PNG → asset 节点（可被下游连线当参考）——「下游消费」的 UI 出口。
 // 只读预览节点不进编辑态；动作只在选中浮条（L2），不压内容。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconCopy, IconDownload, IconPhoto } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../../desktop/bridge'
 import { canArtifactBecomeReference, type AgentArtifactMeta } from '../../model/artifactMeta'
 import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton } from '../NodeFloatingToolbar'
 import { rasterizeArtifactToReferenceAsset } from './rasterizeArtifactToReferenceAsset'
+import { withProjectAction } from '../../../project/projectCanvasReadSurface'
 
 type Props = {
   reportFeedback: (message: string) => void
@@ -56,15 +57,18 @@ export default function ArtifactNodeToolbar({ reportFeedback, nodeId, title, art
   }, [onCopyText, reportFeedback, t])
 
   const rasterizeReference = React.useCallback(() => {
-    reportFeedback('')
-    setRasterizing(true)
-    void rasterizeArtifactToReferenceAsset(artifact, undefined, nodeId)
-      .then((result) => {
-        if (result.ok) reportFeedback(t('runtime.nodeRegistry.agent-artifact.referenceCreated'))
-        else reportFeedback(t('runtime.nodeRegistry.agent-artifact.referenceFailed'))
-      })
-      .catch(() => reportFeedback(t('runtime.nodeRegistry.agent-artifact.referenceFailed')))
-      .finally(() => setRasterizing(false))
+    withProjectAction((project) => {
+      reportFeedback('')
+      setRasterizing(true)
+      void rasterizeArtifactToReferenceAsset(artifact, project, undefined, nodeId)
+        .then((result) => {
+          if (!result.ok && result.cancelled) return
+          if (result.ok) reportFeedback(t('runtime.nodeRegistry.agent-artifact.referenceCreated'))
+          else reportFeedback(t('runtime.nodeRegistry.agent-artifact.referenceFailed'))
+        })
+        .catch(() => reportFeedback(t('runtime.nodeRegistry.agent-artifact.referenceFailed')))
+        .finally(() => setRasterizing(false))
+    })
   }, [artifact, nodeId, reportFeedback, t])
 
   return (

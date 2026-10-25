@@ -37,6 +37,8 @@ export function nomiBlockFromLegacyManifest(manifest: Record<string, unknown>): 
   copy("audience");
   copy("selectableInWorkbench", "selectable-in-workbench");
   copy("requestedCapabilities", "requested-capabilities");
+  copy("canvas");
+  copy("inputs");
   block.tools = Array.isArray(manifest.tools) ? manifest.tools : [];
   block["required-providers"] = Array.isArray(manifest.requiredProviders) ? manifest.requiredProviders : [];
   if (Array.isArray(manifest.stages)) {
@@ -55,8 +57,8 @@ export function nomiBlockFromLegacyManifest(manifest: Record<string, unknown>): 
 }
 
 /**
- * `inputs` / `examples` 是作者手写的人话，没有任何机器消费者——它们进正文，
- * 而不是被塞进扩展块继续当登记表（规范推荐的正文分区里本来就有「示例」）。
+ * Inputs and examples remain readable in the body; canvas nodes also consume
+ * structured inputs from metadata.nomi.
  */
 function proseSectionsFromLegacyManifest(manifest: Record<string, unknown>): string {
   const section = (title: string, lines: string[]): string =>
@@ -89,9 +91,19 @@ export function rewriteSkillMarkdown(
   // 顺手换掉模型看到的自我介绍。
   const description = String(manifest.description || front.values.description || "").trim()
     || `${directoryName} skill`;
-  const head: Record<string, unknown> = { name: directoryName, description };
+  const head: Record<string, unknown> = { ...front.values, name: directoryName, description };
   if (front.values["disable-model-invocation"] === true) head["disable-model-invocation"] = true;
-  head.metadata = { nomi: nomiBlockFromLegacyManifest(manifest) };
+  const metadata = front.values.metadata;
+  const previous = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown> : {};
+  const nomi = previous.nomi;
+  head.metadata = {
+    ...previous,
+    nomi: {
+      ...(nomi && typeof nomi === "object" && !Array.isArray(nomi) ? nomi : {}),
+      ...nomiBlockFromLegacyManifest(manifest),
+    },
+  };
 
   const frontYaml = yaml.dump(head, { lineWidth: -1, noRefs: true, quotingType: '"' });
   const prose = proseSectionsFromLegacyManifest(manifest);

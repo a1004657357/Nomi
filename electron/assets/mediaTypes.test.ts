@@ -7,11 +7,12 @@ import {
   extensionFromContentType,
   extensionsForKind,
   isCertifiableMediaContentType,
+  isMarkupMasquerade,
+  mediaKindFromContentType,
   mediaKindFromExtension,
   normalizeExtension,
   resolveContentType,
 } from "./mediaTypes";
-import { mediaKindFromContentType } from "../catalog/assetLocalization";
 
 describe("media types registry — single source of truth", () => {
   it("has no duplicate extensions", () => {
@@ -104,7 +105,7 @@ describe("acceptAttrForKinds", () => {
 });
 
 // 2026-08-20 用户报「素材上传失败(HTTP 413)」，而那只是段 2 秒的视频。根因不是文件大：
-// 上传前判「这是图还是视频」只看扩展名，认不出时 mediaKindFromContentType 一律当图片
+// 上传前判「这是图还是视频」只看扩展名，认不出时上传通道那份判定一律当图片
 // → 视频被送进 base64 图片通道（整个文件塞进 JSON body）→ 反代 413。
 // 文件名是人起的，字节是事实：扩展名认不出就读文件头。
 describe("contentTypeFromMagicBytes / resolveContentType（扩展名认不出时读字节）", () => {
@@ -180,7 +181,54 @@ describe("contentTypeFromMagicBytes / resolveContentType（扩展名认不出时
     },
   );
 
-  it("字节也认不出才落到 octet-stream（此时仍会被当图片，属于已知下界）", () => {
+  it("字节也认不出才落到 octet-stream（kind 判定此时返回 null，由调用方决定怎么拒）", () => {
     expect(resolveContentType("/p/x.bin", head([1, 2, 3, 4]))).toBe("application/octet-stream");
+    // 认不出就是认不出：owner 不替调用方兜底成图片（那正是 413 那次的根因形状）。
+    expect(mediaKindFromContentType("application/octet-stream")).toBeNull();
+  });
+});
+
+// contentType → kind 的单一判据。这条判断此前没有 owner，于是每个落点自己写一条
+// `startsWith('image/') ? 'image' : …` 的兜底链——check:media-import-owner 的
+// adhoc-media-kind-branch 就是数这个的。
+describe("mediaKindFromContentType（contentType → kind 单源，认不出返回 null）", () => {
+  it("表里的精确答案优先于顶层类型", () => {
+    expect(mediaKindFromContentType("image/svg+xml")).toBe("image");
+    expect(mediaKindFromContentType("model/gltf-binary")).toBe("model3d");
+    expect(mediaKindFromContentType("application/pdf")).toBe("document");
+  });
+
+  it("表里没有的按顶层类型回落（mkv 这类容器不会被当成图）", () => {
+    expect(mediaKindFromContentType("video/x-matroska")).toBe("video");
+    expect(mediaKindFromContentType("audio/x-exotic")).toBe("audio");
+    expect(mediaKindFromContentType("image/x-exotic")).toBe("image");
+  });
+
+  it("带 charset 参数与大小写都要认", () => {
+    expect(mediaKindFromContentType("VIDEO/MP4; charset=utf-8")).toBe("video");
+  });
+
+  it("认不出返回 null，绝不兜底成 image", () => {
+    expect(mediaKindFromContentType("application/octet-stream")).toBeNull();
+    expect(mediaKindFromContentType("application/x-unknown")).toBeNull();
+    expect(mediaKindFromContentType("")).toBeNull();
+  });
+});
+
+describe("markup masquerade boundary", () => {
+  const pngChunk = (type: string, payload: string) => Uint8Array.from([
+    ...Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    ...new Array(64).fill(0), ...Buffer.from(type), ...Buffer.from(payload),
+  ]);
+
+  it("ignores SVG/XML embedded in raster metadata and rejects text at the start", () => {
+    const c2paPng = pngChunk("caBX", "image/svg+xml <svg width=\"716\" />");
+    const xmpPng = pngChunk("iTXt", "<?xml version=\"1.0\"?><x:xmpmeta>");
+    const xmpJpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x24, ...Buffer.from("http://ns.adobe.com/xap/1.0/ <?xml><x:xmpmeta>"), 0xff, 0xd9]);
+    expect(isMarkupMasquerade(c2paPng)).toBe(false);
+    expect(isMarkupMasquerade(xmpPng)).toBe(false);
+    expect(isMarkupMasquerade(xmpJpeg)).toBe(false);
+    expect(isMarkupMasquerade(Buffer.from("  <?xml version=\"1.0\"?>"))).toBe(true);
+    expect(isMarkupMasquerade(Buffer.from("<!doctype html><html>"))).toBe(true);
   });
 });

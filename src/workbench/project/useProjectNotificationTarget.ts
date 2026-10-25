@@ -7,8 +7,9 @@ import { FOCUS_GENERATION_NODE_EVENT } from '../generationCanvas/nodes/nodeSizin
 import { focusCanvasNodeWhenReady } from '../deepLinkFocus'
 import { useProductionRunStore } from '../production/productionRunStore'
 import { ProjectHydrationSupersededError } from './projectCanvasReadSurface'
+import { logRendererError } from '../../desktop/rendererLog'
 
-type Target = NotificationTarget & { runId?: string; artifactId?: string }
+type Target = NotificationTarget & { artifactId?: string }
 type Navigation = {
   activeProjectId: React.MutableRefObject<string | null>
   isHydrating: React.MutableRefObject<boolean>
@@ -48,7 +49,7 @@ export function useProjectNotificationTarget(navigation: Navigation): void {
   React.useEffect(() => {
     const reveal = async (target: Target): Promise<boolean> => {
       try { return await revealProjectTarget(target, { activeProjectId, isHydrating, hydrateProject }) } catch (error) {
-        if (!(error instanceof ProjectHydrationSupersededError)) console.error('project notification navigation failed', error)
+        if (!(error instanceof ProjectHydrationSupersededError)) logRendererError('project-notification-navigation-failed', error)
         return false
       }
     }

@@ -1,5 +1,5 @@
 import { NomiMarkdown } from '../common/NomiMarkdown'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Portal } from '@mantine/core'
 import {
@@ -14,6 +14,7 @@ import {
 import { cn } from '../../utils/cn'
 import type { LibraryPrompt } from '../api/promptLibraryApi'
 import { promptDisplayTitle, promptSourceLabel } from './promptDisplay'
+import { useRemoteExampleMedia } from '../../media/remoteExampleMedia'
 
 type Props = {
   prompt: LibraryPrompt
@@ -30,6 +31,8 @@ export function PromptPreviewOverlay({ prompt, originRect, onClose, onSendToCanv
   const { t } = useTranslation()
   const boxRef = React.useRef<HTMLDivElement>(null)
   const [closing, setClosing] = React.useState(false)
+  // 预览大图原来没有 onError：来源站点删了 / 防盗链时只剩一个黑框。失效与卡片同一份会话记账。
+  const media = useRemoteExampleMedia(prompt.mediaUrl)
   const [sent, setSent] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
   const isVideo = prompt.mediaType === 'video'
@@ -113,7 +116,7 @@ export function PromptPreviewOverlay({ prompt, originRect, onClose, onSendToCanv
         >
           {/* 媒体 16:9 */}
           <div className={cn('relative w-full bg-nomi-ink-05')} style={{ aspectRatio: '16 / 9' }}>
-            {hasMedia ? (
+            {hasMedia && !media.broken ? (
               isVideo ? (
                 <video
                   src={prompt.mediaUrl}
@@ -122,25 +125,29 @@ export function PromptPreviewOverlay({ prompt, originRect, onClose, onSendToCanv
                   muted
                   loop
                   playsInline
+                  onError={media.onError}
                   className={cn('absolute inset-0 w-full h-full object-cover')}
                 />
               ) : (
                 <img
                   src={prompt.mediaUrl}
                   alt={displayTitle}
+                  onError={media.onError}
                   className={cn('absolute inset-0 w-full h-full object-cover')}
                 />
               )
             ) : (
-              <div className={cn('absolute inset-0 grid place-items-center gap-1 text-nomi-ink-30')}>
+              <div className={cn('absolute inset-0 grid place-content-center justify-items-center gap-1 text-nomi-ink-30')}>
                 {isVideo ? <IconVideo size={40} stroke={1.3} /> : <IconPhoto size={40} stroke={1.3} />}
-                <span className={cn('text-caption text-nomi-ink-40')}>{t('libraries.prompt.preview.noCover')}</span>
+                <span className={cn('px-8 text-center text-caption text-nomi-ink-40')} {...(media.broken ? { 'data-example-media-expired': true } : {})}>
+                  {t(media.broken ? 'libraries.prompt.preview.expired' : 'libraries.prompt.preview.noCover')}
+                </span>
               </div>
             )}
             <span
               className={cn(
                 'absolute top-2.5 left-2.5 px-2 py-0.5 rounded-full text-micro',
-                'bg-nomi-overlay-chip-strong border border-nomi-paper/20 text-nomi-paper shadow-nomi-sm backdrop-blur-sm',
+                'bg-nomi-overlay-chip-strong border border-nomi-media-ink/20 text-nomi-media-ink shadow-nomi-sm backdrop-blur-sm',
               )}
             >
               {isVideo ? t('libraries.prompt.category.video') : t('libraries.prompt.category.image')} · {promptSourceLabel(prompt)}
@@ -151,7 +158,7 @@ export function PromptPreviewOverlay({ prompt, originRect, onClose, onSendToCanv
               onClick={close}
               className={cn(
                 'absolute top-2 right-2 w-7 h-7 grid place-items-center rounded-full cursor-pointer',
-                'border border-nomi-paper/20 bg-nomi-overlay-chip-strong text-nomi-paper shadow-nomi-sm hover:bg-nomi-overlay-chip',
+                'border border-nomi-media-ink/20 bg-nomi-overlay-chip-strong text-nomi-media-ink shadow-nomi-sm hover:bg-nomi-overlay-chip',
                 'focus-visible:outline-2 focus-visible:outline-nomi-paper focus-visible:outline-offset-2',
               )}
             >

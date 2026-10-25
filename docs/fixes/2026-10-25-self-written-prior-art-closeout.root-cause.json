@@ -1,0 +1,140 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-self-written-prior-art-closeout",
+  "problem_type": "Fork integration source ownership is missing from the shared registry",
+  "symptom": "The initial fork/main gate reported 180/182 unowned files. The delivered A canonical-source tail has three real added files; the unchanged current registries leave exactly blenderDirectorProtocolText.ts unowned while canvas/sourceDefaults and generationPromptText already match existing roots.",
+  "direct_cause": "Capability additions and existing-library adapters were introduced without extending the concrete domain inventory or mechanism registrations.",
+  "class_root": "A source addition needs a verifiable shared ownership decision: domain data/glue, an existing-library adapter, or an explicitly bounded replacement/review plan.",
+  "affected_population": [
+    "New Electron integration and canvas sources relative to the user fork/main target",
+    "Renderer display helpers, coordinator locale and PNG fixture additions",
+    "A 33cd631dd canonical Director, canvas and generation source-text modules"
+  ],
+  "scope_paths": [
+    "docs/engineering/self-written.json",
+    "scripts/self-written-closeout.node-test.mjs"
+  ],
+  "entry_points": [
+    "check-self-written.mjs explicit SELF_WRITTEN_BASE_REF=fork/main",
+    "check-prior-art.mjs explicit PRIOR_ART_BASE_REF=fork/main and real PR-body reference"
+  ],
+  "external_sources": [
+    {
+      "kind": "source-code",
+      "url": "https://github.com/TanStack/query/blob/main/packages/query-core/src/utils.ts",
+      "checked_at": "2026-10-25",
+      "purpose": "A real generic structural-sharing alternative, not an installed dependency claim"
+    },
+    {
+      "kind": "official-doc",
+      "url": "https://www.i18next.com/overview/api",
+      "checked_at": "2026-10-25",
+      "purpose": "Distinguish existing display translation calls from the still-handwritten desktop interpolator"
+    }
+  ],
+  "invariants": [
+    "Use the user fork/main reference, not the official default branch",
+    "Preserve enforceFrom, genericZones and the 161 existing domain roots",
+    "No production source, dependency, baseline, checker, API, prompt, stored data or model surface changes",
+    "Every inspected source is tied to a source locator, SHA256 and bounded owner",
+    "A to-replace registration is not evidence that its replacement has already shipped"
+  ],
+  "doors": [
+    {
+      "kind": "write",
+      "path": "scripts/check-prior-art.mjs",
+      "symbol": "registryChanges"
+    },
+    {
+      "kind": "write",
+      "path": "scripts/check-self-written.mjs",
+      "symbol": "evaluateSelfWritten"
+    }
+  ],
+  "door_reduction": {
+    "before": 2,
+    "after": 2,
+    "why_not": "The added-source gate checks registry ownership; the separate PR gate checks the human prior-art reference. They enforce different obligations and must remain independent. Registry data is edited offline; this change introduces no runtime writer."
+  },
+  "generality_proof": "Concrete capability roots and exact adapter paths cover every inspected entry. For the A tail, actual fork/main..33cd631dd added blobs are fully read and hashed: two reuse existing roots and only one exact Director source-text root is appended. Tests preserve original policy, reject generic mechanisms and similarly named V2/Cache/unrelated neighbors, and require a real PR-body reference. Metadata fixtures prove classification only, not execution of A business functions.",
+  "shared_boundaries": [
+    {
+      "path": "docs/engineering/self-written.json",
+      "symbol": "domainRoots",
+      "responsibility": "One machine-readable ownership and replacement-policy inventory consumed by the unchanged existing gates"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "scripts/check-self-written.mjs",
+      "entry_point": "fork/main added-source classification for A canonical text",
+      "disposition": "enforced",
+      "evidence": "Actual A blobs have one unowned path and two existing domain claims; adding exactly that file does not cover unknown neighboring mechanisms"
+    },
+    {
+      "path": "scripts/check-prior-art.mjs",
+      "entry_point": "registryChanges for the exact new domain root",
+      "disposition": "enforced",
+      "evidence": "An added exact domain root remains a registry change requiring a real design-card/source-review reference in PR text; the existing gate is not modified"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any later capability, UI helper or integration fixture can add a similarly unowned generic mechanism.",
+    "same_class_scan": [
+      "Actual added source under src/electron relative to fork/main, including main working-tree additions",
+      "179 inventory entries plus the TSX helper, main-only locale/PNG fixture and the explicitly requested Blender vocabulary contract",
+      "Source bodies and AST-assisted import/declaration/call review, with focused full reads of generic mechanisms",
+      "Installed fflate, React, Zustand, i18next, React Flow, R3F, Tiptap and Node/DOM API contracts",
+      "Read all three delivered A source blobs at 33cd631dd and existing source/display consumers; actual registry classification found only one missing exact domain claim"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "docs/engineering/self-written.json",
+    "invariant": "New source must match an honest capability root or an exact, sourced mechanism registration.",
+    "failure_mode": "The unchanged gate rejects unknown paths, missing plans, stale paths and invalid metadata; prior-art rejects an unreferenced registry change.",
+    "exception_policy": "none",
+    "strategy": "Fill the existing shared inventory with audited ownership and explicit replacement obligations, retaining generic exclusion rules and all gate thresholds.",
+    "artifacts": [
+      "docs/engineering/self-written.json"
+    ]
+  },
+  "regression_tests": [
+    "scripts/self-written-closeout.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/self-written-closeout.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No runtime implementation, export, caller or compatibility path is changed or removed."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "This is registry metadata repair only. Existing runtime dependencies are not installed, upgraded or swapped; mechanism-specific exit criteria are recorded in the registry and research report.",
+    "exit_criteria": []
+  },
+  "migration": "No stored project or prompt data migration. Coordinator cherry-picks this metadata after A 33cd631dd and the existing helper/locale/fixture source batches. The isolated old branch does not copy those production modules merely to hide stale-source findings.",
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/check-self-written.node-test.mjs",
+      "scripts/check-prior-art.node-test.mjs",
+      "scripts/self-written-closeout.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/self-written-closeout.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "The old isolated branch lacks four main sources plus the delivered A Director canonical module: physical-existence tests are 27/28 for gate units and 7/8 for closeout. Its old textModelCapabilities copy also remains outside this batch. No source is copied or obsolete model implementation registered to hide these branch differences.",
+    "Real three-file fork/main..A source blobs pass candidate integration ownership using actual main/own filesystem and immutable A git-tree paths; this is not a claim that either current working-tree CLI or final integration is green.",
+    "Injected local PR text proves the gate input, not that the remote PR body or CI was updated",
+    "Replacement and review items remain open engineering work; no spike, media generation, provider call or App acceptance is claimed"
+  ]
+}

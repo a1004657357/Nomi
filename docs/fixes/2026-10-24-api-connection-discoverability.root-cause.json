@@ -1,0 +1,67 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-24-api-connection-discoverability",
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-24",
+  "invariant_owner_layer": {"layer":"src/ui/onboarding","tests":["src/ui/onboarding/cliproxyConfiguration.test.ts"]},
+  "problem_type": "Existing API configuration and model discovery actions are not discoverable from their connection summary",
+  "symptom": "The user cannot find URL/API Key editing or adding more than the two registered CLIProxy models.",
+  "direct_cause": "The connected API row exposes only an unnamed navigation chevron, the detail Add More label does not name models and its text disappears on narrow widths, and key replacement is labeled only Replace. The alleged CLIProxy-to-local-CLI classification is not reproduced at a730dacb5.",
+  "class_root": "API connection summaries do not expose named commands for their existing configuration and model-selection workflows at the connection ownership boundary.",
+  "affected_population": ["CLIProxy API connections", "Other custom or known API connections with saved model configuration", "Narrow settings windows in Chinese and English"],
+  "scope_paths": [
+    "src/ui/onboarding/ModelSettingsHome.tsx",
+    "src/ui/onboarding/onboardingDrawerConnections.ts",
+    "src/ui/onboarding/ModelSettingsWorkspacePages.tsx",
+    "src/ui/onboarding/CustomVendorManage.tsx",
+    "src/i18n/locales/onboardingProviders.ts"
+  ],
+  "entry_points": ["Model settings API connection row", "Existing connection detail", "Existing connection model picker"],
+  "external_sources": [],
+  "internal_only_reason": "This is an application-owned navigation and labeling invariant; no external provider behavior or dependency version determines the missing entry points.",
+  "invariants": [
+    "API connection rows visibly name existing configuration and eligible add-model commands.",
+    "Commands reuse existing connection/detail/wizard owners and preserve the exact saved vendor key.",
+    "Opening configuration or model selection never adds an automatic model-list or generation request.",
+    "Native CLI, account and web-bridge connections do not acquire generic API management commands.",
+    "Credential values remain main-process owned and are never read into the existing-model picker."
+  ],
+  "doors": [
+    {"kind":"read","path":"src/devlab/designLab/catalogLiveness/states/01-listing.tsx","symbol":"ConnectionWorkspacePage"},
+    {"kind":"read","path":"src/i18n/locales/onboardingProviders.ts","symbol":"zhOnboardingWebBridge"},
+    {"kind":"read","path":"src/i18n/locales/onboardingProviders.ts","symbol":"enOnboardingWebBridge"},
+    {"kind":"read","path":"src/ui/onboarding/AdapterTaskWorkspace.tsx","symbol":"ModelSettingsPageHeader"},
+    {"kind":"read","path":"src/ui/onboarding/CustomVendorCard.tsx","symbol":"CustomVendorManage"},
+    {"kind":"read","path":"src/ui/onboarding/CustomVendorManage.tsx","symbol":"VendorBaseUrlField"},
+    {"kind":"read","path":"src/ui/onboarding/KnownVendorKeyConnectPage.tsx","symbol":"VendorBaseUrlField"},
+    {"kind":"read","path":"src/ui/onboarding/ModelCapabilityEditor.tsx","symbol":"ModelSettingsPageHeader"},
+    {"kind":"read","path":"src/ui/onboarding/ModelSettingsHome.tsx","symbol":"ConnectedRow"},
+    {"kind":"read","path":"src/ui/onboarding/ModelSettingsWorkspacePages.tsx","symbol":"ModelSettingsPageHeader"},
+    {"kind":"read","path":"src/ui/onboarding/OnboardingDrawer.tsx","symbol":"projectOnboardingConnections"},
+    {"kind":"read","path":"src/ui/onboarding/OnboardingDrawer.tsx","symbol":"ConnectionWorkspacePage"},
+    {"kind":"read","path":"src/ui/onboarding/OnboardingDrawer.tsx","symbol":"ModelSettingsHome"},
+    {"kind":"read","path":"src/ui/onboarding/onboardingDrawerConnections.ts","symbol":"groupOtherVendorModels"},
+    {"kind":"read","path":"src/ui/onboarding/OnboardingWizard.tsx","symbol":"ExistingConnectionModelPicker"},
+    {"kind":"read","path":"src/ui/onboarding/VendorOnboardCard.tsx","symbol":"VendorBaseUrlField"}
+  ],
+  "door_reduction": {"before":16,"after":16,"why_not":"Generated extended door map includes the design-lab preview, locale compositions, shared header consumers, shared URL-field consumers, row rendering, grouping and the drawer/wizard entry points. Each remains a distinct existing presentation consumer or shared editor host; no new manager or persistence door is added. The earlier six-door scan only covered outward-facing components; the extended scan includes their internal shared dependencies to cover every changed production path."},
+  "generality_proof": "Derive eligible add-model navigation once in the existing connection projection and show configuration commands by connection kind, not provider name, loopback URL or model allowlist. Reuse shared row/detail controls across CLIProxy and a second custom relay, with native-connection negative tests.",
+  "shared_boundaries": [
+    {"path":"src/ui/onboarding/onboardingDrawerConnections.ts","symbol":"projectOnboardingConnections","responsibility":"Bind the existing add-model command to the saved vendor key and the existing eligibility gate for all API connections."},
+    {"path":"src/ui/onboarding/ModelSettingsHome.tsx","symbol":"ModelSettingsHome","responsibility":"Expose named API commands as separate actionable buttons without nested buttons."},
+    {"path":"src/ui/onboarding/ModelSettingsWorkspacePages.tsx","symbol":"ConnectionWorkspacePage","responsibility":"Keep the existing model-selection action visibly named at narrow widths."}
+  ],
+  "same_class_entry_points": [
+    {"path":"src/ui/onboarding/onboardingDrawerConnections.ts","entry_point":"otherVendorGroups","disposition":"enforced","evidence":"CLIProxy and arbitrary custom relays use the same API projection and commands."},
+    {"path":"src/ui/onboarding/onboardingDrawerConnections.ts","entry_point":"connectedKnown","disposition":"enforced","evidence":"Known saved API connections share homeConnection command binding instead of a provider-specific exception."},
+    {"path":"src/ui/onboarding/onboardingDrawerConnections.ts","entry_point":"antigravityEnabled","disposition":"not-affected","evidence":"Native CLI rows retain kind local and do not receive generic API commands."}
+  ],
+  "recurrence": {"classification":"recurring","reason":"Every new API relay and narrow settings window can hide these workflows behind the same unnamed navigation/ambiguous labels.","same_class_scan":["rg searched cliproxy/local CLI classification and found no CLIProxy branch in the specified baseline.","Read ConnectedRow, available connection projection, CustomVendorManage, VendorBaseUrlField, ExistingConnectionModelPicker and OnboardingWizard.","node scripts/door-map.mjs --read=projectOnboardingConnections,ModelSettingsHome,ConnectionWorkspacePage,CustomVendorManage,ExistingConnectionModelPicker,ConnectedRow,groupOtherVendorModels,VendorBaseUrlField,ModelSettingsPageHeader,zhOnboardingWebBridge,enOnboardingWebBridge --roots=src produced the 16 doors above."]},
+  "prevention": {"kind":"centralized-boundary","enforcement_path":"src/ui/onboarding/onboardingDrawerConnections.ts","invariant":"Eligible API rows carry a vendor-key-bound existing add-model command, and the shared home renders named configuration/model actions by API kind.","failure_mode":"Missing credential metadata retains the existing add-model denial; native/account kinds never gain API commands. Existing editors and picker surface errors normally.","exception_policy":"none","strategy":"Use connection-kind presentation and the existing credential gate; no CLIProxy special manager, inferred identity, auto-listing or persistence bypass.","artifacts":["src/ui/onboarding/onboardingDrawerConnections.ts","src/ui/onboarding/ModelSettingsHome.tsx","src/ui/onboarding/ModelSettingsWorkspacePages.tsx","src/ui/onboarding/CustomVendorManage.tsx"]},
+  "regression_tests": ["src/ui/onboarding/cliproxyConfiguration.test.ts"],
+  "class_regression_tests": ["src/ui/onboarding/cliproxyConfiguration.test.ts"],
+  "legacy_paths": {"status":"removed","removed_paths":["src/ui/onboarding/ModelSettingsHome.tsx","src/ui/onboarding/ModelSettingsWorkspacePages.tsx"],"rationale":"Remove the API row's chevron-only management presentation and detail add-action's narrow-width hidden text; retain the single existing editors and explicit model-list flow."},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"React/Mantine are retained unchanged. This defect is owned by connection navigation and visible action labels, not third-party protocol behavior.","exit_criteria":[]},
+  "migration": "None: no catalog schema, credential storage, model identity, provider configuration or persistence owner changes.",
+  "residual_risks": ["The original native-user classification report is not reproduced and must not be claimed fixed by this presentation change.","Native built-app zh/en acceptance awaits main's coordinated build.","Real URL/key changes and upstream model discovery are not authorized in this isolated UI line; fixtures do not establish provider acceptance."]
+}

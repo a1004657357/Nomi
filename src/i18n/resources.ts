@@ -1,3 +1,6 @@
+import { enCanvasComponents, zhCanvasComponents } from './locales/canvasComponents'
+import { enCustomWorkflow, zhCustomWorkflow } from './locales/customWorkflow'
+import { enScene3d, zhScene3d } from './locales/scene3d'
 import { enShotTable, zhShotTable } from './locales/shotTable'
 import { enAntigravity, zhAntigravity } from './locales/antigravity'
 import { enModelSetup, zhModelSetup } from './locales/modelSetup'
@@ -18,10 +21,17 @@ import { enRuntime, zhRuntime } from './locales/runtime'
 import { enVideoDepth, zhVideoDepth } from './locales/videoDepth'
 import { enAgentResident, zhAgentResident } from './locales/agentResident'
 import { enCommunity, zhCommunity } from './locales/community'
+import { enFeedbackReport, zhFeedbackReport } from './locales/feedbackReport'
 import { enAgentPanelV4, zhAgentPanelV4 } from './locales/agentPanelV4'
 import { enAgentLaneError, zhAgentLaneError } from './locales/agentLaneError'
+import { enAgentToolFailure, zhAgentToolFailure } from './locales/agentToolFailure'
+import { enCapabilityWorkflow, zhCapabilityWorkflow } from './locales/capabilityWorkflow'
 
 export const zhCN = {
+  customWorkflow: zhCustomWorkflow,
+  scene3d: zhScene3d,
+  capabilityWorkflow: zhCapabilityWorkflow,
+  canvasComponents: zhCanvasComponents,
   shotTable: zhShotTable,
   common: {
     language: '语言',
@@ -106,24 +116,28 @@ export const zhCN = {
     title: '任务',
     close: '关闭任务面板',
     untitledShot: '未命名镜头',
-    freeToCancel: '取消不产生费用',
+    freeToCancel: '可随时取消',
     cancelQueued: '取消排队的 {{count}} 个',
     retryFailed: '重试失败的 {{count}} 个',
     actionFailed: '这个操作没执行成，请再试一次',
-    sections: {
-      running: '进行中 {{count}}',
-      queued: '排队中 {{count}}',
-      done: '已完成 {{count}}',
+    // 任务分组的唯一一套名字：区段标题和制作卡的状态签都用它（数量另起一格，不拼进文案）。
+    groups: {
+      running: '进行中',
+      attention: '等你处理',
+      queued: '排队中',
+      done: '已完成',
     },
     summary: {
       running: '{{count}} 进行中',
+      attention: '{{count}} 等你处理',
       queued: '{{count}} 排队',
       failed: '{{count}} 失败',
     },
     row: {
       elapsed: '已跑 {{time}}',
-      cancelled: '已取消（未提交，无费用）',
-      recoverable: '等待超时 · 上游可能仍在跑，可重新拉取',
+      cancelled: '已取消（未提交）',
+      recoverable: '等待超时 · 上游可能仍在跑',
+      recoverHint: '只查结果，不重新生成',
       failed: '生成失败',
       submittedNoStop: '此任务暂不支持中止',
       cancel: '取消',
@@ -161,8 +175,8 @@ export const zhCN = {
     },
     brake: {
       title: '连续 3 个失败，队列已暂停',
-      toast: '连续 3 个失败，队列已暂停——剩下的还没提交、没花钱。打开「任务」决定继续还是取消。',
-      hint: '剩下的还没提交、没花钱。通常是上游模型挂了或额度不足——换个模型再继续更稳。',
+      toast: '连续 3 个失败，队列已暂停——剩下的还没提交。打开「任务」决定继续还是取消。',
+      hint: '剩下的还没提交。通常是上游模型挂了或账户受限——换个模型再继续更稳。',
       resume: '继续',
       cancelRest: '全部取消',
     },
@@ -231,6 +245,12 @@ export const zhCN = {
     all: '全部',
     local: '本地新建',
     folders: '外部文件夹',
+    // 角标只说状态（两到四个字，卡片列宽 200px 装得下）；下面 `sync*` 那几句完整的话
+    // 退回它们本来的位置——悬停 title 与详情浮层。
+    syncBadgeReady: '已就绪',
+    syncBadgeExternalChange: '有新版本',
+    syncBadgeMissingAssets: '缺 {{count}} 个素材',
+    syncBadgeCorrupt: '文件异常',
     syncReady: '可在另一台电脑继续',
     syncExternalChange: '另一台电脑有新版本',
     syncMissingAssets: '有 {{count}} 个素材未同步',
@@ -289,6 +309,9 @@ export const zhCN = {
     unsupported: '目标模型不支持这种参考连线',
     slotsFull: '参考槽已满（最多 {{max}} 个），多出的连线不会被使用',
     referenceFull: '该参考已满，多出的连线不会被使用',
+    mentionModeSwitched: '已切到「{{mode}}」，@ 的素材按参考使用',
+    mentionBlockedByFrameEdges: '这个节点连着首帧 / 尾帧，@ 不会自动切换生成方式；要按参考使用，请先切到参考类的生成方式',
+    mentionSlotsFull: '参考已满（最多 {{max}} 个），这次没有添加',
   },
   studio: {
     aria: 'Nomi Studio',
@@ -309,6 +332,7 @@ export const zhCN = {
     closeTitle: '关闭 Nomi？',
     closeMessage: '当前窗口将关闭，未完成的生成或导出任务可能会中断。',
     projectSaveFailed: '项目保存失败，请检查本地磁盘权限',
+    projectInUseElsewhere: '项目正被别处占用',
     projectNotFound: '找不到项目文件，可能已被删除，请刷新项目库',
     projectRecoveryTitle: '检测到项目清单损坏',
     projectRecoveryMessage: '可以从最近一次有效自动备份恢复。当前损坏文件会保留为副本，不会被覆盖丢失。',
@@ -317,9 +341,8 @@ export const zhCN = {
     projectRepairTitle: '项目暂时无法打开',
     projectRepairMessage: '未找到可用的自动备份。可以打开项目文件夹检查 .nomi/project.json：{{path}}',
     openProjectFolder: '打开项目文件夹',
-    hostConfigRepaired: '已修复 {{clients}} 的 Nomi 接入配置，重启 {{clients}} 后生效',
-    integrationConfirmPending: '「{{name}}」等你确认后才会开始验证',
-    integrationConfirmPendingAction: '去确认',
+    integrationSelfCheckPending: '「{{name}}」等你开始自检',
+    integrationSelfCheckPendingAction: '去自检',
     initializeTitle: '初始化为 Nomi 项目',
     initializeMessage: '{{path}}\n\nNomi 会创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/。',
     folderUnsupported: '当前运行环境不支持打开项目文件夹',
@@ -382,6 +405,7 @@ export const zhCN = {
     nodeMenuGroupNeedsTwo: '选中两个以上节点才能建组',
     nodeMenuDelete: '删除',
     toolbar: '生成画布工具栏',
+    smoothMode: '流畅模式',
     addNode: '添加{{type}}节点',
     nodeName: '{{type}}节点',
     moreMenu: '更多',
@@ -420,13 +444,16 @@ export const zhCN = {
   timelineEditor: zhTimelineEditor,
   creationAi: zhCreationAi,
   storyboardEditor: zhStoryboardEditor,
+  videoKeyframeInspector: { inspect: '检查帧', inspectHint: '均匀抽取并选择关键帧节点' },
   generationCommon: zhGenerationCommon,
   runtime: zhRuntime,
   videoDepth: zhVideoDepth,
   agentResident: zhAgentResident,
   community: zhCommunity,
+  feedbackReport: zhFeedbackReport,
   agentPanelV4: zhAgentPanelV4,
   agentLaneError: zhAgentLaneError,
+  agentToolFailure: zhAgentToolFailure,
 } as const
 
 type TranslationShape<T> = {
@@ -434,6 +461,10 @@ type TranslationShape<T> = {
 }
 
 export const en = {
+  customWorkflow: enCustomWorkflow,
+  scene3d: enScene3d,
+  capabilityWorkflow: enCapabilityWorkflow,
+  canvasComponents: enCanvasComponents,
   shotTable: enShotTable,
   common: {
     language: 'Language',
@@ -519,24 +550,27 @@ export const en = {
     title: 'Tasks',
     close: 'Close task panel',
     untitledShot: 'Untitled shot',
-    freeToCancel: 'free to cancel',
+    freeToCancel: 'cancel anytime',
     cancelQueued: 'Cancel {{count}} queued',
     retryFailed: 'Retry {{count}} failed',
     actionFailed: 'That action did not go through. Try again.',
-    sections: {
-      running: 'Running {{count}}',
-      queued: 'Queued {{count}}',
-      done: 'Done {{count}}',
+    groups: {
+      running: 'Running',
+      attention: 'Waiting on you',
+      queued: 'Queued',
+      done: 'Done',
     },
     summary: {
       running: '{{count}} running',
+      attention: '{{count}} waiting on you',
       queued: '{{count}} queued',
       failed: '{{count}} failed',
     },
     row: {
       elapsed: 'running {{time}}',
-      cancelled: 'Cancelled (never submitted, no charge)',
-      recoverable: 'Timed out · may still be running upstream, can re-fetch',
+      cancelled: 'Cancelled (never submitted)',
+      recoverable: 'Timed out · may still be running upstream',
+      recoverHint: 'Only fetches the result — no new generation',
       failed: 'Generation failed',
       submittedNoStop: 'This task cannot be stopped',
       cancel: 'Cancel',
@@ -574,7 +608,7 @@ export const en = {
     brake: {
       title: '3 failures in a row, queue paused',
       toast: '3 failures in a row — the queue is paused. The rest were never submitted. Open Tasks to continue or cancel.',
-      hint: 'The rest were never submitted and cost nothing. Usually the upstream model is down or out of credit — switching models first is safer.',
+      hint: 'The rest were never submitted. Usually the upstream model is down or the account is limited — switching models first is safer.',
       resume: 'Continue',
       cancelRest: 'Cancel all',
     },
@@ -642,6 +676,10 @@ export const en = {
     all: 'All',
     local: 'Local',
     folders: 'Folders',
+    syncBadgeReady: 'Ready',
+    syncBadgeExternalChange: 'Newer elsewhere',
+    syncBadgeMissingAssets: '{{count}} missing',
+    syncBadgeCorrupt: 'Needs attention',
     syncReady: 'Ready to continue on another computer',
     syncExternalChange: 'A newer version exists on another computer',
     syncMissingAssets: '{{count}} assets are missing',
@@ -699,6 +737,9 @@ export const en = {
     unsupported: 'The target model does not support this reference connection.',
     slotsFull: 'Reference slots are full (maximum {{max}}). Extra connections will not be used.',
     referenceFull: 'This reference input is full. Extra connections will not be used.',
+    mentionModeSwitched: 'Switched to "{{mode}}" so the mention is used as a reference.',
+    mentionBlockedByFrameEdges: 'This node has first/last frame inputs, so a mention will not switch its generation mode. Switch to a reference mode first.',
+    mentionSlotsFull: 'References are full (maximum {{max}}). Nothing was added.',
   },
   studio: {
     aria: 'Nomi Studio',
@@ -719,6 +760,7 @@ export const en = {
     closeTitle: 'Close Nomi?',
     closeMessage: 'This window will close. Incomplete generation or export tasks may be interrupted.',
     projectSaveFailed: 'Could not save the project. Check local disk permissions.',
+    projectInUseElsewhere: 'This project is in use elsewhere',
     projectNotFound: 'The project file could not be found. It may have been deleted; refresh the project library.',
     projectRecoveryTitle: 'The project manifest is damaged',
     projectRecoveryMessage: 'Nomi can restore the most recent valid automatic backup. The damaged file will be preserved as a separate copy.',
@@ -727,9 +769,8 @@ export const en = {
     projectRepairTitle: 'The project cannot be opened',
     projectRepairMessage: 'No valid automatic backup was found. Open the project folder and inspect .nomi/project.json: {{path}}',
     openProjectFolder: 'Open project folder',
-    hostConfigRepaired: 'Repaired the Nomi connection for {{clients}}. Restart {{clients}} to apply it.',
-    integrationConfirmPending: '"{{name}}" is waiting for your confirmation before verification starts',
-    integrationConfirmPendingAction: 'Review',
+    integrationSelfCheckPending: '"{{name}}" is waiting for you to start its self-check',
+    integrationSelfCheckPendingAction: 'Review',
     initializeTitle: 'Initialize as a Nomi project',
     initializeMessage:
       '{{path}}\n\nNomi will create .nomi/ and save generated images and videos in assets/ and exports/.',
@@ -796,6 +837,7 @@ export const en = {
     nodeMenuGroupNeedsTwo: 'Select two or more nodes to group them',
     nodeMenuDelete: 'Delete',
     toolbar: 'Generation canvas toolbar',
+    smoothMode: 'Smooth mode',
     addNode: 'Add {{type}} node',
     nodeName: '{{type}} node',
     moreMenu: 'More',
@@ -834,13 +876,16 @@ export const en = {
   timelineEditor: enTimelineEditor,
   creationAi: enCreationAi,
   storyboardEditor: enStoryboardEditor,
+  videoKeyframeInspector: { inspect: 'Inspect keyframes', inspectHint: 'Extract evenly spaced frames and select which keyframe nodes to create' },
   generationCommon: enGenerationCommon,
   runtime: enRuntime,
   videoDepth: enVideoDepth,
   agentResident: enAgentResident,
   community: enCommunity,
+  feedbackReport: enFeedbackReport,
   agentPanelV4: enAgentPanelV4,
   agentLaneError: enAgentLaneError,
+  agentToolFailure: enAgentToolFailure,
 } satisfies TranslationShape<typeof zhCN>
 
 export const resources = {

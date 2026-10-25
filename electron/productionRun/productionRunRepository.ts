@@ -10,6 +10,11 @@ import { initialPlaybookStages, requireProductionPlaybook } from "./productionPl
 import { productionRunPaths, productionRunsRoot } from "./productionRunPaths";
 import { createProductionRunLock } from "./productionRunLock";
 import { applyProductionCommand, type ProductionCommandEffect } from "./productionRunReducer";
+import { settleRunLifecycle } from "./productionRunLifecycle";
+import { settlePresentation } from "./productionGenerationPresentationEdits";
+import { normalizeLegacySpendAuthority } from "../shared/productionSpendAuthority";
+import { draftCardHidden, normalizeLegacyPresentation } from "../shared/productionGenerationPresentation";
+import { normalizeLegacyStopReason } from "../shared/productionRunStop";
 import { assertProductionPolicyReady } from "./productionPolicyReadiness";
 import {
   applyBudgetEntry,
@@ -31,6 +36,7 @@ import {
   type RunEvent,
 } from "./productionRunTypes";
 import type { PlanCandidate } from "../capabilityCore/executionContract";
+import { generationShotEnvelopeOf } from "../shared/generationShotEnvelope";
 import { buildProductionRunDraftSummary } from "./productionRunDraftSummary";
 
 type SnapshotEnvelope = {
@@ -70,7 +76,6 @@ export class ProductionRunParseError extends Error {
 }
 
 const DEFAULT_POLICY: AutomationPolicy = {
-  mode: "balanced",
   trustedHosts: [],
   allowedProviders: [],
   allowedModels: [],
@@ -99,10 +104,19 @@ function appendDurableJsonLine(filePath: string, value: unknown): void {
   }
 }
 
-function readJsonLines<T>(filePath: string): T[] {
-  if (!fs.existsSync(filePath)) return [];
+function readOptionalRecord(filePath: string): string | null {
+  try { return fs.readFileSync(filePath, "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    // Never turn permissions, I/O failure or an inaccessible path into trusted absence.
+    throw Object.assign(new Error("Production run storage read failed"), { cause: error });
+  }
+}
+
+function readJsonLines<T>(filePath: string, content = readOptionalRecord(filePath)): T[] {
+  if (content === null) return [];
   const values: T[] = [];
-  for (const [index, line] of fs.readFileSync(filePath, "utf8").split("\n").entries()) {
+  for (const [index, line] of content.split("\n").entries()) {
     if (!line.trim()) continue;
     try {
       values.push(JSON.parse(line) as T);
@@ -139,9 +153,27 @@ function budgetEntryFromPayload(value: unknown): BudgetLedgerEntry {
   return record as BudgetLedgerEntry;
 }
 
-function validSnapshot(filePath: string): SnapshotEnvelope | null {
+/**
+ * 2026-09-21 未知价开闸加了 `budget.unknownInFlight`（价格未知的在途笔数）。开闸前封存的快照与
+ * 事件里没有这个字段，而当时未知价根本发不出授权，所以它对旧数据恒 0——在**读**的这一层补齐，
+ * 不改盘上字节（投影读永远无副作用）。不补的话它会以 `undefined` 的身份流进一个声明为 number
+ * 的字段，下游每一处读它的地方都得再猜一次。
+ */
+/**
+ * 读盘归一（唯一一处）：旧 Run 缺的账本计数补 0；旧 Run 挂在计划上的那份授权搬到它自己那道门上
+ * （normalizeLegacySpendAuthority，2026-09-30 起授权按门存）；这一版不认识的停下原因（上一版的 `budget`）
+ * 当作没记原因（normalizeLegacyStopReason，2026-10-01）。只改内存里的投影，不回写盘。
+ */
+function withReadDefaults(stored: ProductionRun): ProductionRun {
+  const run = normalizeLegacyStopReason(normalizeLegacyPresentation(normalizeLegacySpendAuthority(stored)));
+  if (Number.isSafeInteger(run.budget?.unknownInFlight)) return run;
+  return { ...run, budget: { ...run.budget, unknownInFlight: 0 } };
+}
+
+function validSnapshot(content: string | null): SnapshotEnvelope | null {
+  if (content === null) return null;
   try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as SnapshotEnvelope;
+    const raw = JSON.parse(content) as SnapshotEnvelope;
     const value = { schemaVersion: raw.schemaVersion, snapshotCursor: raw.snapshotCursor, run: raw.run };
     return raw.checksum === checksum(value) ? raw : null;
   } catch {
@@ -153,6 +185,13 @@ function summarize(run: ProductionRun): ProductionRunSummary {
   const draft = buildProductionRunDraftSummary(run);
   return {
     ...(draft ? { draft } : {}),
+    ...(run.authoring ? { authoring: run.authoring } : {}),
+    ...(run.generationPlan ? {
+      generationPlan: {
+        state: run.generationPlan.state,
+        ...(draftCardHidden(run.generationPlan) ? { cardHidden: true } : {}),
+      },
+    } : {}),
     runId: run.runId,
     projectId: run.projectId,
     revision: run.revision,
@@ -178,9 +217,62 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
     return dir;
   }
 
+  type EventPosition = { start: number; end: number; cursor: number; commandId: string };
+  // One disposable journal index per repository, never a Run/object cache. Disk bytes remain
+  // authoritative on every access; the full decoded UTF-8 content is compared, never size/mtime.
+  let indexedJournal: { filePath: string; content: string; positions: EventPosition[] } | undefined;
+
+  function readEventJournal(filePath: string, content = readOptionalRecord(filePath)) {
+    const bytes = content ?? "";
+    const previous = indexedJournal?.filePath === filePath ? indexedJournal : undefined;
+    let positions: EventPosition[];
+    if (previous?.content === bytes) positions = previous.positions;
+    else {
+      // A final line without a newline can still be extended, so never reuse its validation.
+      const prefixEnd = previous ? previous.content.lastIndexOf("\n") + 1 : 0;
+      const reuse = previous && bytes.startsWith(previous.content.slice(0, prefixEnd));
+      const start = reuse ? prefixEnd : 0;
+      positions = reuse ? previous.positions.filter(position => position.end < prefixEnd) : [];
+      let lineNumber = reuse ? previous.content.slice(0, prefixEnd).split("\n").length : 1;
+      let offset = start;
+      while (offset < bytes.length) {
+        const newline = bytes.indexOf("\n", offset);
+        const end = newline === -1 ? bytes.length : newline;
+        const line = bytes.slice(offset, end);
+        if (line.trim()) {
+          let event: RunEvent;
+          try { event = JSON.parse(line) as RunEvent; }
+          catch { throw new ProductionRunParseError(filePath, lineNumber); }
+          positions.push({ start: offset, end, cursor: event?.cursor, commandId: event?.commandId });
+        }
+        offset = end + 1;
+        lineNumber += 1;
+      }
+      // Commit only after every changed line validates. A malformed append cannot poison the index.
+      indexedJournal = { filePath, content: bytes, positions };
+    }
+    const decode = (position: EventPosition): RunEvent => JSON.parse(bytes.slice(position.start, position.end)) as RunEvent;
+    return {
+      latest: () => positions.length ? decode(positions[positions.length - 1]) : undefined,
+      forCommand: (commandId: string) => positions.filter(position => position.commandId === commandId).map(decode),
+      after: (cursor: number) => positions.filter(position => position.cursor > cursor).map(decode),
+      // Lazy and newest-first: a reader looking for one archived snapshot decodes until it finds
+      // it, instead of paying `JSON.parse` for every event in the journal to look at the last one.
+      reverse: function* (): Generator<RunEvent> {
+        for (let index = positions.length - 1; index >= 0; index -= 1) yield decode(positions[index]);
+      },
+    };
+  }
+
   function readEvents(projectId: string, runId: string, afterCursor = 0): RunEvent[] {
     const paths = productionRunPaths(projectDir(projectId), runId);
-    return readJsonLines<RunEvent>(paths.events).filter((event) => event.cursor > afterCursor);
+    return readEventJournal(paths.events).after(afterCursor);
+  }
+
+  /** Newest first, decoded on demand. The journal index is the same one `readEvents` uses. */
+  function readEventsReverse(projectId: string, runId: string): Iterable<RunEvent> {
+    const paths = productionRunPaths(projectDir(projectId), runId);
+    return readEventJournal(paths.events).reverse();
   }
 
   function readApprovals(projectId: string, runId: string): Approval[] {
@@ -208,15 +300,18 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
   function read(projectId: string, runId: string): ProductionRun | null {
     const dir = projectDir(projectId);
     const paths = productionRunPaths(dir, runId);
-    if (!fs.existsSync(paths.events) && !fs.existsSync(paths.snapshot)) return null;
-    const events = readJsonLines<RunEvent>(paths.events);
-    const latestEvent = events.at(-1);
-    const snapshot = fs.existsSync(paths.snapshot) ? validSnapshot(paths.snapshot) : null;
-    if (snapshot && snapshot.snapshotCursor === (latestEvent?.cursor ?? snapshot.snapshotCursor)) return snapshot.run;
+    const eventContent = readOptionalRecord(paths.events);
+    const snapshotContent = readOptionalRecord(paths.snapshot);
+    if (eventContent === null && snapshotContent === null) return null;
+    const latestEvent = readEventJournal(paths.events, eventContent).latest();
+    const snapshot = validSnapshot(snapshotContent);
+    if (snapshot && snapshot.snapshotCursor === (latestEvent?.cursor ?? snapshot.snapshotCursor)) return withReadDefaults(snapshot.run);
     // Reads may rebuild an in-memory projection for callers, but never repair
     // durable bytes. Backup/migration/rewrite belongs to an explicit command;
     // a projection read must be safe to retry after a crash and side-effect free.
-    return runFromEvent(latestEvent);
+    const recovered = runFromEvent(latestEvent);
+    if (!recovered) throw new ProductionRunParseError(paths.snapshot, 0);
+    return withReadDefaults(recovered);
   }
 
   function create(input: CreateProductionRunInput): ProductionRun {
@@ -246,7 +341,7 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
       origin: input.origin,
       brief,
       policy: { ...DEFAULT_POLICY, ...input.policy },
-      budget: { currency: input.currency || "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      budget: { currency: input.currency || "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1,
       snapshotCursor: 1,
       stages,
@@ -291,7 +386,7 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
   function createGenerationDraft(input: {
     operationId: string;
     projectId: string;
-    origin: { host: string; actorId?: string };
+    origin: ProductionRun['origin'];
     candidate: PlanCandidate;
     currency?: string;
     policy?: Partial<AutomationPolicy>;
@@ -302,6 +397,8 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
      * their sealed sub-contract is compiled at seal. Absent → single-shot draft (byte-identical to today).
      */
     shots?: ReadonlyArray<Pick<ProductionGenerationShot, "shotId" | "role" | "included" | "candidate">>;
+    /** true = 起草了、还没摆给用户：不开出价（`presentations` 为空）。缺省 = 建好就摆上卡。 */
+    cardHidden?: boolean;
   }): ProductionRun {
     const projectId = String(input.projectId || "").trim();
     const operationId = String(input.operationId || "").trim();
@@ -320,7 +417,7 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
       playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: input.origin,
       policy: { ...DEFAULT_POLICY, ...(input.policy || {}) },
-      budget: { currency: input.currency || "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      budget: { currency: input.currency || "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1,
       snapshotCursor: 1,
       // A semantic multi-shot generation is one durable production pipeline.  Seed the
@@ -340,11 +437,19 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
       generationPlan: {
         operationId,
         state: "draft",
+        // 草稿要不要当场摆上卡：`draft_shots` 建的不摆（空列表 = 从没摆过）；其余旧入口照旧当场摆上（旧默认「卡可见」）。
+        presentations: input.cardHidden === true ? [] : [{
+          shotIds: input.shots && input.shots.length > 0
+            ? input.shots.filter((shot) => shot.included !== false).map((shot) => shot.shotId)
+            : [input.candidate.candidateId],
+          openedAt: timestamp,
+          fromGate: 0,
+        }],
         candidate: structuredClone(input.candidate),
         // P4 S6.5: seed draft shots (candidate/role/included; no sub-contract until seal). Single-shot
         // drafts omit shots entirely — the read path stays on the top-level candidate (老 Run 零迁移).
         ...(input.shots && input.shots.length > 0
-          ? { shots: input.shots.map((shot) => ({ shotId: shot.shotId, ...(shot.role ? { role: shot.role } : {}), ...(shot.included !== undefined ? { included: shot.included } : {}), candidate: structuredClone(shot.candidate), updatedAt: timestamp })) }
+          ? { shots: input.shots.map((shot) => ({ ...generationShotEnvelopeOf(shot), candidate: structuredClone(shot.candidate), updatedAt: timestamp })) }
           : {}),
         updatedAt: timestamp,
       },
@@ -373,14 +478,15 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
   function executeUnlocked(projectId: string, runId: string, command: RunCommand): RunCommandResult {
     const dir = projectDir(projectId);
     const paths = productionRunPaths(dir, runId);
-    const allEvents = readJsonLines<RunEvent>(paths.events);
-    const priorEvents = allEvents.filter((event) => event.commandId === command.commandId);
+    const journal = readEventJournal(paths.events);
+    const priorEvents = journal.forCommand(command.commandId);
     if (priorEvents.length > 0) {
       const priorRun = runFromEvent(priorEvents.at(-1));
       if (!priorRun) throw new Error(`Production command result is corrupt: ${command.commandId}`);
       return { run: priorRun, events: priorEvents };
     }
-    const current = runFromEvent(allEvents.at(-1));
+    const latestEvent = journal.latest();
+    const current = runFromEvent(latestEvent);
     if (!current) throw new Error(`Production run not found: ${runId}`);
     if (current.projectId !== projectId) throw new Error("Production run project mismatch");
     if (current.revision !== command.expectedRevision) {
@@ -426,15 +532,13 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
           if (!job) throw new Error(`Production job not found: ${jobId}`);
           return job;
         });
-        const plan = current.generationPlan;
-        const authorizationEnvelope = gate.authorizationDigest ? plan?.authorizationEnvelope : undefined;
+        // 决的是这道门**自己**那一份信封（每点一次一份，信封住在门上）。
+        const authorizationEnvelope = gate.authorizationDigest ? gate.authorizationEnvelope : undefined;
         const receiptId = typeof command.payload.receiptId === "string" ? command.payload.receiptId.trim() : "";
         if (gate.authorizationDigest) {
           if (
             !authorizationEnvelope
             || !receiptId
-            || plan?.authorizationDigest !== gate.authorizationDigest
-            || plan.authorizationGateId !== gate.gateId
             || gate.planHash !== gate.authorizationDigest
             || authorizationEnvelope.gateId !== gate.gateId
             || authorizationEnvelope.costScope !== gate.costScope
@@ -484,36 +588,52 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
     } else {
       effect = applyProductionCommand(current, command, timestamp);
     }
-    const cursor = (allEvents.at(-1)?.cursor ?? 0) + 1;
-    const next: ProductionRun = {
-      ...effect.run,
-      revision: current.revision + 1,
-      snapshotCursor: cursor,
-      updatedAt: timestamp,
-    };
-    const event: RunEvent = {
-      schemaVersion: PRODUCTION_RUN_SCHEMA_VERSION,
-      eventId: `evt-${randomId()}`,
-      cursor,
-      runId,
-      runRevision: next.revision,
-      commandId: command.commandId,
-      type: effect.eventType,
-      message: effect.message,
-      emittedAt: timestamp,
-      stageId: next.stageId,
-      payload: { run: next, commandType: command.type },
-    };
-    appendDurableJsonLine(paths.events, event);
+    // 生命周期收尾挂在这个唯一写入口上（productionRunLifecycle.settleRunLifecycle）：哪条命令让 Run 欠下一步
+    // （例如急停后最后一件交给供应商的活收了尾），那一步作为自己的 run.status.changed 事件跟这条命令一起落盘。
+    // 所以没有哪个驱动需要记得去收尾——老驱动、多镜调度器、观察器、恢复流程写到这里都一样。
+    const steps: ProductionCommandEffect[] = [effect];
+    const lifecycle = settleRunLifecycle(effect.run, timestamp);
+    if (lifecycle) steps.push(lifecycle);
+    // 同一个写入口上的第二个收尾：付费卡这一次出价全决定了（每一镜都点了「生成这张」或「去掉这张」）就自己关掉
+    // （productionGenerationPresentationEdits.settlePresentation）。哪条命令让最后一镜决定了都一样。它是那条命令自己的
+    // 结果，并进同一步落盘，不另起一个修订号（调用方按「一条命令一个修订号」续写的序号不会被它打乱）。
+    const closed = settlePresentation(steps.at(-1)!.run, timestamp);
+    if (closed) steps[steps.length - 1] = { ...steps[steps.length - 1], run: closed.run };
+    let cursor = latestEvent?.cursor ?? 0;
+    let next: ProductionRun = current;
+    const events: RunEvent[] = steps.map((step, index) => {
+      cursor += 1;
+      next = {
+        ...step.run,
+        revision: current.revision + index + 1,
+        snapshotCursor: cursor,
+        updatedAt: timestamp,
+      };
+      const event: RunEvent = {
+        schemaVersion: PRODUCTION_RUN_SCHEMA_VERSION,
+        eventId: `evt-${randomId()}`,
+        cursor,
+        runId,
+        runRevision: next.revision,
+        commandId: command.commandId,
+        type: step.eventType,
+        message: step.message,
+        emittedAt: timestamp,
+        stageId: next.stageId,
+        payload: { run: next, commandType: command.type },
+      };
+      appendDurableJsonLine(paths.events, event);
+      return event;
+    });
     const record: CommandRecord = {
       commandId: command.commandId,
       expectedRevision: command.expectedRevision,
       resultRevision: next.revision,
-      eventCursors: [cursor],
+      eventCursors: events.map((event) => event.cursor),
     };
     appendDurableJsonLine(paths.commands, record);
     writeJsonFileAtomic(paths.snapshot, envelopeFor(next));
-    return { run: next, events: [event] };
+    return { run: next, events };
   }
 
   function execute(projectId: string, runId: string, command: RunCommand): RunCommandResult {
@@ -546,7 +666,7 @@ export function createProductionRunRepository(deps: ProductionRunRepositoryDeps 
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  return { create, createGenerationDraft, read, list, execute, readEvents, readApprovals, readBudgetLedger, rebuild };
+  return { create, createGenerationDraft, read, list, execute, readEvents, readEventsReverse, readApprovals, readBudgetLedger, rebuild };
 }
 
 export type ProductionRunRepository = ReturnType<typeof createProductionRunRepository>;

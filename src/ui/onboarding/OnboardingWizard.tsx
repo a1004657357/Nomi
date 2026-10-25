@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { MODEL_ACCESS_ENTRY_ONBOARDING } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { useTranslation } from 'react-i18next'
 import { Stack, Group, Text, PasswordInput, Anchor } from '@mantine/core'
@@ -7,6 +7,7 @@ import { DesignButton, DesignModal, DesignTextInput, DesignSwitch } from '../../
 import { ModelPickerScreen } from './ModelPickerScreen'
 import { getDesktopBridge } from '../../desktop/bridge'
 import type { CustomCallDraftIdentity } from '../../desktop/modelCatalogBridgeTypes'
+import { useDuplicateHostHint } from './useDuplicateHostHint'
 import type {
   DesktopExistingConnectionSummary,
   DesktopHttpCertificationRun,
@@ -21,7 +22,7 @@ import { ExistingConnectionModelPicker } from './ExistingConnectionModelPicker'
 import { OnboardingWizardResult } from './OnboardingWizardResult'
 import { DirectScriptDraftForm } from './DirectScriptDraftForm'
 import { OnboardingWizardAdvancedFields, ProviderPresetGroups } from './OnboardingWizardAdvancedFields'
-import { modelDiscoveryMessage } from './modelDiscovery'
+import { credentialSaveNotice, modelDiscoveryMessage } from './modelDiscovery'
 import { useModelDiscovery } from './useModelDiscovery'
 import { useOnboardingConnectionTest } from './useOnboardingConnectionTest'
 import { CertificationIntentKey } from './certificationIntentKey'
@@ -99,6 +100,8 @@ export function OnboardingWizard({
   const [saving, setSaving] = React.useState(false)
   const [savedConnection, setSavedConnection] = React.useState<DesktopProviderRegistration | null>(null)
   const [connectionSaveError, setConnectionSaveError] = React.useState('')
+  /** 存 key 成功、但发现没带回模型时的那一句「为什么」。不是错误，但一样不许静默。 */
+  const [connectionSaveNotice, setConnectionSaveNotice] = React.useState('')
   const [resultLabel, setResultLabel] = React.useState('')
   const [errorReason, setErrorReason] = React.useState('')
   const [errorHint, setErrorHint] = React.useState('')
@@ -211,6 +214,7 @@ export function OnboardingWizard({
     proxyUrl,
     t,
   ])
+  const selectedPreset = PROVIDER_PRESETS.find(p => p.id === presetId)
   const discoveryScope = JSON.stringify([effectiveBaseUrl, requestAuth.apiKey, providerKind, headerRows, proxyUrl])
   const {
     candidates: candidateModels,
@@ -239,6 +243,9 @@ export function OnboardingWizard({
     setShowAdvanced(false)
     setNoApiKey(false)
     // Endpoint changed → previously fetched candidates / test result no longer apply.
+    setModels([])
+    setSavedConnection(null)
+    setConnectionSaveError('')
     setScreen('form')
     resetTest()
   }, [resetTest])
@@ -319,13 +326,14 @@ export function OnboardingWizard({
       }
       setSaving(true)
       setConnectionSaveError('')
+      setConnectionSaveNotice('')
       try {
         const current = await bridge.onboarding.integrationSessionGet?.(integrationSessionId)
         const currentRecord = current && typeof current === 'object' ? (current as Record<string, unknown>) : null
         const expectedRevision = Number(currentRecord?.revision || 0)
         if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
           throw new Error(t('modelSetup.integrationUnavailable'))
-        await saveCredential({
+        const saved = await saveCredential({
           sessionId: integrationSessionId,
           expectedRevision,
           apiKey: requestAuth.apiKey,
@@ -338,6 +346,13 @@ export function OnboardingWizard({
           models: [],
           savedAt: new Date().toISOString(),
         })
+        // 存 key 这一步现在就地发现模型。带回阻塞原因 = 这次没拿到清单：把「为什么」摆在原地，
+        // 不关抽屉——关掉就等于让用户自己去猜（P0-2 的用户处境）。
+        const notice = credentialSaveNotice(saved)
+        if (notice) {
+          setConnectionSaveNotice(t(notice.key, notice.values))
+          return
+        }
         onClose()
       } catch (error) {
         setConnectionSaveError(error instanceof Error ? error.message : t('modelSetup.saveFailedHint'))
@@ -403,6 +418,13 @@ export function OnboardingWizard({
     if (result?.ok && result.models?.length) setScreen('select')
   }, [fetchModels])
 
+  // 撞域名时**原位替换**下面那句静态 hint —— 同一行、同一档灰字，不新增元素也不新增样式。
+  const baseUrlHint = useDuplicateHostHint({
+    opened,
+    baseUrl: effectiveBaseUrl,
+    name: vendorName,
+    fallbackHint: providerKind === 'anthropic' ? t('modelSetup.baseUrlAnthropicHint') : t('modelSetup.baseUrlHint'),
+  })
   const baseUrlTrimmed = effectiveBaseUrl
   const proxyUrlTrimmed = proxyUrl.trim()
   const baseUrlValid =
@@ -413,7 +435,6 @@ export function OnboardingWizard({
   const proxyUrlValid = !proxyUrlTrimmed || /^(?:https?|socks(?:4|5)?):\/\//i.test(proxyUrlTrimmed)
   const canTest = baseUrlValid && proxyUrlValid && (providerKind === 'anthropic' || baseUrlTrimmed.length > 0)
   const connectionFieldsReady = canTest && isOnboardingApiKeyReady(userApiKey, noApiKey)
-  const selectedPreset = PROVIDER_PRESETS.find((p) => p.id === presetId)
   const isNamedPreset = Boolean(selectedPreset && !selectedPreset.custom)
   const isCustomGatewayEntry = initialPreset === 'newapi' || initialPreset === 'custom'
   // Named presets hide BaseURL until the user opts into customization.
@@ -474,11 +495,9 @@ export function OnboardingWizard({
                   {showBaseUrlField ? (
                     <Field
                       label={t('modelSetup.baseUrl')}
-                      hint={
-                        providerKind === 'anthropic'
-                          ? t('modelSetup.baseUrlAnthropicHint')
-                          : t('modelSetup.baseUrlHint')
-                      }
+                      hint={baseUrlHint.text}
+                      hintMarker={baseUrlHint.marker}
+                      hintEmphasis={baseUrlHint.emphasis}
                     >
                       <DesignTextInput
                         value={baseUrl}
@@ -602,6 +621,10 @@ export function OnboardingWizard({
                       <Text size="xs" c="var(--nomi-ink-40)" className="leading-relaxed">
                         {t('modelSetup.testAndSaveHint')}
                       </Text>
+                      {/* ：这一下会真发一次上游请求，费用如实写在按钮旁边（未接 credentialProbePolicy） */}
+                      <Text size="xs" c="var(--nomi-ink-60)" className="leading-relaxed">
+                        {t('modelSetup.testConnectionSpendHint')}
+                      </Text>
                       <div className="flex flex-wrap items-center gap-2">
                         <DesignButton
                           variant="light"
@@ -638,6 +661,15 @@ export function OnboardingWizard({
                   {connectionSaveError ? (
                     <div className="text-caption leading-relaxed text-workbench-danger" role="alert">
                       {connectionSaveError}
+                    </div>
+                  ) : null}
+                  {connectionSaveNotice ? (
+                    <div
+                      data-connection-save-notice
+                      role="status"
+                      className="border-l-2 border-nomi-warning bg-nomi-ink-05 px-3 py-2 text-caption leading-relaxed text-nomi-ink-60"
+                    >
+                      {connectionSaveNotice}
                     </div>
                   ) : null}
                   <div className="flex justify-end">

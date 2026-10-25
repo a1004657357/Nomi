@@ -4,6 +4,7 @@ import {
   STORYBOARD_PLANNER_SKILL,
 } from './generationCanvas/agent/storyboardLauncher'
 import type { StoryboardPlan } from './generationCanvas/agent/storyboardPlan'
+import { SCREEN_VISIBILITY_PROMPT_RULE } from './generationCanvas/agent/storyboardShotPrompts'
 import { buildStoryDocument, TRY_NOW_EXAMPLES } from './library/tryNowExamples'
 
 describe('Phase C storyboard happy path', () => {
@@ -13,6 +14,8 @@ describe('Phase C storyboard happy path', () => {
       expect(message).toContain('JSON')
       expect(message).not.toContain('propose_storyboard_plan')
       expect(message).toContain('分镜方案')
+      expect(message).toContain('屏幕可见性硬规则')
+      expect(message).toContain('如果人物正面面对镜头，而手机/电脑背面或侧面朝向镜头，屏幕不可见')
       expect(message).toContain('--- 故事正文 ---')
       expect(message).toContain('--- 故事正文结束 ---')
       expect(message).toContain('Once upon a time...')
@@ -35,6 +38,7 @@ describe('Phase C storyboard happy path', () => {
       expect(message).toContain('--- 当前方案(JSON) ---')
       expect(message).toContain('小明')
       expect(message).toContain('把所有镜头时长改成 8 秒')
+      expect(message).toContain('屏幕可见性硬规则')
       // 修改模式不该带「故事正文」骨架。
       expect(message).not.toContain('--- 故事正文 ---')
     })
@@ -53,6 +57,35 @@ describe('Phase C storyboard happy path', () => {
         key: 'workbench.storyboard.planner',
         name: '故事板规划师',
       })
+    })
+
+    it.each(['image', 'video', 'image-video'] as const)('%s planning includes the shared screen rule once outside unchanged story text', (shotMode) => {
+      const input = Object.freeze({ storyText: '  用户原故事：人物正面面对镜头，手机背壳朝向镜头。\n保留原台词和标点。  ', shotMode })
+      const original = JSON.stringify(input)
+      const message = buildStoryboardPlanningMessage(input)
+      const [host, story] = message.split('--- 故事正文 ---')
+      expect(host.split(SCREEN_VISIBILITY_PROMPT_RULE)).toHaveLength(2)
+      expect(story).toBe(`\n${input.storyText.trim()}\n--- 故事正文结束 ---`)
+      expect(JSON.stringify(input)).toBe(original)
+    })
+
+    it.each(['image', 'video', 'image-video'] as const)('%s revision includes the shared screen rule once without changing the plan or request', (shotMode) => {
+      const currentPlan: StoryboardPlan = {
+        title: 'Original user plan', aspectRatio: '9:16',
+        anchors: [{ id: 'user-anchor', kind: 'character', name: 'User character', carrier: 'visual', description: 'Original identity' }],
+        shots: [{ index: 1, durationSec: 0, anchorIds: ['user-anchor'], modelKey: 'stored-explicit-model',
+          prompt: 'Original user prompt\nDo not rewrite.', params: { userFlag: false, userValue: 0 } }],
+      }
+      Object.freeze(currentPlan.shots[0])
+      Object.freeze(currentPlan)
+      const input = Object.freeze({ currentPlan, revisionRequest: '  只改灯光。\n保留模型、镜号与原对白。  ', shotMode })
+      const original = JSON.stringify(input)
+      const message = buildStoryboardPlanningMessage(input)
+      const [host, context] = message.split('--- 当前方案(JSON) ---')
+      expect(host.split(SCREEN_VISIBILITY_PROMPT_RULE)).toHaveLength(2)
+      expect(context).toBe(`\n${JSON.stringify(currentPlan)}\n--- 当前方案结束 ---\n\n--- 用户的修改要求 ---\n${input.revisionRequest.trim()}\n--- 修改要求结束 ---`)
+      expect(message).not.toContain('--- 故事正文 ---')
+      expect(JSON.stringify(input)).toBe(original)
     })
   })
 

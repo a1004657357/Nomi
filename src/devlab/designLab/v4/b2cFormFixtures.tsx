@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { type JSX } from 'react'
+import { V4_LAB_SLOT_HANDLERS } from './agentPanelV4LabKit'
 import type { GenerationModelDefaultMap } from '../../../workbench/generationCanvas/model/generationModelDefaults'
 import { useTranslation } from 'react-i18next'
 import { AgentPanelV4Panel } from '../../../workbench/ai/v4/AgentPanelV4Panel'
@@ -13,7 +14,7 @@ const B2C_MODELS: ModelCatalogModelDto[] = [
   { modelKey: 'deepseek-v4-pro', labelZh: 'DeepSeek V4 Pro', kind: 'text' },
   { modelKey: 'gpt-image-2', labelZh: 'GPT Image 2', kind: 'image' },
   { modelKey: 'MiniMax-H3', labelZh: 'MiniMax H3', kind: 'video' },
-].map(model => ({ ...model, kind: model.kind as ModelCatalogModelDto['kind'], vendorKey: 'b2c-catalog', enabled: true, published: true, publishedModes: [], createdAt: '2026-09-09T00:00:00Z', updatedAt: '2026-09-09T00:00:00Z' }))
+].map(model => ({ ...model, kind: model.kind as ModelCatalogModelDto['kind'], vendorKey: 'b2c-catalog', enabled: true, published: true, publishedModes: [], availability: { usable: true } as const, createdAt: '2026-09-09T00:00:00Z', updatedAt: '2026-09-09T00:00:00Z' }))
 
 export function B2cModelSpecimen(): JSX.Element {
   const { t } = useTranslation()
@@ -40,7 +41,7 @@ export function B2cProcessSpecimen({ state }: { state: V4ToolStatus }): JSX.Elem
     tool('加载分镜技能', 'output-available'),
     tool('写入 8 镜', state === 'input-available' ? 'input-available' : state === 'output-error' ? 'output-error' : 'output-available'),
   ]
-  return <div style={{ width: 390, height: 620 }}><AgentPanelV4Panel width={390} height={620} context={{}}
+  return <div style={{ width: 390, height: 620 }}><AgentPanelV4Panel slotHandlers={V4_LAB_SLOT_HANDLERS} width={390} height={620} context={{}}
     flow={collapseV4Flow(flow, t, { turns: [turn], elapsedSeconds: 8, liveTurnId: state === 'input-available' ? turn.turnId : undefined })}
     composer={{ mode: state === 'input-available' ? 'running' : 'idle', modelLabel: 'DeepSeek V4 Pro' }} /></div>
 }

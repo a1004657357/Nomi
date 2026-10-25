@@ -24,7 +24,7 @@
 // 「配置模型」按钮，整屏就白画了。所以这里按 findReference 那一屏的既有手法装一个**只读桥**，
 // 喂真实档案认得的 modelKey（seedance-2 / gpt-image-2）；底栏上印什么值，
 // 因此全是档案 derive 出来的真货（比例 / 时长 / 清晰度），不是在这里手打的一句文案。
-import React from 'react'
+import React, { type JSX } from 'react'
 
 import BaseGenerationNode from '../../../workbench/generationCanvas/nodes/BaseGenerationNode'
 import InlineParameterBar from '../../../workbench/generationCanvas/nodes/InlineParameterBar'
@@ -41,7 +41,7 @@ export const NODE_COMPOSER_BAR_CELL_HEIGHT = 720
 
 const NODE_WIDTH = 340
 const NODE_HEIGHT = 192
-const NODE_LEFT = 28
+const NODE_LEFT = (NODE_COMPOSER_BAR_CELL_WIDTH - NODE_WIDTH) / 2
 // 节点上方要留出**浮条的位置**（它挂在 bottom-[calc(100%+40px)]）——留少了，
 // 「锁回到浮条」这件主张就直接被取景框裁掉，看不见。
 const NODE_TOP = 96
@@ -73,6 +73,7 @@ const CATALOG_MODELS = [
     enabled: true,
     published: true,
     publishedModes: ['text_to_video', 'image_to_video'],
+    availability: { usable: true },
     createdAt: '2026-09-10',
     updatedAt: '2026-09-10',
   },
@@ -84,10 +85,11 @@ const CATALOG_MODELS = [
     enabled: true,
     published: true,
     publishedModes: ['text_to_image', 'image_edit'],
+    availability: { usable: true },
     createdAt: '2026-09-10',
     updatedAt: '2026-09-10',
   },
-]
+] satisfies ModelCatalogModelDto[]
 
 const CATALOG_VENDORS = [
   {
@@ -199,9 +201,8 @@ function StageFrame({ children }: { children: React.ReactNode }): JSX.Element {
  *   ③ 底栏一行三段且不换行：模型/参数摘要 pill（两个值）· 运镜/效果/优化（缩小一号纯 icon，
  *      运镜已选带激活点）· ×N/生成。
  *
- * 刻意不套 `.generation-canvas-v2__stage`：套上会启用 useComposerViewportPlacement 的避让算法
- * （它按**屏幕坐标**算，取景一变位置就变），而这一屏要比的是底栏里有什么、挤不挤，不是浮框
- * 贴在哪一边。省掉它，浮框落在节点正下方的默认位，各格才可比。
+ * 浮框的位置只由节点尺寸与画布缩放决定（钉在节点正下方、定宽，2026-09-25），取景台里和画布上一样。
+ * 这一屏要比的是底栏里有什么、挤不挤。
  */
 export function ComposerBarStage({ kind, cameraPicked = false }: { kind: BarKind; cameraPicked?: boolean }): JSX.Element {
   const fixture = React.useMemo(() => makeBarNode(kind, { cameraPicked }), [kind, cameraPicked])
@@ -246,6 +247,94 @@ export function ChipsModeStage(): JSX.Element {
       <div className="absolute left-7 top-7 rounded-nomi-lg border border-nomi-line bg-nomi-paper p-3" style={{ width: 560 }}>
         <InlineParameterBar
           parameterLayout="chips"
+          modelOptions={modelOptions}
+          modelCatalogStatus={{ message: '' }}
+          renderedControls={controls}
+          selectedModelOption={option}
+          archetype={resolveArchetypeForOption(option)}
+          meta={meta}
+          onModelChange={() => {}}
+          onCatalogControlChange={(control, value) => setMeta((prev) => ({ ...prev, [control.key]: value }))}
+          onParameterControlChange={(control, value) => setMeta((prev) => ({ ...prev, [control.key]: value }))}
+        />
+      </div>
+    </StageFrame>
+  )
+}
+
+// ── 参数面板：选项摊开 / 单参数直出（v1.2，2026-09-11 13:00 用户真机拍板）────────────────
+//
+// 这两格钉的是**点开之后**那一层：v1.1 的五格只看得到收起来的底栏，而用户当天反馈的
+// 「点好几次」全发生在点开之后（pill → 面板 → 下拉 → 列表 → 选，四步）。
+// 它们不套整张节点卡：panelMode 默认 portal，浮层落在 body 上、不在节点子树里，
+// 所以两格都用 `capture: 'viewport'` 截整屏，否则截回来的是一张没有浮层的卡。
+//
+// 控件全部由**真实档案** derive（`resolveRenderedControls`，NodeParameterControls 用的同一个函数）：
+//   · Seedance 2 = 多参数 → 面板：比例（带比例小图形）/ 清晰度 / 时长滑杆，一个下拉都没有；
+//   · Agnes Image 2.0 = **只声明了一个「尺寸」参数**（7 个像素档，标签长）→ pill 直出一列可点项。
+//     选它不是为了好看：它就是用户 09-11 13:00 截图里那种「图片节点只有尺寸」的真实模型，
+//     而这组长标签正是旧规则判成「面板内下拉」的那一族。
+const PANEL_MODELS = [
+  {
+    modelKey: 'seedance-2',
+    modelAlias: 'bytedance/seedance-2',
+    vendorKey: 'apimart',
+    labelZh: 'Seedance 2',
+    kind: 'video',
+    enabled: true,
+    published: true,
+    publishedModes: ['text_to_video'],
+    createdAt: '2026-09-11',
+    updatedAt: '2026-09-11',
+  },
+  {
+    modelKey: 'agnes-image',
+    vendorKey: 'agnes',
+    labelZh: 'Agnes Image 2.0',
+    kind: 'image',
+    enabled: true,
+    published: true,
+    publishedModes: ['text_to_image'],
+    createdAt: '2026-09-11',
+    updatedAt: '2026-09-11',
+  },
+]
+
+export type ParamPanelKind = 'video-panel' | 'image-solo'
+
+export function ParamPanelStage({ kind }: { kind: ParamPanelKind }): JSX.Element {
+  const wanted = kind === 'video-panel' ? 'video' : 'image'
+  const modelOptions = React.useMemo(
+    () => toCatalogModelOptions(PANEL_MODELS.filter((model) => model.kind === wanted) as ModelCatalogModelDto[]),
+    [wanted],
+  )
+  const [meta, setMeta] = React.useState<Record<string, unknown>>(
+    () => (kind === 'video-panel'
+      ? { modelKey: 'seedance-2', modelVendor: 'apimart', aspect_ratio: '16:9', duration: 5, resolution: '1080p' }
+      : { modelKey: 'agnes-image', modelVendor: 'agnes', size: '1024x1024' }),
+  )
+  const option = modelOptions[0] ?? null
+  const controls = React.useMemo(
+    () => resolveRenderedControls(option, meta, wanted === 'image', wanted === 'video'),
+    [option, meta, wanted],
+  )
+  const cardRef = React.useRef<HTMLDivElement>(null)
+  // 展开态由取景台**真的点一下那颗 pill** 得到，不是另画一份展开的样子。
+  // 这一格没有异步目录（`toCatalogModelOptions` 是纯映射），所以 pill 在第一次布局时就在了；
+  // 点不到就当场喊出来——这一格的全部信息量就在「点开之后长什么样」，静默截一张收起态是假证据。
+  React.useLayoutEffect(() => {
+    const trigger = cardRef.current?.querySelector<HTMLButtonElement>('[data-parameter-summary]')
+    if (!trigger) throw new Error('[node-composer-bar] 找不到摘要 pill，这一格截不到展开态')
+    trigger.click()
+  }, [])
+  return (
+    <StageFrame>
+      <div
+        ref={cardRef}
+        className="absolute left-7 rounded-nomi-lg border border-nomi-line bg-nomi-paper p-3"
+        style={{ width: 560, top: kind === 'video-panel' ? 470 : 420 }}
+      >
+        <InlineParameterBar
           modelOptions={modelOptions}
           modelCatalogStatus={{ message: '' }}
           renderedControls={controls}

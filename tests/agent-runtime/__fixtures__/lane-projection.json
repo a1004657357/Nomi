@@ -1,8 +1,13 @@
 {
   "lane": "main",
+  "model": {
+    "provider": "nomi-lane",
+    "modelId": "chosen-model"
+  },
   "parts": [
     {
       "sequence": 0,
+      "entryId": "native-entry-4",
       "entrySeq": 4,
       "contentIndex": 0,
       "kind": "user",
@@ -12,19 +17,21 @@
       "sequence": 1,
       "entrySeq": 17,
       "contentIndex": 0,
+      "entryId": "native-entry-17",
       "kind": "tool-call",
       "toolCallId": "call-read",
-      "toolName": "read_full_text",
+      "toolName": "read_script",
       "args": {},
       "running": false
     },
     {
       "sequence": 2,
+      "entryId": "native-entry-27",
       "entrySeq": 27,
       "contentIndex": 0,
       "kind": "tool-result",
       "toolCallId": "call-read",
-      "toolName": "read_full_text",
+      "toolName": "read_script",
       "text": "The opening scene.",
       "isError": false
     },
@@ -32,34 +39,44 @@
       "sequence": 3,
       "entrySeq": 39,
       "contentIndex": 0,
+      "entryId": "native-entry-39",
       "kind": "tool-call",
       "toolCallId": "call-write",
-      "toolName": "append_to_end",
+      "toolName": "write_script",
       "args": {
+        "where": "end",
         "content": "\n\nAnd then the door opened."
       },
       "running": false
     },
     {
       "sequence": 4,
+      "entryId": "native-entry-49",
       "entrySeq": 49,
       "contentIndex": 0,
       "kind": "tool-result",
       "toolCallId": "call-write",
-      "toolName": "append_to_end",
-      "text": "Applied append to the document. New revision 1.",
-      "isError": false
+      "toolName": "write_script",
+      "text": "Applied append to the document. New revision 1.\nUser sees: The document now contains the new text (append); the user can undo it with Cmd+Z.",
+      "isError": false,
+      "nextAction": {
+        "kind": "none",
+        "userSees": "The document now contains the new text (append); the user can undo it with Cmd+Z."
+      }
     },
     {
       "sequence": 5,
       "entrySeq": 60,
       "contentIndex": 0,
+      "entryId": "native-entry-60",
       "kind": "assistant-text",
       "text": "I read the document and appended one paragraph.",
-      "streaming": false
+      "streaming": false,
+      "retryInputEntryId": "native-entry-4"
     }
   ],
   "running": false,
+  "queues": [],
   "usage": {
     "inputTokens": 30,
     "outputTokens": 12,
@@ -79,7 +96,6 @@
       "reason": "model-has-no-reasoning"
     }
   },
-  "queues": [],
   "thinking": {
     "supportedLevels": [
       "off"
@@ -87,8 +103,8 @@
     "level": "off",
     "canTurnOff": true
   },
-  "model": {
-    "provider": "nomi-lane",
-    "modelId": "chosen-model"
+  "history": {
+    "hasMore": false,
+    "before": "native-entry-4"
   }
 }

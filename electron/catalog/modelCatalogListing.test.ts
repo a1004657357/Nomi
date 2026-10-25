@@ -15,7 +15,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { deriveModelListing, referenceModeForIntent } from "./modelCatalogListing";
+import { deriveModelListing, referenceModeForIntent, videoBodyKeysForModel } from "./modelCatalogListing";
 import { apiKeyDecryptStatus } from "./secrets";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
@@ -59,6 +59,27 @@ function state(over: Partial<CatalogState>): CatalogState {
 
 beforeEach(() => {
   logged.length = 0;
+});
+
+describe("Pavo browser bridge reference contract", () => {
+  const catalog = state({
+    vendors: [vendor({ key: "pavo-web", authType: "none" })],
+    models: [model({ vendorKey: "pavo-web", modelKey: "pavo-agnes-video-2.5-flash", kind: "video" })],
+  });
+  it("declares image and audio references without inventing HTTP mappings", () => {
+    expect(deriveModelListing(catalog)[0].references).toEqual({
+      image: true, audio: true, video: false, multiImage: true, referenceModes: ["image_to_video"],
+    });
+    expect(referenceModeForIntent(catalog, "pavo-web", "pavo-agnes-video-2.5-flash", "video")).toBe("image_to_video");
+    expect(referenceModeForIntent(catalog, "pavo-web", "pavo-agnes-video-2.5-flash", "image")).toBeNull();
+    expect(videoBodyKeysForModel(catalog, "pavo-web", "pavo-agnes-video-2.5-flash")).toContain("first_frame");
+    expect(catalog.mappings).toEqual([]);
+  });
+  it("does not grant these channels to unrecognized Pavo models", () => {
+    const unknown = state({ ...catalog, models: [model({ vendorKey: "pavo-web", modelKey: "unknown", kind: "video" })] });
+    expect(deriveModelListing(unknown)[0].references.image).toBe(false);
+    expect(referenceModeForIntent(unknown, "pavo-web", "unknown", "video")).toBeNull();
+  });
 });
 
 describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", () => {
@@ -126,7 +147,10 @@ describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", (
     expect(deriveModelListing(withDisabled).map((e) => e.modelKey)).toEqual(["on"]);
   });
 
-  it("hides staged or failed adapter models without an active revision even when raw mappings are enabled", () => {
+  // 2026-09-11 拍板「自检失败不下架」。旧行为：`meta.adapter` 一存在就只认 activeRevision，
+  // 而一次失败的自检恰好只写 state:"failed"、不写 activeRevision —— 按一次验证按钮就把一个
+  // 手动配好、本来能在模型框里选到的模型永久抹掉，且没有回头路。自检只增不减。
+  it("keeps staged or failed adapter models listed when their raw mappings are enabled", () => {
     const hidden = state({
       vendors: [vendor({ key: "relay", authType: "none" })],
       models: [
@@ -139,7 +163,7 @@ describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", (
       ],
     });
 
-    expect(deriveModelListing(hidden)).toEqual([]);
+    expect(deriveModelListing(hidden).map((entry) => entry.modelKey)).toEqual(["staged", "failed"]);
   });
 
   it("keeps only legacy text fallback plus a failed repair with a preserved active revision visible", () => {
@@ -162,7 +186,7 @@ describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", (
     expect(deriveModelListing(visible).map((entry) => entry.modelKey)).toEqual(["legacy-text", "active"]);
   });
 
-  it("does not let a raw custom-call script publish an adapter model without a certified active revision", () => {
+  it("lets a raw custom-call script keep an adapter model listed when its self-check has not certified a revision", () => {
     const customCall = state({
       vendors: [vendor({ key: "relay", authType: "none" })],
       models: [
@@ -181,7 +205,9 @@ describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", (
       ],
     });
 
-    expect(deriveModelListing(customCall).map((entry) => entry.modelKey)).toEqual([]);
+    // scripted 有可执行脚本 → 仍然可用；failed-without-execution 没有任何可执行证据 → 仍然不列。
+    // 判据回到「这一行到底有没有能跑的东西」，而不是「它进没进过认证域」。
+    expect(deriveModelListing(customCall).map((entry) => entry.modelKey)).toEqual(["scripted"]);
   });
 
   it("reports legacy plaintext credentials as needs_resave with a migration action", () => {
@@ -251,11 +277,12 @@ describe("deriveModelListing — 解密探测按 vendor 记忆化（单 vendor �
       ],
       apiKeysByVendor: {
         apimart: { vendorKey: "apimart", apiKey: b64("k"), enc: "safeStorage", enabled: true, createdAt: "t", updatedAt: "t" },
-        // kie 无记录 → probe 收到 undefined，仍算一次探测。
+        // kie 无记录 → 记录本身就不算数（credentialRecordCounts），连探针都不调。
       },
     });
     deriveModelListing(twoVendors, { keyStatusProbe: probe });
-    expect(probe).toHaveBeenCalledTimes(2); // apimart 一次 + kie 一次，非 3 次
+    // apimart 两个模型只探一次（记忆化）；kie 没有记录，一次都不探（没材料就别开钥匙串）。
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 
   it("authType='none' 的 vendor 恒 ok，压根不调探测（记忆化 + 短路都不触发解密）", () => {
@@ -385,5 +412,25 @@ describe("referenceModeForIntent — 带参考时按目录选生成 kind（不�
       mappings: [mapping({ id: "g", vendorKey: "relay", taskKind: "image_edit", create: { method: "POST", path: "/x", body: { image: "{{request.params.image_url}}" } } })],
     });
     expect(referenceModeForIntent(s, "relay", "relay-img", "image")).toBe("image_edit");
+  });
+});
+
+// 这个模块的**导出面**是一条锁（2026-09-22）。
+//
+// 为什么要它：`7df4c036f` 在这里只删了两个没人读的 import（合并后压 lint 用的是删真死代码，
+// 不是抬上限）。那次改动没有症状、没有直接原因、没有类根因——编一份纠正性根因合同出来，
+// 只会让根因台账多一条假记录，所以走的是 `change_kind: "structural"` 那条正规出口。
+// 而结构性合同宣称的是「行为逐字不变」，这条断言就是那句话**机器可核**的形状：
+// 导出集合少一个、多一个、改个名字，它当场红。
+describe("modelCatalogListing 的导出面", () => {
+  it("导出集合是一条锁——纯删死 import 不许动它", async () => {
+    const module = await import("./modelCatalogListing");
+    expect(Object.keys(module).sort()).toEqual([
+      "deriveModelListing",
+      "mappingsForModel",
+      "modelModeBodies",
+      "referenceModeForIntent",
+      "videoBodyKeysForModel",
+    ]);
   });
 });

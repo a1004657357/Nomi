@@ -7,14 +7,34 @@ function entryByKey(): Map<string, AgentModelEntry> {
   const entries = buildAgentModelEntries([
     { value: "seedance-2", label: "即梦 Seedance", vendor: "kie", meta: { archetypeId: "seedance-2" } } as ModelOption,
   ]);
-  return new Map(entries.map((e) => [e.modelKey, e]));
+  return new Map(entries.map((e) => [e.modelId, e]));
 }
 
 function textEntryByKey(): Map<string, AgentModelEntry> {
   const entries = buildAgentModelEntries([
     { value: "agent-runtime-text", label: "Fixture 文本", vendor: "loopback", kind: "text" } as ModelOption & { kind: "text" },
   ]);
-  return new Map(entries.map((e) => [e.modelKey, e]));
+  return new Map(entries.map((e) => [e.modelId, e]));
+}
+
+function jimengEntryByKey(): Map<string, AgentModelEntry> {
+  const entries = buildAgentModelEntries([
+    {
+      value: "jimeng-web-image",
+      modelKey: "jimeng-web-image",
+      label: "即梦 Web 图片",
+      vendor: "jimeng-web",
+      meta: { archetypeId: "jimeng-web-image" },
+    } as ModelOption,
+    {
+      value: "jimeng-web-seedance-2.0",
+      modelKey: "jimeng-web-seedance-2.0",
+      label: "即梦 Web Seedance 2.0",
+      vendor: "jimeng-web",
+      meta: { archetypeId: "jimeng-web-seedance-2" },
+    } as ModelOption,
+  ]);
+  return new Map(entries.map((entry) => [entry.modelId, entry]));
 }
 
 describe("buildPlannedNodeMeta", () => {
@@ -115,12 +135,30 @@ describe("resolvePlannedNodeArgs — 批准≡执行(消灭对账出入)", () =>
   });
 
   it("模型不可用 → 剥掉 modelKey/modeId/params(与执行回退自动选一致)", () => {
-    const node = { clientId: "k1", kind: "video", title: "镜头", modelKey: "not-available", modeId: "i2v", params: { x: 1 } };
+    const node = { clientId: "k1", kind: "video", title: "镜头", modelKey: "not-available", variantId: "vip", modeId: "i2v", params: { x: 1 } };
     const resolved = resolvePlannedNodeArgs(node, entryByKey());
     expect(resolved.modelKey).toBeUndefined();
+    expect(resolved.variantId).toBeUndefined();
     expect(resolved.modeId).toBeUndefined();
     expect(resolved.params).toBeUndefined();
     expect(resolved.title).toBe("镜头");
+  });
+
+  it("批准参数保留 Agent 选择的型号", () => {
+    const resolved = resolvePlannedNodeArgs(
+      {
+        clientId: "i1",
+        kind: "image",
+        modelKey: "jimeng-web-image",
+        variantId: "v5_0_lite",
+        modeId: "t2i",
+        params: { resolution_type: "4K" },
+      },
+      jimengEntryByKey(),
+    );
+
+    expect(resolved.variantId).toBe("v5_0_lite");
+    expect(resolved.params).toMatchObject({ resolution_type: "4K" });
   });
 });
 
@@ -141,8 +179,16 @@ describe("模型身份唯一键含 vendor（选 A 家就发去 A 家）", () => 
     expect(index.get("apimart::nano-banana")?.vendor).toBe("apimart");
   });
 
-  it("裸 key 取首次出现的那家，不是「最后写入的那家」", () => {
+  // 裸 key（没记供应商的旧数据）落哪家由 pickImplicitVendorMatch 决定——与模型框回显同一把尺：
+  // 用户顺序 > 官方 > 内置中转 > 自接 > 目录序。以前是「首次出现」，而目录新接入的在前，
+  // 用户一自定义同名模型裸键就换成了它（2026-09-21）。既不是「最后写入」也不是「第一条」。
+  it("裸 key 按同一把尺落家：内置中转 apimart 先于自接中转，不看目录里谁先出现", () => {
     const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS));
+    expect(index.get("nano-banana")?.vendor).toBe("apimart");
+  });
+
+  it("裸 key 跟随用户排的供应商顺序", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS), ["code-newcli-com"]);
     expect(index.get("nano-banana")?.vendor).toBe("code-newcli-com");
   });
 

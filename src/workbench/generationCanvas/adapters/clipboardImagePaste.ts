@@ -1,4 +1,6 @@
 import { reportCanvasFeedback } from '../components/canvasFeedback'
+import { mediaImportRejectionMessages } from '../../assets/mediaImportMessage'
+import type { GenerationAssetImportSkip } from './assetImportAdapter'
 import {
   hostedAssetUrl,
   importWorkbenchLocalAssetFile,
@@ -9,11 +11,16 @@ import {
 import { dataUrlToFile } from './persistNodeImage'
 import {
   importLocalMediaFilesToGenerationCanvas,
+  isProjectImportCancellation,
   type GenerationAssetImportResult,
   type ImportImageFilesOptions,
 } from './assetImportAdapter'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import i18n from '../../../i18n'
+import type { ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
+import { surfacePortFailure } from '../../../../electron/shared/surfacePortBinding'
+import { placementOrigin, type CanvasPlacementAnchor } from '../model/canvasPlacement'
+import { getGenerationNodeDefaultSize } from '../model/generationNodeKinds'
 
 const IMAGE_URL_EXTENSION = /\.(?:png|jpe?g|webp|gif|avif|bmp|svg)(?:[?#].*)?$/i
 const VIDEO_URL_EXTENSION = /\.(?:mp4|m4v|mov|webm|ogv|ogg|avi)(?:[?#].*)?$/i
@@ -44,13 +51,17 @@ type ClipboardMediaUrlCandidate = {
 }
 
 export type ClipboardMediaPasteOptions = {
+  /** 粘贴事件那一刻签发的原项目生命周期（必传）：转换、远程下载、落盘、落节点都只认它。 */
+  projectContext: ProjectExecutionContext
   basePosition: { x: number; y: number }
+  /** basePosition 压在新卡的哪一点（比例）。不传 = 左上角。键盘粘贴传中心（model/canvasPlacement.ts）。 */
+  anchor?: CanvasPlacementAnchor
   categoryId?: string
   clipboardData?: DataTransfer | null
   fetchMedia?: typeof fetch
   fetchImage?: typeof fetch
   importRemoteUrl?: (url: string, fileName: string) => Promise<WorkbenchAssetDto | null>
-  importOptions?: Partial<ImportImageFilesOptions>
+  importOptions?: Partial<Omit<ImportImageFilesOptions, 'projectContext'>>
 }
 
 export type ClipboardImagePasteOptions = ClipboardMediaPasteOptions
@@ -59,7 +70,8 @@ export type ClipboardMediaPasteResult = {
   handled: boolean
   importedCount: number
   failedCount: number
-  skippedTooLargeCount: number
+  /** 被准入闸挡下的文件（类型不对 / 硬上限 / 磁盘装不下），带数字。 */
+  rejected: GenerationAssetImportSkip[]
   skippedOverLimitCount: number
   usedExternalUrl: boolean
 }
@@ -71,7 +83,7 @@ function emptyResult(handled = false): ClipboardMediaPasteResult {
     handled,
     importedCount: 0,
     failedCount: 0,
-    skippedTooLargeCount: 0,
+    rejected: [],
     skippedOverLimitCount: 0,
     usedExternalUrl: false,
   }
@@ -284,7 +296,11 @@ async function importRemoteMediaUrl(
   const kind = mediaKindFromUrl(url) || fallbackKind
   const fileName = fileNameFromMediaUrl(url, fallbackMimeForKind(kind), kind)
   const importRemoteUrl = options.importRemoteUrl ?? ((remoteUrl: string, name: string) =>
-    importWorkbenchRemoteAssetUrl(remoteUrl, name))
+    importWorkbenchRemoteAssetUrl(remoteUrl, name, {
+      projectBinding: options.projectContext.binding,
+      assertCurrent: options.projectContext.assertCurrent,
+    }))
+  options.projectContext.assertCurrent()
   return importRemoteUrl(url, fileName)
 }
 
@@ -293,17 +309,20 @@ function resultFromImport(result: GenerationAssetImportResult): ClipboardMediaPa
     handled: true,
     importedCount: result.created.length,
     failedCount: result.failedCount,
-    skippedTooLargeCount: result.skippedTooLargeCount,
+    rejected: result.rejected,
     skippedOverLimitCount: result.skippedOverLimitCount,
     usedExternalUrl: false,
   }
 }
 
 async function importMediaFiles(files: File[], options: ClipboardMediaPasteOptions): Promise<ClipboardMediaPasteResult> {
+  options.projectContext.assertCurrent()
   const result = await importLocalMediaFilesToGenerationCanvas(files, {
     basePosition: options.basePosition,
     categoryId: options.categoryId,
+    anchor: options.anchor,
     ...options.importOptions,
+    projectContext: options.projectContext,
     exactPosition: options.importOptions?.exactPosition ?? true,
   })
   return resultFromImport(result)
@@ -330,14 +349,15 @@ function createClipboardMediaNodeShell(input: {
 }): string {
   const { options, titleUrl } = input
   const store = useGenerationCanvasStore.getState()
+  // 链接媒体下载前只有默认卡面尺寸可用；锚点按它换算（与拖入的非系统文件来源同一残留，见结构评审）。
+  const origin = options.anchor
+    ? placementOrigin({ point: options.basePosition, anchor: options.anchor }, getGenerationNodeDefaultSize('asset'))
+    : options.basePosition
   const node = store.addNode({
     kind: 'asset',
     title: titleFromUrl(titleUrl),
     prompt: '',
-    position: {
-      x: Math.round(options.basePosition.x),
-      y: Math.round(options.basePosition.y),
-    },
+    position: { x: Math.round(origin.x), y: Math.round(origin.y) },
     categoryId: options.categoryId,
     exactPosition: true,
   })
@@ -450,16 +470,23 @@ async function uploadFetchedMediaFileToNode(
   candidate: ClipboardMediaUrlCandidate,
   options: ClipboardMediaPasteOptions,
 ): Promise<boolean> {
+  options.projectContext.assertCurrent()
   const kind = mediaKindFromMime(file.type) || candidate.kind || mediaKindFromUrl(file.name)
   if (!kind) return false
   const uploadFile = options.importOptions?.uploadFile ?? importWorkbenchLocalAssetFile
   const recoverFile = options.importOptions?.recoverFile ?? recoverImportedWorkbenchLocalAssetFile
   let asset: WorkbenchAssetDto | null
   try {
-    asset = await uploadFile(file, file.name || titleFromUrl(candidate.url), { ownerNodeId: nodeId })
-  } catch {
+    asset = await uploadFile(file, file.name || titleFromUrl(candidate.url), {
+      ownerNodeId: nodeId,
+      projectBinding: options.projectContext.binding, assertCurrent: options.projectContext.assertCurrent,
+    })
+  } catch (error) {
+    options.projectContext.assertCurrent()
+    if (surfacePortFailure(error).code !== 'capability_execution_failed') throw error
     asset = await recoverFile(file)
   }
+  options.projectContext.assertCurrent()
   const localUrl = hostedAssetUrl(asset)
   if (!localUrl) return false
   updateClipboardMediaNodeSuccess({
@@ -477,9 +504,11 @@ async function pasteRemoteClipboardMediaUrl(
   candidate: ClipboardMediaUrlCandidate,
   options: ClipboardMediaPasteOptions,
 ): Promise<ClipboardMediaPasteResult> {
+  options.projectContext.assertCurrent()
   const nodeId = createPendingClipboardMediaNode(candidate, options)
   try {
     const asset = await importRemoteMediaUrl(candidate.url, options, candidate.kind)
+    options.projectContext.assertCurrent()
     const localUrl = hostedAssetUrl(asset)
     const kind = kindFromAsset(asset, candidate.url, candidate.kind)
     if (localUrl && kind) {
@@ -493,7 +522,9 @@ async function pasteRemoteClipboardMediaUrl(
       })
       return { ...emptyResult(true), importedCount: 1 }
     }
-  } catch {
+  } catch (error) {
+    options.projectContext.assertCurrent()
+    if (surfacePortFailure(error).code !== 'capability_execution_failed') throw error
     /* Desktop remote import may be unavailable in tests/web or blocked by the remote host. */
   }
 
@@ -501,14 +532,18 @@ async function pasteRemoteClipboardMediaUrl(
   if (fetchMedia) {
     try {
       const file = await mediaUrlToFile(candidate.url, fetchMedia, candidate.kind)
+      options.projectContext.assertCurrent()
       if (file && await uploadFetchedMediaFileToNode(nodeId, file, candidate, options)) {
         return { ...emptyResult(true), importedCount: 1 }
       }
-    } catch {
+    } catch (error) {
+      options.projectContext.assertCurrent()
+      if (surfacePortFailure(error).code !== 'capability_execution_failed') throw error
       /* Fall through to the visible error node below. */
     }
   }
 
+  options.projectContext.assertCurrent()
   updateClipboardMediaNodeError(nodeId, '网页媒体下载失败：该站点可能禁止跨域请求或开启防盗链。请先下载到本地，再复制或拖入画布。')
   return { ...emptyResult(true), failedCount: 1 }
 }
@@ -516,6 +551,17 @@ async function pasteRemoteClipboardMediaUrl(
 export async function pasteClipboardMediaToGenerationCanvas(
   options: ClipboardMediaPasteOptions,
 ): Promise<ClipboardMediaPasteResult> {
+  const { projectContext } = options
+  try {
+    projectContext.assertCurrent()
+    return await pasteClipboardMediaInProject(options)
+  } catch (error) {
+    if (!projectContext.signal.aborted && !isProjectImportCancellation(error)) throw error
+    return emptyResult(true)
+  }
+}
+
+async function pasteClipboardMediaInProject(options: ClipboardMediaPasteOptions): Promise<ClipboardMediaPasteResult> {
   const data = options.clipboardData
   const files = extractClipboardMediaFiles(data)
   if (files.length > 0) return importMediaFiles(files, options)
@@ -529,12 +575,16 @@ export async function pasteClipboardMediaToGenerationCanvas(
   if (fetchMedia) {
     try {
       const file = await mediaUrlToFile(candidate.url, fetchMedia, candidate.kind)
+      options.projectContext.assertCurrent()
       if (file) return importMediaFiles([file], options)
-    } catch {
+    } catch (error) {
+      options.projectContext.assertCurrent()
+      if (surfacePortFailure(error).code !== 'capability_execution_failed') throw error
       /* If the browser blocks the request, a trusted media URL can still be displayed directly. */
     }
   }
 
+  options.projectContext.assertCurrent()
   if (candidate.trustAsMedia) return createExternalMediaUrlNode(candidate, options)
   return emptyResult(false)
 }
@@ -549,7 +599,7 @@ export function showClipboardMediaPasteNotes(result: ClipboardMediaPasteResult, 
   if (!result.handled) return
   const notes: string[] = []
   if (result.skippedOverLimitCount > 0) notes.push(`超过 8 个，已忽略 ${result.skippedOverLimitCount} 个`)
-  if (result.skippedTooLargeCount > 0) notes.push(`${result.skippedTooLargeCount} 个媒体过大`)
+  for (const message of mediaImportRejectionMessages(result.rejected)) notes.push(message)
   if (result.failedCount > 0) notes.push(`${result.failedCount} 个媒体导入失败`)
   if (notes.length) reportCanvasFeedback(notes.join('；'), result.failedCount > 0 ? 'error' : 'warning', { projectId, identity: 'canvas-paste', reason: 'paste-incomplete' })
 }

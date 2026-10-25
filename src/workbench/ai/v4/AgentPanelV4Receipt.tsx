@@ -5,13 +5,13 @@
 // 技能载入、附件读取、布局改动都是它，**内联在发生的位置、不置顶**（用户点名 + 实验室 D1）。
 // 失败留在原行变红 + 一句话原因，**不弹窗不 toast**（Process 板时刻 5）——
 // 错误发生在哪一行就留在哪一行，用户回看时能对上。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { projectToolOutput } from './agentPanelV4ToolOutput'
 import { AgentPanelV4Markdown } from './AgentPanelV4Markdown'
 import { V4Row, V4Shimmer } from './AgentPanelV4Row'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
-import { ActionIcon, IconAlertTriangle, IconChevronRight, ToolStatusIcon } from './AgentPanelV4Icons'
+import { ActionIcon, IconAlertTriangle, IconCheck, IconChevronRight, ToolStatusIcon } from './AgentPanelV4Icons'
 import type { ToolReceipt, V4FlowItem } from './agentPanelV4Types'
 
 // The base :root :focus-visible selector is more specific than a utility class.
@@ -35,8 +35,11 @@ export function V4ToolReceipt({
   undoLabel?: string
   onUndo?: () => void
 }): JSX.Element {
-  const expandable = Boolean(receipt.input || receipt.output)
-  const tone = STATUS_TONE[receipt.status] ?? 'text-nomi-accent'
+  const expandable = Boolean(receipt.output)
+  // 答完的反问不红：协议上它是一次 `output-denied`（lane 只有准 / 不准），但用户没有拒绝
+  // 任何东西——他回答了一个问题。红色在这条面板上只说一件事「这里出问题了」，
+  // 给一次正常的作答打上它，等于每答一个问题就在历史里留一条假警报。
+  const tone = receipt.answered ? 'text-nomi-ink-60' : STATUS_TONE[receipt.status] ?? 'text-nomi-accent'
   const row = (
     <>
       <span className="shrink-0 text-nomi-ink-60">
@@ -45,7 +48,7 @@ export function V4ToolReceipt({
       <span className="shrink-0 font-medium text-nomi-ink-80">{receipt.label}</span>
       {receipt.summary ? <div className="min-w-0 line-clamp-1 text-micro text-nomi-ink-40"><AgentPanelV4Markdown text={receipt.summary} /></div> : null}
       <span className={cn('flex shrink-0 items-center gap-1 text-micro', tone)}>
-        <ToolStatusIcon status={receipt.status} />
+        {receipt.answered ? <IconCheck size={12} aria-hidden="true" /> : <ToolStatusIcon status={receipt.status} />}
         {receipt.trailing ?? statusLabel}
         {receipt.undoable && undoLabel ? (
           // `<details>` 的 summary 里点这个钮会连带把展开体折起来——那是浏览器默认行为，
@@ -78,6 +81,7 @@ export function V4ToolReceipt({
         className="min-h-7 rounded-nomi-sm px-2 text-caption text-nomi-ink-60"
         data-v4-block="tool"
         data-status={receipt.status}
+        {...(receipt.answered ? { 'data-answered': 'true' } : {})}
       >
         {row}
       </V4Row>
@@ -99,7 +103,6 @@ export function V4ToolReceipt({
         {row}
       </V4Row>
       <div className="mt-1 rounded-nomi-sm border border-nomi-line-soft bg-nomi-paper px-2.5 py-2 text-caption text-nomi-ink-60">
-        {receipt.input ? <ReceiptBlock labelKey="agentPanelV4.input" value={receipt.input} /> : null}
         {receipt.output ? <ReceiptBlock labelKey="agentPanelV4.output" value={receipt.output} markdown /> : null}
       </div>
     </details>
@@ -181,13 +184,17 @@ export function V4ToolGroup({
  * 定稿 ⑦「过程反馈按 Claude Code」：过程默认收起，只有**最终回答**摊开。
  * 平铺的时候它和最终回答一样宽、一样黑，用户得逐段读完才知道哪一段是给他的。
  */
-export function V4Process({ label, segments, running, elapsed, children }: {
-  label: string; segments: readonly string[]; running?: boolean; elapsed?: string; children?: React.ReactNode
+export function V4Process({ label, segments, running, elapsed, failed, retryNote, children }: {
+  label: string; segments: readonly string[]; running?: boolean; elapsed?: string; failed?: boolean; retryNote?: string; children?: React.ReactNode
 }): JSX.Element {
   const { t } = useTranslation()
   const bodyRef = React.useRef<HTMLDivElement>(null)
   const [long, setLong] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
+  // 带着未解决失败的那一段**自己展开**：定稿要求「错误留在它那一行」，而收起的过程行会把
+  // 那一行连同它下面的红条一起藏掉。展开之后用户照样能手动收起（它仍是可控的 details）。
+  const [open, setOpen] = React.useState(Boolean(failed))
+  React.useEffect(() => { if (failed) setOpen(true) }, [failed])
   React.useEffect(() => {
     const body = bodyRef.current
     if (!body) return
@@ -201,7 +208,7 @@ export function V4Process({ label, segments, running, elapsed, children }: {
     return () => observer.disconnect()
   }, [children, segments])
   return (
-    <details key={running ? "running" : "settled"} className={cn(
+    <details key={running ? "running" : "settled"} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className={cn(
       'group/process text-nomi-ink-60',
       // Neutral text belongs to the process; status colors, icons and elapsed time do not.
       '[&_:is(.text-nomi-ink,.text-nomi-ink-80,.text-nomi-ink-40):not(svg):not([data-process-elapsed])]:text-nomi-ink-60',
@@ -217,6 +224,9 @@ export function V4Process({ label, segments, running, elapsed, children }: {
       </V4Row>
       <div ref={bodyRef} className={cn("mt-1 flex flex-col gap-1.5 border-l border-nomi-line-soft py-1 pl-2.5 text-caption leading-relaxed", !expanded && "max-h-[12lh] overflow-hidden", long && !expanded && "[mask-image:linear-gradient(black_80%,transparent)]")} data-process-folded={long && !expanded}>
         {children ?? segments.map((segment, index) => <AgentPanelV4Markdown key={index} text={segment} />)}
+        {/* 「它还在自己修」——一句灰字，展开才看得见（2026-09-21 用户拍板②）。
+            摘要那一行已经说了「第 N 次尝试」，这里说的是**为什么**又来一次。 */}
+        {retryNote ? <p className="m-0 text-micro text-nomi-ink-40" data-v4-process-retry-note>{retryNote}</p> : null}
       </div>
       {long ? <button type="button" className="mt-1 text-micro text-nomi-ink-60" onClick={() => setExpanded(value => !value)}>{t(expanded ? 'agentPanelV4.collapse' : 'agentPanelV4.expand')}</button> : null}
     </details>
@@ -227,10 +237,22 @@ export function V4Process({ label, segments, running, elapsed, children }: {
  * 失败行下方的一句话原因 + 一个动作（`.errbar`）。付费任务必须标「未扣费」。
  * 它跟着收据或任务卡走，不是独立积木。
  */
-export function V4ErrorBar({ reason, action, onAction }: { reason: string; action?: string; onAction?: () => void }): JSX.Element {
+export function V4ErrorBar({ reason, action, onAction, feedbackLabel, onFeedback }: {
+  reason: string
+  action?: string
+  onAction?: () => void
+  /**
+   * 「反馈」那一颗（2026-09-15）。**刻意做成第二个可选 prop，而不是把 `action` 改成数组**：
+   * 这一行同时被 #789（停止/复制/重试回执）和 tool-face v2 改着，把 `{kind:'error'}` 的形状
+   * 从 `action?: string` 拓成动作数组会让三条 lane 在同几行上撞车，而收益只是少一个 prop。
+   * 两颗都没接时这一行和以前逐字一样（画出来的钮必须接得上宿主 —— #789 立的那条规矩）。
+   */
+  feedbackLabel?: string
+  onFeedback?: () => void
+}): JSX.Element {
   return (
     <div
-      className="flex items-center gap-2 rounded-nomi-sm bg-nomi-danger-soft px-2.5 py-1.5 text-caption text-nomi-danger"
+      className="flex flex-wrap items-center gap-2 rounded-nomi-sm bg-nomi-danger-soft px-2.5 py-1.5 text-caption text-nomi-danger"
       data-v4-block="errorbar"
     >
       <IconAlertTriangle size={13} aria-hidden="true" />
@@ -238,6 +260,11 @@ export function V4ErrorBar({ reason, action, onAction }: { reason: string; actio
       {action ? (
         <button type="button" className="font-medium text-nomi-ink-80" onClick={onAction}>
           {action}
+        </button>
+      ) : null}
+      {feedbackLabel && onFeedback ? (
+        <button type="button" data-v4-feedback className="font-medium text-nomi-ink-80" onClick={onFeedback}>
+          {feedbackLabel}
         </button>
       ) : null}
     </div>

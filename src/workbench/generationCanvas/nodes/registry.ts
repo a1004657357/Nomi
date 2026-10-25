@@ -14,7 +14,10 @@ export type GenerationNodeRenderProps<TNode = unknown> = {
 }
 
 export type GenerationNodeComponent = ComponentType<GenerationNodeRenderProps<unknown>>
-export type GenerationNodeExecutionKind = 'image' | 'video' | 'text' | 'audio' | 'model3d'
+// 生成种类词表的 owner 在中立层（主进程的 Agent 工具面也要判它）；这里只是再导出，对账测试保证插件表与它一致。
+import type { GenerationNodeExecutionKind } from '../../../../electron/shared/canvas/nodeExecutionKinds'
+
+export type { GenerationNodeExecutionKind }
 export type GenerationNodeIconKey =
   | 'text'
   | 'character'
@@ -25,6 +28,10 @@ export type GenerationNodeIconKey =
   | 'shot'
   | 'output'
   | 'panorama'
+  | 'compare'
+  | 'skill'
+  | 'scene3d'
+  | 'vibingDirector'
   | 'director'
   | 'model3d'
   | 'whiteboard'
@@ -310,6 +317,77 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
     quickAdd: false,
     agentCreatable: true,
   },
+    {
+        kind: "compare",
+        label: "Image Compare",
+        menuLabel: "图像对比",
+        component: loadBaseGenerationNode,
+        icon: "compare",
+        defaultTitle: "图像对比",
+        defaultSize: { width: 520, height: 360 },
+        catalogKind: "image",
+        quickAdd: true,
+        agentCreatable: true,
+    },
+    {
+        // First-class workflow component. It orchestrates connected media and
+        // capability recipes but does not itself call a generation provider.
+        kind: "skill",
+        label: "Skill",
+        menuLabel: "技能",
+        component: loadBaseGenerationNode,
+        icon: "skill",
+        defaultTitle: "技能",
+        defaultSize: { width: 380, height: 360 },
+        catalogKind: "text",
+        quickAdd: false,
+        agentCreatable: false,
+        promptPlaceholder: "从技能库放入一个技能...",
+    },
+    {
+        kind: "scene3d",
+        label: "3D Scene",
+        menuLabel: "3D导演台",
+        component: loadBaseGenerationNode,
+        icon: "scene3d",
+        defaultTitle: "3D导演台",
+        defaultSize: { width: 480, height: 320 },
+        catalogKind: "text",
+        quickAdd: true,
+        agentCreatable: false,
+        providesImageReference: true,
+        promptPlaceholder: "摆位、运镜并输出导演预演...",
+    },
+    {
+        // Blender 回传式导演台。它拥有 meta.vibingDirectorState 和本项目内的 Blender 产物，
+        // 不与旧 scene3d 节点共享 source-of-truth，也不维护独立 Three.js 场景。
+        kind: "vibingDirector",
+        label: "VIBING Director",
+        menuLabel: "VIBING Director",
+        component: loadBaseGenerationNode,
+        icon: "vibingDirector",
+        defaultTitle: "VIBING Director",
+        defaultSize: { width: 500, height: 340 },
+        catalogKind: "text",
+        quickAdd: true,
+        providesImageReference: true,
+        promptPlaceholder: "通过 Director Agent 在 Blender 中搭建场景、摆位、机位和镜头节拍...",
+    },
+    {
+        // 可复用创作资源：保存风格/效果/身份/色板及其来源资产、许可、提示词。
+        // 它不直接发起生成，但可作为参考连接到能力配方派生节点。
+        kind: "resource",
+        label: "Creative Resource",
+        menuLabel: "创作资源",
+        component: loadBaseGenerationNode,
+        icon: "whiteboard",
+        defaultTitle: "创作资源",
+        defaultSize: { width: 300, height: 220 },
+        catalogKind: "image",
+        quickAdd: false,
+        agentCreatable: false,
+        providesImageReference: true,
+    },
 ])
 
 export type GenerationNodePlugin = (typeof GENERATION_NODE_PLUGINS)[number]

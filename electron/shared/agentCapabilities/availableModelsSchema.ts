@@ -4,11 +4,7 @@ import type { AgentModelEntry } from './availableModels'
 
 const text = z.string().max(8192)
 const value = z.union([text, z.number().finite(), z.boolean()])
-// Validate the serializable capability facts at the IPC boundary, never executable authority.
-export const agentModelEntrySchema: z.ZodType<AgentModelEntry> = z.object({
-  modelKey: text.min(1), modelAlias: text.nullable(), vendor: text.nullable(), label: text,
-  kind: z.enum(BILLING_MODEL_KINDS), archetypeId: text.optional(), defaultModeId: text,
-  modes: z.array(z.object({
+const agentModelModeSchema = z.object({
     modeId: text, vendorTerm: text, intent: text, hint: text,
     consumesAnchors: z.array(text).max(64).optional(),
     params: z.array(z.object({
@@ -24,5 +20,13 @@ export const agentModelEntrySchema: z.ZodType<AgentModelEntry> = z.object({
     slots: z.array(z.object({ kind: z.enum(ARCHETYPE_REFERENCE_SLOT_KINDS), label: text,
       max: z.number().finite().optional(), characterIndexed: z.boolean().optional(),
     }).strict()).max(64),
-  }).strict()).max(64),
+  }).strict();
+
+// Validate the serializable capability facts at the IPC boundary, never executable authority.
+export const agentModelEntrySchema: z.ZodType<AgentModelEntry> = z.object({
+  modelId: text.min(1), modelAlias: text.nullable(), vendor: text.nullable(), label: text, displayName: text.optional(),
+  kind: z.enum(BILLING_MODEL_KINDS), archetypeId: text.optional(), defaultModeId: text,
+  modes: z.array(agentModelModeSchema).max(64),
+  variants: z.array(z.object({ id: text.min(1), label: text, modelKey: text.optional(), modes: z.array(agentModelModeSchema).max(64).optional() }).strict()).max(64).optional(),
+  defaultVariantId: text.optional(),
 }).strict()

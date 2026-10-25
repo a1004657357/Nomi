@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { taskReferenceSchema } from './taskReference';
 
 import type { CapabilityContract } from "./capabilityContract";
 import { EXPORT_JOB_STATUSES } from "../contracts/exportTypes";
@@ -16,7 +17,7 @@ const exportTimelinePiInputSchema = z
     quality: z.enum(["small", "standard", "high"]).optional(),
   })
   .strict();
-const exportJobPiInputSchema = z.object({ jobId: exportJobIdSchema }).strict();
+const exportJobPiInputSchema = z.object({ jobId: exportJobIdSchema, domain: z.literal('export').optional() }).strict();
 
 export const exportReadSemanticInputSchema = z.discriminatedUnion("operation", [
   exportJobPiInputSchema.extend({ operation: z.literal("inspect_export_job") }),
@@ -44,6 +45,7 @@ export const exportReadResultSchema = z.discriminatedUnion("operation", [
   z
     .object({
       operation: z.literal("inspect_export_job"),
+      taskRef: taskReferenceSchema.optional(),
       jobId: exportJobIdSchema,
       status: exportStatusSchema,
       progress: z
@@ -93,6 +95,7 @@ export const exportWriteResultSchema = z.union([
     .object({
       operation: z.literal("export_timeline"),
       accepted: z.literal(true),
+      taskRef: taskReferenceSchema.optional(),
       jobId: exportJobIdSchema,
       backend: z.enum(["filtergraph", "webm"]),
       timelineRevision: revisionSchema,
@@ -109,6 +112,7 @@ export const exportWriteResultSchema = z.union([
   z
     .object({
       operation: z.literal("cancel_export_job"),
+      taskRef: taskReferenceSchema.optional(),
       jobId: exportJobIdSchema,
       cancelled: z.boolean(),
       status: exportStatusSchema,
@@ -159,23 +163,14 @@ export function exportWriteInputForAlias(alias: string, value: unknown): ExportW
   return exportWriteSemanticInputSchema.parse({ operation: alias, ...schema.parse(value) });
 }
 
-export function exportReadPiDescriptionForAlias(alias: string): string | undefined {
-  if (alias === EXPORT_READ_ALIASES.inspect) return "Inspect one active-project export job through a path-free receipt. Use the jobId returned by export_timeline; includes current status, progress and whether cancellation is still available.";
-  if (alias === EXPORT_READ_ALIASES.verify) return "Verify one non-empty export receipt without claiming decoded media inspection. This checks the persisted export receipt and output size; it does not inspect frames or confirm visual quality.";
-  return undefined;
-}
 
-export function exportWritePiDescriptionForAlias(alias: string): string | undefined {
-  if (alias === EXPORT_WRITE_ALIASES.start) return "Start an approved export at one exact canonical Timeline revision. Read the current revision first; stale revisions and empty timelines are rejected. Follow the returned jobId for completion.";
-  if (alias === EXPORT_WRITE_ALIASES.cancel) return "Cancel one active-project export job after explicit approval. Use the exact returned jobId; completed or otherwise non-cancellable jobs return their current status without starting new work.";
-  return undefined;
-}
 
 export const EXPORT_READ_CAPABILITY = {
   id: "export.read",
   version: 1,
-  aliases: { pi: EXPORT_READ_ALIASES.inspect, mcp: "nomi_export_job" },
-  additionalAliases: { pi: Object.freeze([EXPORT_READ_ALIASES.verify]) },
+  // 模型面上导出任务经 `check_job`（归 generation.run.read）读；这两个名字是传输层的方法词表。
+  aliases: { mcp: "nomi_export_job", method: EXPORT_READ_ALIASES.inspect },
+  additionalAliases: { method: Object.freeze([EXPORT_READ_ALIASES.verify]) },
   inputSchema: exportReadSemanticInputSchema,
   outputSchema: exportReadResultSchema,
   effect: "read",
@@ -184,17 +179,14 @@ export const EXPORT_READ_CAPABILITY = {
   exposure: "mcp_safe",
   requiredScope: "export:read",
   targetKind: "export",
-  projections: {
-    pi: { description: "Inspect and verify active-project export receipts." },
-    mcp: { description: "Inspect/verify export receipts; Host starts/cancels exports." },
-  },
 } as const satisfies CapabilityContract<ExportReadInput, ExportReadResult>;
 
 export const EXPORT_WRITE_CAPABILITY = {
   id: "export.write",
   version: 1,
-  aliases: { pi: EXPORT_WRITE_ALIASES.start },
-  additionalAliases: { pi: Object.freeze([EXPORT_WRITE_ALIASES.cancel]) },
+  // 模型可见动词是 `export_video` 与 `cancel_job`；export_timeline / cancel_export_job 是传输层的方法词表。
+  aliases: { pi: "export_video", method: EXPORT_WRITE_ALIASES.start },
+  additionalAliases: { pi: Object.freeze(["cancel_job"]), method: Object.freeze([EXPORT_WRITE_ALIASES.cancel]) },
   inputSchema: exportWriteSemanticInputSchema,
   outputSchema: exportWriteResultSchema,
   effect: "destructive",
@@ -203,5 +195,4 @@ export const EXPORT_WRITE_CAPABILITY = {
   exposure: "internal_only",
   requiredScope: "export:write",
   targetKind: "export",
-  projections: { pi: { description: "Start or cancel an approved active-project export job." } },
 } as const satisfies CapabilityContract<ExportWriteInput, ExportWriteResult>;

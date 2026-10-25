@@ -9,7 +9,7 @@ export { certifyTaskOutputUrls } from "./taskResultCertification";
  * `data:image/png;base64,` 会让这段 JPEG 一路顶着 image/png 的假身份走到落盘层，
  * 于是产物被命名成 `.png`。这里解头几个字节按魔数说实话；认不出才回退 image/png。
  */
-function base64ImageDataUrl(b64Json: unknown): string {
+export function base64JsonToDataUrl(b64Json: unknown): string {
   const data = typeof b64Json === "string" ? b64Json.trim() : "";
   if (!data) return "";
   let sniffed: string | null = null;
@@ -37,7 +37,7 @@ export function extractAssetUrl(raw: unknown): string {
     record.model_url,
     record.output,
     (record.data as JsonRecord[] | undefined)?.[0]?.url,
-    base64ImageDataUrl((record.data as JsonRecord[] | undefined)?.[0]?.b64_json),
+    base64JsonToDataUrl((record.data as JsonRecord[] | undefined)?.[0]?.b64_json),
     (record.images as JsonRecord[] | undefined)?.[0]?.url,
     (record.videos as JsonRecord[] | undefined)?.[0]?.url,
     (record.result as JsonRecord | undefined)?.url,
@@ -68,7 +68,7 @@ export function extractChatImageUrl(raw: JsonRecord): string {
   if (Array.isArray(message.images)) {
     for (const img of message.images) {
       if (!isJsonRecord(img)) continue;
-      const u = firstString(img.url, img.image_url, base64ImageDataUrl(img.b64_json));
+      const u = firstString(img.url, img.image_url, base64JsonToDataUrl(img.b64_json));
       if (u) return u;
     }
   }
@@ -81,7 +81,7 @@ export function extractChatImageUrl(raw: JsonRecord): string {
       const u = firstString(
         typeof imageUrl === "string" ? imageUrl : isJsonRecord(imageUrl) ? imageUrl.url : "",
         part.url,
-        base64ImageDataUrl(part.b64_json),
+        base64JsonToDataUrl(part.b64_json),
       );
       if (u) return u;
     }

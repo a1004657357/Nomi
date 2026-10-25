@@ -37,16 +37,24 @@ export function integrationSessionRuntimeDependencies(): ComfyCertificationRunti
   return {
     runTask: async (payload) => (await loadRuntimeModule()).runTask(payload),
     fetchTaskResult: async (payload) => (await loadRuntimeModule()).fetchTaskResult(payload),
-    // 认证这一跳已经过了真人确认关卡（confirmFromTrustedUi）才走到这里，令牌只覆盖
-    // 本次认证那一个合成节点、只允许一次尝试。
+    // 令牌只覆盖本次认证那一个合成节点、只允许一次尝试。ComfyUI 认证会真的跑一次本机
+    // 工作流，所以这一颗额度令牌仍然要铸；HTTP 供应商那条路的自检不发生成请求。
     mintSpendGrant: (nodeIds, maxAttemptsPerNode) =>
       mintSpendGrant({ nodeIds, ...(maxAttemptsPerNode ? { maxAttemptsPerNode } : {}) }),
   };
 }
 
-/** 启动期装配本进程内唯一实例；RPC、stdio、CLI host 与可信 UI IPC 之后拿到的都是这一个。 */
+/**
+ * 启动期装配本进程内唯一实例；RPC、stdio、CLI host 与可信 UI IPC 之后拿到的都是这一个。
+ *
+ * 装完立刻 `resumeInterrupted()`：盘上停在 `certifying`/`committing` 的会话背后没有任何
+ * 在飞的 promise（上一个进程带着走了），必须先补偿一遍已过期的、再把周期看门狗挂上，
+ * 否则它们会一直停在中间态——那正是 2026-09-11 死锁里「重启 app 才见到失败」的成因。
+ */
 export function installIntegrationSessionRuntime(): IntegrationSessionService {
-  return installRuntimeIntegrationSessionService(
+  const service = installRuntimeIntegrationSessionService(
     createRuntimeIntegrationSessionService(integrationSessionRuntimeDependencies()),
   );
+  service.resumeInterrupted();
+  return service;
 }

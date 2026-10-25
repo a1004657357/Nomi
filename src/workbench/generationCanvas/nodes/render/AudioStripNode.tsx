@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 import { notify } from '../../../../ui/notificationPolicy'
 /**
  * AudioStripNode body — 声音分类节点（spec §4.4，2026-06-15 升级）。
@@ -7,7 +8,7 @@ import { notify } from '../../../../ui/notificationPolicy'
  * - 转写文本（result.type='text'）：文本（clamp）+ 复制 + 生成字幕（SRT）
  * - 空：上传按钮（配音模式则由 composer 填台词生成）
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPlayerPlay, IconPlayerPause, IconWaveSine, IconFileText, IconCopy, IconBadgeCc } from '../../../../vendor/tablerIcons'
 import { cn } from '../../../../utils/cn'
@@ -17,6 +18,7 @@ import { readAudioMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { persistNodeImageFile } from '../../adapters/persistNodeImage'
+import { isProjectExecutionContextCurrent, isProjectImportCancellation, withProjectAction } from '../../../project/projectCanvasReadSurface'
 import { UsageDot } from './CardCommon'
 import { NodeEmptyState } from './NodeEmptyState'
 import { getDisplayTitle } from '../../model/titleHeuristics'
@@ -130,17 +132,22 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
       const file = event.currentTarget.files?.[0]
       event.currentTarget.value = ''
       if (!file) return
-      const createdAt = Date.now()
-      // 先落盘再写 store：音频动辄几十 MB，base64 进 store 会被每次写入整段 JSON 深拷贝、
-      // 随每次保存全量序列化（同「九宫格切图卡死」的病根，见 docs/plan/2026-08-20-grid-split-freeze.md）。
-      void persistNodeImageFile(file, node.id).then((localUrl) => {
-        if (!localUrl) {
-          reportFeedback(t('generationCommon.audio.uploadFailed'))
-          return
-        }
-        updateNode(node.id, {
-          result: { id: `upload-audio-${createdAt}`, type: 'audio', url: localUrl, createdAt },
-          meta: { ...(node.meta || {}), audioFilename: file.name, audioMime: file.type },
+      withProjectAction((context) => {
+        const createdAt = Date.now()
+        // 先落盘再写 store：音频动辄几十 MB，base64 进 store 会被每次写入整段 JSON 深拷贝、
+        // 随每次保存全量序列化（同「九宫格切图卡死」的病根，见 docs/plan/2026-08-20-grid-split-freeze.md）。
+        void persistNodeImageFile(file, node.id, context).then((localUrl) => {
+          if (!isProjectExecutionContextCurrent(context)) return
+          if (!localUrl) {
+            reportFeedback(t('generationCommon.audio.uploadFailed'))
+            return
+          }
+          updateNode(node.id, {
+            result: { id: `upload-audio-${createdAt}`, type: 'audio', url: localUrl, createdAt },
+            meta: { ...(node.meta || {}), audioFilename: file.name, audioMime: file.type },
+          })
+        }).catch((error) => {
+          if (isProjectExecutionContextCurrent(context) && !isProjectImportCancellation(error)) reportFeedback(t('generationCommon.audio.uploadFailed'))
         })
       })
     },
@@ -239,7 +246,7 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
     return <label className="block h-full w-full cursor-pointer bg-nomi-paper" title={t('generationCommon.audio.upload')}>
       {feedback ? <p role="status" className="m-0 px-2 py-1 text-caption text-nomi-ink-60">{feedback}</p> : null}
       <NodeEmptyState compact icon={<IconWaveSine size={20} stroke={1.6} />} title={t('generationCommon.nodeEmpty.audio.title')} description={t('generationCommon.nodeEmpty.audio.description')} />
-      <input className="hidden" type="file" accept="audio/*" onChange={handleUpload} />
+      <input className="hidden" type="file" accept={acceptAttrForSurface('audio-reference')} onChange={handleUpload} />
     </label>
   }
 

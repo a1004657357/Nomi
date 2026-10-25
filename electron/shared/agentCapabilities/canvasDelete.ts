@@ -39,16 +39,11 @@ export function canvasDeleteInputForAlias(alias: string, value: unknown): Canvas
   return canvasDeleteSemanticInputSchema.parse({ operation: alias, ...canvasDeletePiInputSchema.parse(value) });
 }
 
-export function canvasDeletePiDescriptionForAlias(alias: string): string | undefined {
-  return alias === CANVAS_DELETE_ALIAS
-    ? "Delete exact unlocked Canvas nodes after fresh explicit approval for each call. Undo is not guaranteed. Read their current node identifiers first; locked nodes and stale selections are rejected."
-    : undefined;
-}
 
 export const CANVAS_DELETE_CAPABILITY = {
   id: "canvas.delete",
   version: 1,
-  aliases: { pi: CANVAS_DELETE_ALIAS, mcp: "nomi_canvas_maintenance" },
+  aliases: { pi: "delete_from_canvas", mcp: "nomi_canvas_maintenance", method: CANVAS_DELETE_ALIAS },
   inputSchema: canvasDeleteSemanticInputSchema,
   outputSchema: canvasDeleteResultSchema,
   effect: "destructive",
@@ -59,8 +54,4 @@ export const CANVAS_DELETE_CAPABILITY = {
   exposure: "mcp_safe",
   requiredScope: "canvas:write",
   targetKind: "canvas",
-  projections: {
-    pi: { description: "Delete exact Canvas nodes after explicit approval." },
-    mcp: { description: "Confirm or undo destructive Canvas maintenance." },
-  },
 } as const satisfies CapabilityContract<CanvasDeleteInput, CanvasDeleteResult>;

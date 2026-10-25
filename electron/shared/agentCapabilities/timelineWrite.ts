@@ -67,7 +67,7 @@ export type TimelineWriteResult = z.infer<typeof timelineWriteResultSchema>;
 
 export function projectTimelineWriteResult(
   source: unknown,
-  expectedOperation: TimelineWriteInput["operation"],
+  expectedOperation: TimelineWriteInput["operation"] | "edit_timeline",
 ): TimelineWriteResult {
   const result = timelineWriteResultSchema.parse(source);
   if (result.operation !== expectedOperation) throw new Error("timeline operation mismatch");
@@ -96,22 +96,13 @@ export function timelineWriteInputForAlias(alias: string, value: unknown): Timel
   return timelineWriteSemanticInputSchema.parse({ operation: alias, ...schema.parse(value) });
 }
 
-export function timelineWritePiDescriptionForAlias(alias: string): string | undefined {
-  switch (alias) {
-    case TIMELINE_WRITE_ALIASES.applyPlan:
-      return "Apply one compare-and-swap guarded timeline edit plan after user approval. Valid operation kinds: move, remove, split, trim, source-window, ripple, transition, text, audio.";
-    case TIMELINE_WRITE_ALIASES.undo:
-      return "Undo the exact most recent Agent timeline edit after user approval. Use its returned undoToken and the current expectedRevision; stale or superseded edits are rejected.";
-    default:
-      return undefined;
-  }
-}
 
 export const TIMELINE_WRITE_CAPABILITY = {
   id: "timeline.write",
   version: 1,
-  aliases: { pi: TIMELINE_WRITE_ALIASES.applyPlan, mcp: "nomi_timeline_edit" },
-  additionalAliases: { pi: Object.freeze([TIMELINE_WRITE_ALIASES.undo]) },
+  // 模型可见动词是 `edit_timeline` 与 `undo`；apply_edit_plan / undo_timeline_edit 是传输层的方法词表。
+  aliases: { pi: "edit_timeline", mcp: "nomi_timeline_edit", method: TIMELINE_WRITE_ALIASES.applyPlan },
+  additionalAliases: { pi: Object.freeze(["undo"]), method: Object.freeze([TIMELINE_WRITE_ALIASES.undo]) },
   inputSchema: timelineWriteSemanticInputSchema,
   outputSchema: timelineWriteResultSchema,
   effect: "reversible_write",
@@ -121,8 +112,4 @@ export const TIMELINE_WRITE_CAPABILITY = {
   exposure: "mcp_safe",
   requiredScope: "timeline:write",
   targetKind: "timeline",
-  projections: {
-    pi: { description: "Apply or undo an approved project timeline edit." },
-    mcp: { description: "Preview/apply/undo revision-guarded timeline edits after Host approval." },
-  },
 } as const satisfies CapabilityContract<TimelineWriteInput, TimelineWriteResult>;

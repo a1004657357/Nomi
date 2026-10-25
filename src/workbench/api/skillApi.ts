@@ -5,7 +5,7 @@ import type { SkillCuration } from '../../../electron/shared/skillCuration'
 import { getDesktopBridge, type DesktopBridge } from '../../desktop/bridge'
 import { getWorkbenchModelCatalogHealth } from './modelCatalogApi'
 
-export type SkillProviderKind = 'text' | 'image' | 'video'
+export type SkillProviderKind = 'text' | 'image' | 'video' | 'model3d'
 
 export type SkillListItemDto = {
   cover?: string
@@ -17,10 +17,14 @@ export type SkillListItemDto = {
   label: string
   description: string | null
   author: string | null
+  tools: string[]
+  inputs: Array<{ name: string; description: string; required?: boolean }>
+  stages: Array<{ id: string; goal: string; tools: string[]; pause: boolean }>
   stageLabels: string[]
   isPlaybook: boolean
   neededProviders: SkillProviderKind[]
   manifestError: string | null
+  canvas: { recipeIds: string[]; defaultRecipeId: string | null } | null
   /** 'user'=可写用户目录（可删/可导出）；'builtin'=安装随附（只读、禁删）。 */
   origin: 'builtin' | 'user'
   packageVersion: string
@@ -48,11 +52,12 @@ function requireDesktopRuntime(feature: string): DesktopBridge {
   return desktop
 }
 
-export function listWorkbenchSkills(): SkillListItemDto[] {
-  return requireDesktopRuntime('skill library').skill.list() as SkillListItemDto[]
+/** 每次调用主进程都重扫技能目录（pi 的加载器，async）：刚导入/删除的技能这一次就是新的。 */
+export async function listWorkbenchSkills(): Promise<SkillListItemDto[]> {
+  return (await requireDesktopRuntime('skill library').skill.list()) as SkillListItemDto[]
 }
 
-export function exportWorkbenchSkill(dirName: string): unknown {
+export function exportWorkbenchSkill(dirName: string): Promise<unknown> {
   return requireDesktopRuntime('skill export').skill.exportPackage(dirName)
 }
 
@@ -65,12 +70,12 @@ export function deleteWorkbenchSkill(dirName: string): SkillDeleteResultDto {
   return requireDesktopRuntime('skill delete').skill.deleteByDir(dirName) as SkillDeleteResultDto
 }
 
-/** 当前已接入且 enabled 的模型模态集合（text/image/video；过滤掉 audio——skill 不声明 audio）。 */
+/** 当前已接入且 enabled 的模型模态集合（过滤掉 audio——skill 不声明 audio）。 */
 export async function getAvailableSkillProviders(): Promise<Set<SkillProviderKind>> {
   const health = await getWorkbenchModelCatalogHealth()
   const set = new Set<SkillProviderKind>()
   for (const k of health.byKind) {
-    if (k.enabledModels > 0 && (k.kind === 'text' || k.kind === 'image' || k.kind === 'video')) {
+    if (k.enabledModels > 0 && (k.kind === 'text' || k.kind === 'image' || k.kind === 'video' || k.kind === 'model3d')) {
       set.add(k.kind)
     }
   }
@@ -90,4 +95,14 @@ export function skillCapabilityFor(
 ): SkillCapability {
   const missing = item.neededProviders.filter((p) => !available.has(p))
   return { needs: item.neededProviders, missing, satisfied: missing.length === 0 }
+}
+
+const PROVIDER_LABEL: Record<SkillProviderKind, string> = {
+  text: '文本',
+  image: '图像',
+  video: '视频',
+  model3d: '3D',
+}
+export function providerLabel(kind: SkillProviderKind): string {
+  return PROVIDER_LABEL[kind] ?? kind
 }

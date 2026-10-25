@@ -6,13 +6,16 @@ import { AgentHarness } from '@earendil-works/pi-agent-core';
 import { BACKGROUND_CONTEXT } from '@earendil-works/pi-agent-core/harness/context';
 import { createModels } from '@earendil-works/pi-ai';
 import { createLaneNativeAssembly } from '../../electron/agentLane/laneNativeAssembly.mjs';
-import { createLaneInstalledSkills } from '../../electron/agentLane/laneInstalledSkills.mjs';
+import { createLaneSkillIndexSource, discoverSkillRecords } from '../../electron/agentLane/laneSkillCatalog.mjs';
 import { createNomiProvider } from '../../electron/agentLane/laneModelProvider.mjs';
 import { openLaneSession } from '../../electron/agentLane/laneSession.mjs';
 import { createLaneTools } from '../../electron/agentLane/laneTools.mjs';
 import { LANE_MODEL_TOOL_CATALOG } from '../../electron/agentLane/laneToolCatalog.js';
 import { bindLaneTool } from '../../electron/agentLane/laneRuntimePort.js';
 import { createLaneFixture } from './laneFixture.mjs';
+import { laneToolMenu } from '../../electron/agentLane/laneToolGroups.mjs';
+import { LANE_NATIVE_TOOL_CATALOG } from '../../electron/agentLane/laneToolCatalog.js';
+import { LANE_CODING_TOOL_NAMES } from '../../electron/agentLane/laneCodingTools.mjs';
 import type { SkillRecord } from '../../electron/skills/skillStore.js';
 
 const sandbox = { active: true, operations: { exec: async () => { throw new Error('bash not used'); } }, close: async () => undefined };
@@ -84,27 +87,26 @@ test('request tools only resolves registered groups and does not grant file writ
     '一次只切一个组：数组形状不再是合法参数');
   const result = await call({ group: 'media' });
   assert.equal(result.addedToolNames, undefined);
-  assert.equal(native.effects.write.mutates, true);
-  assert.equal(native.activeToolNames().length, 20, 'No local activation truth duplicates pi state.');
+  assert.equal(native.effects.write, 'reversible_local');
+  // 常驻菜单 + coding 组 + 这条测试自己登记的 media 夹具组，从同一份目录派生，不写死个数。
+  assert.equal(native.activeToolNames().length, new Set([...laneToolMenu().activeToolNames, ...LANE_CODING_TOOL_NAMES, ...LANE_NATIVE_TOOL_CATALOG.map((spec) => spec.name), 'nomi_media_fixture']).size, 'No local activation truth duplicates pi state.');
   await assert.rejects(createLaneNativeAssembly({ projectDir: fixture.projectDir, sandbox, bashTimeoutMs: 5_000,
     deferredGroups: [{ name: 'escape', toolNames: ['read'] }] }), /Duplicate deferred tool/);
 });
 
-test('trusted SkillRecord conversion keeps the existing parser and reads only package metadata', async (t) => {
+test('the lane index is a projection of the pi-loaded catalog and never duplicates skill content', async (t) => {
   const fixture = await createLaneFixture(t, []);
-  const root = path.join(fixture.projectDir, 'installed', 'demo');
-  await mkdir(path.join(root, 'scripts'), { recursive: true });
-  const body = '---\nname: demo\ndescription: Demonstrate a skill\n---\nFixture body.';
-  const filePath = path.join(root, 'SKILL.md');
-  await writeFile(filePath, body);
-  const record: SkillRecord = { name: 'demo', directoryName: 'demo', filePath, description: 'Demonstrate a skill', body,
-    manifest: null, disableModelInvocation: true, origin: 'user', audience: 'internal', packageVersion: 'nomi-skill-v1', contentHash: 'fixture' };
-  const installed = await createLaneInstalledSkills([record]);
-  assert.equal(installed.skills.length, 1);
-  assert.equal(installed.skills[0]?.requiresCodingTools, true);
-  assert.equal(installed.skills[0]?.disableModelInvocation, true);
-  assert.equal(installed.trustedSkillRoots.length, 1);
-  assert.ok(!('body' in installed.skills[0]!), 'Index never duplicates skill content.');
+  const root = path.join(fixture.projectDir, 'installed');
+  await mkdir(path.join(root, 'demo', 'scripts'), { recursive: true });
+  const body = '---\nname: demo\ndescription: Demonstrate a skill\ndisable-model-invocation: true\n---\nFixture body.';
+  await writeFile(path.join(root, 'demo', 'SKILL.md'), body);
+  const records: readonly SkillRecord[] = (await discoverSkillRecords([{ path: root, origin: 'user' }])).records;
+  const installed = await createLaneSkillIndexSource(() => records).refresh();
+  assert.equal(installed.entries.length, 1);
+  assert.equal(installed.entries[0]?.requiresCodingTools, true);
+  assert.equal(installed.entries[0]?.disableModelInvocation, true);
+  assert.deepEqual(installed.trustedSkillRoots, [path.join(root, 'demo')]);
+  assert.ok(!('body' in installed.entries[0]!) && !('content' in installed.entries[0]!), 'Index never duplicates skill content.');
 });
 
 test('pi seconds are converted once to the Nomi millisecond execution budget', async (t) => {

@@ -103,7 +103,7 @@ Script → Generate → Edit → Preview → Export
 
 ## 行布局：附属信息跟随内容流
 
-一行里的耗时、状态、展开箭头和次级动作紧跟说明文字，用 `gap-1.5` 小间距排列；只有主动作（确认/发送）和危险动作允许贴右边缘。Agent 面板统一复用 `V4Row`，不在消费者另写 `ml-auto` / `justify-between` 或给标签加伸展来推远附属。用户气泡的整体靠右不属于附属行，使用 `self-end` 保持对话布局。`check:tokens` 对 AI 目录行尾类硬零，其余生产路径按文件登记存量只减不增。
+一行里的耗时、状态、展开箭头和次级动作紧跟说明文字，用 `gap-1.5` 小间距排列；只有主动作（确认/发送）和危险动作允许贴右边缘。例外一处（2026-10-01 用户看付费卡样张后拍板）：付费卡翻页那一行的合计「N 张 · 合计 ¥X」（视频「N 段」，单位跟标题同一条规则）贴右端——那一行说的是「这一叠」，左边第几页、右边一共多少，合计是这一行的结论，不是跟在说明后面的附属。Agent 面板统一复用 `V4Row`，不在消费者另写 `ml-auto` / `justify-between` 或给标签加伸展来推远附属。用户气泡的整体靠右不属于附属行，使用 `self-end` 保持对话布局。`check:tokens` 对 AI 目录行尾类硬零，其余生产路径按文件登记存量只减不增。
 
 ## 1.5 控件层级规则（强制 · 画图前必过）
 
@@ -129,6 +129,30 @@ Script → Generate → Edit → Preview → Export
 1. **一功能一个家** —— 同一动作只保留 **1 个规范入口**，其余全删。**快捷键和手势不算入口，算加速器**（可以多，因为不占视觉预算）。
 2. **常驻位有预算** —— 要加第 6 个功能簇，必须先降级一个。
 3. **情境控件不许挤常驻条** —— 选中才出的东西不能塞进常驻 toolbar，否则布局会抖（剪辑页时间轴头部栽过这个）。
+4. **尺寸由内容派生** —— 面板 / 弹层 / 列表的宽高由**里面真正有的东西**决定，不预先占一个固定尺寸；
+   **用户只该看需要看的那块，空白不是留白是冗余**（2026-09-14 用户原话：「大片都是空白，理论上不需要，
+   非常占用视觉空间；他本来不需要看那么多地方。减少空间浪费是我们核心设计原则之一，去除冗余就体现在这些地方」）。
+   落到具体判据上是两条：
+   - **浮层不吃固定宽**：只有一组内容时，宽度 = **最宽那一项的内容宽 + 内边距**，不是预设的面板列宽；
+     左缘与触发它的那个控件对齐。多组内容要对齐各组小标题时才用固定列宽（那是这条规则唯一的豁免）。
+   - **下一行才换行**：一项只有在本行确实放不下时才落到下一行。
+
+   **它管的不是「排成几列」**——摆法（一列 / 一排 / 搜索列表）由内容读起来顺不顺决定，
+   由用户拍板，不由本条推导。2026-09-14 用户两次拍板把这条边界划清楚了：
+   - 第一次退回：7 个 `1024x1024` 排成 7 行全宽按钮、装在 320px 固定宽的浮层里——**右边那截空白是冗余**。
+   - 第二次退回：改成横排按内容换行之后——「**两个一行、三个一行反而更难受**」。摆法回到一列、每项一行，
+     只把浮层宽度收到 ≈128px。同一轮里「清晰度那组拉满整条」也被判为**对的**，不要改。
+
+   所以这条规则只削空白，不动摆法；想动摆法**先画 SVG 图示给用户拍板再写码**（2026-09-14 用户定的流程）。
+   现役落点：`src/workbench/generationCanvas/nodes/InlineParameterBar.tsx` 的 `hugWidth`
+   （用 `Range` 量文字宽，不量被 `1fr` 拉伸的按钮框），门岗在
+   `tests/ux/design-lab-node-composer-bar.walk.mjs`（两条，按实测矩形判）。
+
+   **豁免 · 画布节点生成浮框定宽 560**（2026-09-25 用户拍板）：浮框以前 `w-max` 跟内容撑（360–880），
+   换模型、换语言、参数摘要变长宽度都跟着变，用户原话「长度老是变来变去的，偶尔长偶尔短」。
+   这张卡是「同一个位置反复出现的工作面」，稳定比省那几十像素更重要，所以定宽、钉在节点正下方、
+   被挡就挡（owner：`nodes/composerCanvasPlacement.ts`，宽度常量 `NODE_COMPOSER_WIDTH`）。
+   这条豁免只管这张卡；卡里的参数面板等浮层仍按本条「由内容派生」。
 
 > **决定了「住哪一层」之后，还要决定「它该说话还是该画图标」——那是 §1.8，有门岗。**
 > 尤其是想加**第二颗文字按钮**的时候：先去看 §1.8.2 的反例表，多半它是主按钮的一个状态。
@@ -253,8 +277,8 @@ DaVinci Resolve 确实有「选中跟随播放头」，但它是 **opt-in 且默
 |---|---|---|---|
 | **文件与保存** | `file` | 「**文件落在哪、项目存在哪**」——本机磁盘/路径/自动另存这一类 I/O 设置 | 自动另存开关+目录、新项目默认位置 |
 | **模型** | `models` | 「**接入了什么外部能力**」——BYO-key 供应商、本地运行时、会员通道、以及**数据源 connector**。凡是「填一把 key / 连一个地址 / 装一个本地服务，换来一种可调用能力或一路素材数据」的，家都在这里 | 模型供应商卡（apimart/kie/自定义…）、ComfyUI 实例、即梦会员、Codex 本地、Antigravity、**TikHub 数据源**、网络/代理（高级） |
-| **AI 策略** | `ai` | 「**AI 怎么替我干活 + 花钱护栏**」——默认模型策略、数据上传边界、系统提示词、硬预算。**注意：是「策略/规则」，不是「接入」**——这里一个 key 都不填 | 新建卡片默认模型、数据上传通道与最小化、默认模型策略+硬预算、系统提示词 |
-| **自动化与权限** | `automation` | 「**谁被允许替我做到什么程度**」——制作模式、支出/风险边界、MCP 连接与可信发起方、通知 | 默认制作模式、支出边界、MCP 连接、可信发起方、任务通知 |
+| **AI 策略** | `ai` | 「**AI 怎么替我干活**」——新建卡片默认模型、供应商优先序、模型框整理、数据上传边界。**注意：是「策略/规则」，不是「接入」**——这里一个 key 都不填。**没有**全局供应商/模型白名单（2026-09-14 删：已接入即放行，每次提交在付费卡上选），**没有**硬预算（2026-09-09 删），**系统提示词不住这里**（2026-09-14 搬到 Agent 面板档位弹层） | 新建卡片默认模型、优先供应商、模型框整理、数据上传通道与最小化 |
+| **自动化与权限** | `automation` | 「**谁被允许替我做到什么程度**」——MCP 连接与可信发起方、通知。**没有**制作模式档位（2026-09-14 删：唯一 owner 是 Agent 面板输入框下方「每步问 / 自动改 / 全自动」）、**没有**「支出与风险边界」说明栏（花钱/不可逆的确认是付费卡本身的规矩，不是设置） | MCP 连接、可信发起方、任务通知 |
 | **通用** | `general` | 「**这台机器上的偏好**」——与业务无关的个人偏好项 | 语言、外观、全局截图热键、画布滚轮手势 |
 | **关于** | `about` | 「**这个 app 本身**」——版本、致谢、重播开屏 | 版本信息、重播 splash |
 
@@ -304,6 +328,16 @@ DaVinci Resolve 确实有「选中跟随播放头」，但它是 **opt-in 且默
 > 这一档和 §1.5.1 的 L1–L4 是**两把不同的尺子**：L 层管「住不住常驻位」（频次），三档管「视觉有多重」（后果）。
 > 一个 L1 常驻的工具按钮完全可以是次动作。
 
+**规则 1 的例外 · 整叠的批量动作（2026-10-01 用户拍板，付费卡「生成剩下 N 张 / 段」）。**
+一张卡一页只管一项、又要能一下决定整叠时，整叠的动作是一颗**写明数量的描边次按钮**，住在**动作行最左**：
+整叠的动作在左、这一项的动作在右（「去掉这张」+ 主按钮「生成这张」），最贵的那颗离主按钮最远，不容易误点；
+主按钮仍是这一项的那一下（回车按的是它）。
+- **为什么是文字、而且超过 4 字**：它没有公认图形（规则 2），**数量就是它要说的那件事**——不写张数，用户点之前不知道这一下管几张。所以它是规则 3「≤4 字」的有意例外；`check:controls` 量不到投影出来的标签，这一条靠样张对账守（`docs/design/mockups/contracts/2026-10-01-paid-card-generate-remaining.intent.mjs`）。
+- **只剩 1 项时不画**：那时它和主按钮是同一件事，两颗按钮做一件事只会让人犹豫。
+- **放不下一行时**（英文），它整颗换到上一行、靠左；右边这一项的两颗保持一组、靠右——不截断、不挤压、不把主按钮挤到下一行。
+- **钱只印一处**：报得出价时这一叠的合计印在翻页那一行的右端（翻页行说的就是「这一叠」：第几页 + 一共多少），批量按钮上不再印第二遍。
+- **取代**：2026-09-10 那版卡「批量不是第二颗文字按钮，是主按钮的一个状态」（翻页器旁的「逐镜 | 全部」切换、主按钮改口成「生成 4 镜」）在付费卡上**已被这条取代**——「全部」那一态随 2026-09-30 逐张确认删掉，10-01 改成这颗写明张数的批量按钮。下面 §1.8.2 的正例与反例已按这条改写，不留两条打架的规矩。
+
 **规则 2 · 用 icon 还是文字，看这个动作有没有公认图形。**
 
 | 情形 | 怎么办 |
@@ -330,14 +364,14 @@ DaVinci Resolve 确实有「选中跟随播放头」，但它是 **opt-in 且默
 
 | ✅ 正例 | 为什么对 |
 |---|---|
-| 单镜主按钮 `生成 ¥1.20`；切到批量时**同一颗**变成 `生成 4 镜 ¥4.80` | **批量视图不是第二颗文字按钮，是主按钮的一个状态。**加一颗按钮是把选择推给用户，换一个状态是替他把选择做完 |
+| 付费卡：每一页主按钮 `生成这张`（只管这一页）；整叠的那一下是动作行最左的描边次按钮 `生成剩下 4 张`（2026-10-01，取代 09-10 的「主按钮批量状态」）| 一项的动作和整叠的动作分在一行的两端，各说清自己管几张；主按钮只有一颗，最贵的那颗离它最远（规则 1 的例外）|
 | 时间轴工具条：分割 / 复制 / 删除 / 撤销 / 重做全是 icon，名字在 hover（`TimelinePanel.tsx:349`）| 五个动作都有公认图形（规则 2 左栏），写字只会把工具条撑长 |
 | 弹窗右上角一个 `×` 收掉所有否定路径 | 规则 4：否定动作只有一种画法，用户学一次 |
 
 | ❌ 反例 | 错在哪 | 该怎么做 |
 |---|---|---|
 | **「不要」** | 口语否定词。同一个动作在别处叫「取消」、再别处叫「算了」——三种说法，学三次 | 收敛成 `×`，或统一次按钮 `取消`（规则 4） |
-| **「全部生成」** | 我们自造的概念，硬做成第二颗文字按钮，和主动作抢注意力 | 并进主按钮的**批量状态**：`生成 4 镜 ¥4.80`（规则 1） |
+| **「全部生成」** | 不说是几项，又和主动作并排、一样重，和主动作抢注意力 | 写明数量、做成动作行最左的描边次按钮：`生成剩下 4 张`（规则 1 的例外，2026-10-01 取代 09-10 的「并进主按钮批量状态」） |
 | **「换模型」** | 它不是动作，是**当前模型**这个状态的入口；写成按钮等于让用户先读一遍才知道现在用的是哪个 | 显示模型名本身，点它换（模型名即入口，§1.5.4 已拍板「模型是一等决策，不许埋」） |
 
 ### 1.8.3 门岗覆盖到哪、覆盖不到哪（别把它当万能）
@@ -689,8 +723,13 @@ className="transition-[background,color] duration-nomi-fast ease-nomi-fast"
 | 用户此刻在哪 | 确认长在哪 | 状态 |
 |---|---|---|
 | 正在跟内嵌 agent 对话 | **对话流内的付费富卡**，对话暂停等回答（不弹居中窗——弹窗会打断「对话主驾」心流） | 🚧 待建，随 B5 落；规格见 [nomi-agent-interaction.md](nomi-agent-interaction.md) |
-| 画布上自己点生成（`light`） | `SpendConfirmDialog` 居中弹窗，金币图标 + 「本会话不再提示」 | ✅ 现役 |
+| 用户自己点单个生成（画布 ↑、分镜表「生成镜 N」、重试、重新生成；非首次托管） | **不弹**：按下即开始，照样先报价再凭报价铸令牌（2026-09-25 用户拍板）。**不显示价格**（2026-09-26 用户拍板「先把价格这个维度隐藏掉，等后续官方上线再说」：现在所有模型都走中转、各家价格不一，Nomi 不计算价格；等官方模型供应上线、价格可算时再设计） | ✅ 现役 |
+| 用户一下跑 ≥2 个（×N、多选、批量、先补参考）或首次匿名托管 | `SpendConfirmDialog` 居中弹窗，金币图标 | ✅ 现役 |
 | 人不在 Nomi，外部 MCP 驱动（`source: 'agent'`） | `SpendConfirmDialog` 居中弹窗 —— 这是唯一该「召唤注意力」的场景 | ✅ 现役 |
+
+确认卡**不印金额行**（2026-09-26 用户拍板：价格维度暂时对用户隐藏；本版只去掉 ↑ 旁点数与确认框价格行，其它价格面归下一版「钱边界」）。
+
+「要不要弹」只有一个判据：`spend/spendConfirm.ts` 的 `spendConfirmationRequirement`，只看事实：谁发起（Agent 必问）、一下跑几份（≥2 问）、首次匿名托管告知。**不看金额**，报价只用来铸令牌。各入口只报事实，不各判各的。
 
 `SpendConfirmDialog`（`src/workbench/generationCanvas/spend/SpendConfirmDialog.tsx`，挂一次于工作区根）= **非对话场景**的唯一付费确认 UI：
 - 外部 MCP 驱动额外带：机器人图标（`IconRobot`）+ 副标「经 AI 助手（MCP）驱动」+ 明细行（节点/模型/产物）+ **60s 倒计时**（进度条 + 「N 秒后自动忽略」，到点按未确认返回——外部调用方那头在等，不死等）。
@@ -834,7 +873,7 @@ mark 是 **28×28 viewBox 的圆角方块**：深色底（`oklch(0.22 0.01 80)` 
 
 `notify` 接受 `identity/reason/message` 和明确上下文：`inline` 必填真实 `present` 落点；`status` 由现有对象状态承担；`background` 必填动作；`decision` 复用既有确认宿主。禁止全局入口猜 DOM、给错误补虚假动作、或删通知却没接原地失败状态。冻结的旧标量入口经同一容器去重，不得在本任务擅改其领域触发逻辑。
 
-视觉：沿用唯一 Mantine 容器，右上顶栏下 12px、宽 344px、最多同时 2 条、间距 8px，语义色只作用于图标，整卡不铺色。有动作默认 8 秒；warning 5 秒/error 6 秒，关闭由 Mantine 管。动作右侧按钮，整张不可点击；动作最多占行宽 40%，长标签截断但 title/可访问名称完整。重复次数在正文旁显示 `×N`；同 id 更新内容不承诺重置上游倒计时。
+视觉：沿用唯一 Mantine 容器，右上顶栏下 12px、宽 344px、最多同时 2 条、间距 8px，语义色只作用于图标，整卡不铺色。有动作默认 8 秒；warning 5 秒/error 6 秒，关闭由 Mantine 管。动作按钮默认在正文右侧，整张不可点击；**按钮上的字永远完整**（2026-09-30 定：被截成「切到 Agent R…」的字算 bug）——正文至少保留 12.5rem（`TOAST_MIN_BODY_WIDTH`），短动作（「撤销」「重试」）放得进同一行就留在右侧，放不进（带供应商名 / 模型名的长动作）就整个折到正文下面、靠右，长标签在按钮里折行，不截断，也不靠把正文挤成窄条来换；正文再长在自己的文字区里滚动，按钮那一行的位置预留。提示里点名供应商用显示名（设置里的「来源名称」），不写内部 id。重复次数在正文旁显示 `×N`；同 id 更新内容不承诺重置上游倒计时。
 
 ```typescript
 notify({ identity: `task:${taskId}`, reason: 'download-failed',
@@ -1014,18 +1053,61 @@ showUndoToast({ message, onUndo, isUndoable, watchUndoable })
 > 说不出 → 配文字标签，或换图标。（现状：素材库 toolbar 上 `IconLink`/`IconFilter`/`IconFolderPlus`
 > 三个纯图标按钮无文字，全靠 `title` 悬停解释。）
 >
-> **待清的存量 3 条**（都是同一动作两个入口配了不同图标，改法要先看真实 3D 工具栏再定）：
-> `scene3d.character.exitCameraControl` → IconVideo/IconX ·
-> `scene3d.character.exitControl` → IconManFilled/IconX ·
-> `scene3d.fullscreen.openEditor` → IconCube/IconMaximize
+> **2026-10-25 最小语义修复**：退出操控沿用否定动作的 `IconX`；打开全屏编辑器沿用全屏入口的
+> `IconMaximize`。仅统一同动作异图标，不改入口、文字、事件或布局；真实界面视觉验收仍未完成。
 
 | 语义 | 图标 | 用在哪 |
 |---|---|---|
+| 退出相机操控（`scene3d.character.exitCameraControl`）| `IconX` | `CharacterPossessButton` / `CameraPossessActionBar`，沿用退出动作，不再使用相机身份图标 |
+| 退出角色操控（`scene3d.character.exitControl`）| `IconX` | `CharacterPossessButton` / `CharacterActionBar`，沿用退出动作，不再使用角色身份图标 |
+| 打开全屏编辑器（`scene3d.fullscreen.openEditor`）| `IconMaximize` | `Scene3DEditor` 的缩略图居中入口与右上角全屏入口 |
 | 付费 / 消耗额度（用户直发或 agent 受理）| `IconCoin` | `SpendConfirmDialog`（§3.5）|
 | 外部 AI 助手 / MCP 驱动（agent 身份）| `IconRobot` | `SpendConfirmDialog` 的 `source: 'agent'` 头部（§3.5）|
 | 主角形象确认（锚定妆照检查点·免费质量门）| `IconUser` | `SpendConfirmDialog` 的 `kind: 'anchorCheckpoint'` 头部（§3.5，与 cast 分类同图标）|
 | 正在放量（广告花费档高，仅 TikTok 广告库有此数据）| `IconTrendingUp` | `FindReferencePanel` 参考卡的「放量」角标。**选趋势上升不选火苗**：隐喻要诚实——它表达的是「投放在加码」，不是「热门」|
 | 这一步**还没轮到**（多步进度里尚未开始的那几行）| `IconCircleDashed` | `AssistedIntegrationProgress` 五步进度的 `pending` 行（§Progress）。词典里没有现成的：`IconCircleFilled` 是「有内容/已占位」、`IconCircleCheck` 是已完成、`IconAlertCircle` 是出事了——虚线圈才说得出「位置留着、还没发生」，而实心或空心圆都会被读成一个已存在的状态 |
+| 展开 / 收起提示词（原地变高显示全文）| `IconArrowsDiagonal` / `IconArrowsDiagonalMinimize2` | 生成节点浮框提示词区右上角那一颗（2026-09-25 用户拍板，参考 LibTV）。选对角双箭头而不是 `IconMaximize`：后者在本仓已是「全屏打开编辑器」（`scene3d.fullscreen.openEditor`），这里是原地变高、不离开当前面；收起用同族的收拢形，一眼看出是同一颗钮的两态 |
+| 画布外那一侧有新东西（点了过去）| `IconArrowDown`（与 `IconArrowUp` / `IconArrowLeft` / `IconArrowRight` 同族按方向取）| 画布边缘提示胶囊 `CanvasArrivalHint` 尾部那一颗（2026-09-25 用户拍板，样张 v1）。箭头只指方向、不是按钮本身的动作；不用 `IconChevron*`：那族在本仓是「展开/折叠」示能 |
+| 中英互译提示词（选中段或整段，原地替换）| `IconLanguage` | 生成节点浮框 B 簇 `NodePromptTranslator`，在「优化」左边。词典里没有现成的：`IconWorld` 读成「联网/公开」、`IconAbc`/`IconLetterCase` 读成「大小写/字体」——「文/A」双字形是各家翻译按钮的通用图形，遮住文字也说得出是翻译 |
+| 将选中的输出归档到本地项目 | `IconArchive` | `OutputCollectorNodeBody.archive` / 归档按钮；不同于 `IconDownload` 的单项下载或 `IconFolderOpen` 的打开目录，保留本地归档动作语义 |
+| 3D 模型文件类型 | `IconFile3d` | `OutputCollectorNodeBody` 的 `result.type === 'model3d'` 媒体类型标识；`IconCube` 是场景/几何对象，不替代文件类型 |
+| 将表格行连接到画布 | `IconArrowUpRight` | `ShotTableGrid` 的 `shotTable.connectRow`；相邻 `IconBoxMultiple` 是展开该行产物，两个动作不混用 |
+| 素材许可信息标识 | `IconBadgeCc` | `VibingDirectorAssetLibrary` 的 Kenney Furniture Kit 许可文案旁；许可具体值以现有 `CC0` 文案为准，不用下载或成功图标代替许可信息 |
+| Blender 工程/集成身份 | `IconBrandBlender` | `NodeResultDownloadButton` 的送入 Blender、`Scene3DEditor` 的 Blender 渲染、`VibingDirectorEditor` / `VibingDirectorFullscreen` 的工程入口与预览占位；通用立方体不替代外部工具身份 |
+| 原图/结果滑杆对比 | `IconArrowsDiff` | `PortraitComparisonControl`、`ImageComparisonNodeBody` 的 `wipe` 模式、`renderRegistry` 的 `compare` 节点；不是交换输入或左右翻页 |
+| 图像并排对比 | `IconColumns` | `ImageComparisonNodeBody` 的 `side` 模式；两列是当前对比方式，不用表示全屏的 `IconMaximize` 代替 |
+| 图像叠加对比 | `IconLayersIntersect` | `ImageComparisonNodeBody` 的 `overlay` 模式；表达两幅图重合，区别于并排与滑杆模式 |
+| 3D 平移变换 | `IconArrowsMove` | `Scene3DFullscreenToolbar` / `scene3dToolbar` 的 `translate` 模式；不是旋转 `IconRotate` 或缩放 `IconZoomScan` |
+| 3D 场景节点树 | `IconListTree` | `Scene3DFullscreen` 的 `showSceneNodes` 面板还原按钮；不是通用设置或素材目录 |
+| 角色操控目标 | `IconManFilled` | `CharacterPossessButton` 的进入角色操控、`scene3dMoveHub` / `scene3dPossessPrompt` 的角色操控入口及角色身份；退出操控仍用 `IconX`，不能用目标身份冒充退出动作 |
+| 角色动作任务 | `IconRun` | `Scene3DFullscreenHeader.TASK_ICON.act`；与构图 `IconPhoto`、运镜 `IconVideo` 分别对应三个既有任务，不代替录制或播放 |
+| 录制 take 入口 | `IconPlayerRecord` | `scene3dMoveHub` 的 `take` 页签；圆形 REC 隐喻表示录制工序，区别于 `IconPlayerPlay` 的播放 |
+| 停止进行中的录制/运行 | `IconPlayerStopFilled` | `TakeRecordButton`、`Scene3DEditor` 的停止 Blender 渲染、`VibingDirectorAssistantPanel` 的停止运行、`WebBridgeConnectionCard` 的停止桥接；停止运行不等于关闭面板 `IconX` |
+| 站立姿势 | `IconArrowBarToUp` | `scene3dCharacterActionBar.ACTION_DEFS.standing`；与下蹲同族成对表示站起，不表示上传或镜头上移 |
+| 下蹲姿势 | `IconArrowBarToDown` | `scene3dCharacterActionBar.ACTION_DEFS.squat`；与站立同族成对表示蹲下，不表示下载 |
+| 挥手姿势 | `IconHandStop` | `scene3dCharacterActionBar.ACTION_DEFS.wave`；此处是手势姿势，旁边仍显示既有动作名；停止录制单独使用方形停止图标 |
+| 座椅/坐姿 | `IconArmchair` | `scene3dToolbar.PROP_MENU_ICONS.sofa` 及 `ACTION_DEFS.sit`；具体座具轮廓同时承载坐姿目标，不与通用包裹图标混用 |
+| 色板资源 | `IconPalette` | `CreativeResourceNodeBody.KIND_ICON.palette`；`IconBrush` 已用于 `style`、`IconSparkles` 用于 `effect`，色板不是这两类资源 |
+| 全景场景组件 | `IconPanoramaHorizontal` | `CanvasSkillNodeBody.COMPONENT_ICONS.scene`；与普通图片 `IconPhoto`、多机位 `IconBoxMultiple` 组件类型区分 |
+| 视频关键帧检查/创建 | `IconPhotoScan` | `NodeVideoFrameToolbar` 的关键帧检查器入口及 `VideoKeyframeInspectorDialog` 的创建关键帧节点；不代替下载当前帧 `IconDownload` |
+| 发送 Director Agent 指令 | `IconSend2` | `VibingDirectorAssistantPanel` 的发送控件；只表达发送，不用于生成、播放或运行结束 |
+| 添加场景模板 | `IconMap2` | `scene3dToolbar` 的场景模板子菜单及模板选择行；地图轮廓表示成套场景布局，不用几何立方体代替整套模板 |
+| 球体几何 | `IconSphere` | `SceneAddToolbar.geometryItems.sphere`；与立方体、圆柱、平面四个真实几何类型区分 |
+| 圆柱几何 | `IconCylinder` | `SceneAddToolbar.geometryItems.cylinder`；不以通用立方体合并已有的形状选择 |
+| 平面几何 | `IconSquare` | `SceneAddToolbar.geometryItems.plane`；复用词典已有平面轮廓，替换误用的飞机轮廓，不登记飞行器概念 |
+| 车辆道具 | `IconCar` | `scene3dToolbar.PROP_MENU_ICONS.car`；普通车辆轮廓，与 SUV、公交车三种既有道具独立对应 |
+| SUV 道具 | `IconCarSuv` | `scene3dToolbar.PROP_MENU_ICONS.suv`；用车型轮廓保持与普通车辆的既有区别 |
+| 公交车道具 | `IconBus` | `scene3dToolbar.PROP_MENU_ICONS.bus`；具体车型，不用普通车辆图标冒充公交车 |
+| 自行车道具 | `IconBike` | `scene3dToolbar.PROP_MENU_ICONS.bicycle`；不与滑板/踏板车或摩托车合并 |
+| 电动踏板车道具 | `IconScooter` | `scene3dToolbar.PROP_MENU_ICONS.scooter`；保持已有两轮交通工具类型的区别 |
+| 建筑道具 | `IconBuildingSkyscraper` | `scene3dToolbar.PROP_MENU_ICONS.building`；楼体轮廓区分场景中的建筑与通用几何立方体 |
+| 树木道具 | `IconTrees` | `scene3dToolbar.PROP_MENU_ICONS.tree`；是树木对象，不代表风景图片或整个场景 |
+| 路灯道具 | `IconLamp` | `scene3dToolbar.PROP_MENU_ICONS.streetlamp`；是具体路灯道具，`IconBulb` 已用于添加场景光源，二者不合并 |
+| 墙面道具 | `IconWall` | `scene3dToolbar.PROP_MENU_ICONS.wall`；墙体轮廓区分实体墙与无厚度的平面几何 |
+| 冰箱道具 | `IconFridge` | `scene3dToolbar.PROP_MENU_ICONS.fridge`；具体家居道具，不与通用包裹/柜体合并 |
+| 洗衣机道具 | `IconWashMachine` | `scene3dToolbar.PROP_MENU_ICONS.washingMachine`；保留门圈轮廓以区分冰箱与其他方形家具 |
+| ATM 道具 | `IconCreditCard` | `scene3dToolbar.PROP_MENU_ICONS.atm`；仅作为现有 ATM 道具的识别隐喻，不用于计费或额度确认，后者仍用 `IconCoin` |
+| 背包道具 | `IconBackpack` | `scene3dToolbar.PROP_MENU_ICONS.backpack`；具体背包轮廓，与通用包裹或文件夹不同 |
 
 ### 选图规则
 

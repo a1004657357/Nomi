@@ -45,7 +45,7 @@ export type CertificationSettledResult = {
   ok: boolean;
   taskKind: ProfileKind;
   stage?: Extract<AdapterVerificationResult, { ok: false }>["stage"];
-  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "unknown";
+  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "submission-unknown" | "unknown";
   reasonCode?: string;
 };
 

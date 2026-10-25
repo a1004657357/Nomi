@@ -18,25 +18,25 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gitPaths } from "./lib/gitPaths.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MAX_LINES = 800;
-const SCAN_DIRS = ["src", "electron"];
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const MAX_LINES = 800
+const SCAN_DIRS = ['src', 'electron']
 
 // 现存巨壳的基线行数（棘轮上限）。清空此表 = 巨壳债还清。
 // 改小某个数 = 你成功瘦身后锁定的新上限。新增条目应经人工评审。
 const ALLOWLIST = {
-  "electron/runtime.ts": 519, // …→ 531（2026-08-27 pi 运行切换移除旧 Agent 再导出）→ 530（2026-08-28 onboarding facade cleanup）→ 526（2026-08-30 runtime lifecycle cleanup）→ 519（2026-09-01 actual-cost 接线时把两处终态 trace 收成单行，净瘦身）
+  "electron/runtime.ts": 485, // …→ 531（2026-08-27 pi 运行切换移除旧 Agent 再导出）→ 530（2026-08-28 onboarding facade cleanup）→ 526（2026-08-30 runtime lifecycle cleanup）→ 519（2026-09-01 actual-cost 接线时把两处终态 trace 收成单行，净瘦身）→ 490（2026-09-17 TaskRequest/CachedTask 抽到 electron/taskTypes.ts）→ 486（2026-09-21 合并 ① 按门岗提示拧紧）→ 485（0.23.0 基线恢复；10a8ed2cd 的 483 不适用于 release 基线）
   // Conversational model integration boundary: the session service keeps the
   // state machine, receipt contract, canonical certification and recovery
   // transitions together. It is reviewed as one security boundary and must
   // be split only along a stable ownership seam, not by moving methods into
   // a second writer. (2026-08-29)
-  "electron/integrationCertification/integrationSession.ts": 1652, // 1695→1652（2026-09-10 把 workflow 绑定净化与「谁来编译说明卡」的裁决各抽成独立模块）
+  "electron/integrationCertification/integrationSession.ts": 1394, // 1695→1652（2026-09-10 把 workflow 绑定净化与「谁来编译说明卡」的裁决各抽成独立模块）→ 1338（2026-09-15 棘轮锁定：门岗自己报「已瘦身」要求下调，来自 main 的既有瘦身，不是本 PR 改的）→ 1394（2026-09-21 会话容量合同：读盘那一段整体搬进 integrationSessionRecord，服务层只剩一行委托）
   // Existing SettingsDialog shell now owns the durable integration handoff
   // projection alongside the legacy model settings pages. Keep this reviewed
   // baseline until the planned settings-surface extraction. (2026-08-29)
-  "src/ui/onboarding/OnboardingDrawer.tsx": 806,
-  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 703, // …→ 731（2026-08-25 P4 S6：多镜叠加合一 ProductionShotOverlays）→ 713（2026-08-29 React Flow 单内核：移除旧布局与缩放分支）→ 710（2026-09-07 agent-artifact：正文/浮条插槽移出壳 + composer 排除表收进 resolveRenderKind）
+  "src/ui/onboarding/OnboardingDrawer.tsx": 795, // 795（2026-09-21 合并 ① 按门岗提示拧紧，只减不增）
+  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 557, // …→ 558（2026-10-02 结果托盘不再要 selected 入参）…→ 560（2026-09-25 浮框放置层删除后的注释收短）…→ 713（2026-08-29 React Flow 单内核：移除旧布局与缩放分支）→ 710（2026-09-07 agent-artifact：正文/浮条插槽移出壳 + composer 排除表收进 resolveRenderKind）→ 677（2026-09-12 S3：四个整表选择器收进 canvasNodeGenerationIndex）→ 654（2026-09-21 合并 ① 按门岗提示拧紧）
   // Project Agent Host 迁移巨壳（M1 transplant：electron 切片随 r2 入库、renderer 切片随
   // 本次 cutover 入库；上游 pr223 原型已人工评审同一批 owner，数字按本分支实际行数锁棘轮，
   // 只减不增，下一个分解批次按稳定 ownership seam 拆分后逐个出表）。834→836：并 origin/main 的
@@ -47,7 +47,7 @@ const ALLOWLIST = {
   // 846→828：console.* 收口到 logging/logger 时，把 registerDevDiagnostics（dev-only 窗口诊断挂钩，
   // 整族最后都落在 logDevDetail 上）搬进 electron/logging/devDiagnostics.ts（−26 行），
   // 同 commit 加回「profile 被隔离时日志跟着走」那段带注释的 setPath（+8 行）。
-  "electron/main.ts": 712,
+  "electron/main.ts": 684,
   // Phase 6 常驻壳成为唯一 Agent UI 后的应用外壳（pr223 评审基线曾为 908；并 origin/main 拆解面板宿主后
   // 折叠一行多名 import，曾 907；m1 侧栏收起修复顺手折叠 hydrate/navigate 多行调用参数，实际 903，锁棘轮只减不增）。
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
@@ -60,11 +60,11 @@ const ALLOWLIST = {
   // archetypeMeta.ts + ModeBar.tsx 后缩到 605 < 800 硬上限，已出白名单（Rule 12：逐步清空白名单）。
   // Scene3DFullscreen.tsx 曾 3822 行（最大巨壳）；#10b 拆出 scene3dToolbar/inspector/objects/
   // viewControllers/sceneView/sceneContent/cameraPreview 七个子模块后壳缩到 771 < 800，已出白名单。
-};
+}
 
-function listFiles() {
-  // 用 git 列出受跟踪文件，天然排除 node_modules / dist / 未跟踪草稿。
-  return gitPaths(["ls-files", ...SCAN_DIRS], { cwd: ROOT })
+export function listSourceFiles({ root = ROOT, scanDirs = SCAN_DIRS } = {}) {
+  // Include new source modules too; NUL-delimited paths preserve Unicode and whitespace.
+  return [...new Set(gitPaths(["ls-files", "--cached", "--others", "--exclude-standard", "--", ...scanDirs], { cwd: root }))]
     .filter((f) => /\.(?:tsx?|[mc]ts)$/.test(f))
     .filter((f) => !/\.test\.(?:tsx?|[mc]ts)$/.test(f))
     .filter((f) => !/\.d\.(?:ts|[mc]ts)$/.test(f))
@@ -73,37 +73,54 @@ function listFiles() {
     .filter((f) => !/^src\/i18n\/(locales\/.*|resources)\.ts$/.test(f))
     // git ls-files 会连「工作树里已删除、尚未 commit」的文件一起列出——门岗量的是
     // 工作树现状，消失的文件没有体积可查，跳过（commit 后 CI checkout 恒存在，不削弱棘轮）。
-    .filter((f) => fs.existsSync(path.join(ROOT, f)));
+    .filter((f) => fs.existsSync(path.join(root, f)))
+    .sort();
 }
 
 function countLines(absPath) {
   // 与 `wc -l` 一致：统计换行符数量。
-  const content = fs.readFileSync(absPath, "utf8");
-  return (content.match(/\n/g) || []).length;
+  const content = fs.readFileSync(absPath, 'utf8')
+  return (content.match(/\n/g) || []).length
 }
 
-const errors = [];
-const warnings = [];
-
-for (const rel of listFiles()) {
-  const lines = countLines(path.join(ROOT, rel));
-  const baseline = ALLOWLIST[rel];
-  if (baseline !== undefined) {
-    if (lines > baseline) {
-      errors.push(`✗ ${rel}: ${lines} 行 > 基线 ${baseline}（已知巨壳又长大了 —— 拆分或精简，别再喂）`);
-    } else if (lines < baseline) {
-      warnings.push(`↓ ${rel}: ${lines} 行 < 基线 ${baseline}（已瘦身，请把 check-file-sizes.mjs 里的基线下调到 ${lines} 以锁定）`);
+export function auditFileSizes({ root = ROOT, scanDirs = SCAN_DIRS } = {}) {
+  const errors = []
+  const warnings = []
+  const files = listSourceFiles({ root, scanDirs })
+  for (const rel of files) {
+    const lines = countLines(path.join(root, rel))
+    const baseline = ALLOWLIST[rel]
+    if (baseline !== undefined) {
+      if (lines > baseline) {
+        errors.push(`✗ ${rel}: ${lines} 行 > 基线 ${baseline}（已知巨壳又长大了 —— 拆分或精简，别再喂）`)
+      } else if (lines < baseline) {
+        warnings.push(
+          `↓ ${rel}: ${lines} 行 < 基线 ${baseline}（已瘦身，请把 check-file-sizes.mjs 里的基线下调到 ${lines} 以锁定）`,
+        )
+      }
+    } else if (lines > MAX_LINES) {
+      errors.push(`✗ ${rel}: ${lines} 行 > 上限 ${MAX_LINES}（新巨型文件 —— 请拆分；确需保留须人工评审后入 ALLOWLIST）`)
     }
-  } else if (lines > MAX_LINES) {
-    errors.push(`✗ ${rel}: ${lines} 行 > 上限 ${MAX_LINES}（新巨型文件 —— 请拆分；确需保留须人工评审后入 ALLOWLIST）`);
   }
+  return { errors, warnings, files }
 }
 
-for (const w of warnings) console.warn(w);
+function runCli() {
+  const { errors, warnings, files } = auditFileSizes()
+  for (const warning of warnings) console.warn(warning)
 
-if (errors.length > 0) {
-  console.error("\n文件体积门岗未通过（规则 12）：\n" + errors.join("\n") + "\n");
-  process.exit(1);
+  if (errors.length > 0) {
+    console.error('\n文件体积门岗未通过（规则 12）：\n' + errors.join('\n') + '\n')
+    process.exitCode = 1
+    return
+  }
+
+  console.log(
+    `✓ 文件体积门岗通过：扫描 ${files.length} 个源码文件，上限 ${MAX_LINES} 行，` +
+      `巨壳白名单 ${Object.keys(ALLOWLIST).length} 个（棘轮只减不增）。`,
+  )
 }
 
-console.log(`✓ 文件体积门岗通过：上限 ${MAX_LINES} 行，巨壳白名单 ${Object.keys(ALLOWLIST).length} 个（棘轮只减不增）。`);
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runCli()
+}

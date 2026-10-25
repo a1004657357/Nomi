@@ -35,7 +35,18 @@ describe("system test profiles", () => {
   });
 
   test("release contains local, real-generation, and repository gates", () => {
-    expect(expandProfile("release").map((stage) => stage.id)).toEqual(expect.arrayContaining(["gates", "e2e", "canvas-full", "journeys-all", "real-generation"]));
+    expect(expandProfile("release").map((stage) => stage.id)).toEqual(expect.arrayContaining([
+      "gates",
+      "third-party-release",
+      "e2e",
+      "canvas-full",
+      "journeys-all",
+      "real-generation",
+    ]));
+    expect(expandProfile("release").find((stage) => stage.id === "third-party-release")).toMatchObject({
+      command: "pnpm",
+      args: ["run", "check:third-party:release"],
+    });
     expect(expandProfile("release").find((stage) => stage.id === "real-generation")).toMatchObject({
       args: ["tests/ux/camera-move-render-e2e.mjs"],
       env: { NOMI_SPEND_OK: "1" },

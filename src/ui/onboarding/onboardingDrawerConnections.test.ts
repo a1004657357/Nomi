@@ -11,7 +11,7 @@ function project(enabled: boolean, ids = ['auto']) {
   const openPage = vi.fn()
   return { openPage, ...projectOnboardingConnections({
     models: ids.map((modelKey) => ({ ...model, modelKey })), vendorMeta, dreaminaStatus: null, openPage,
-    localNames: { dreamina: 'Dreamina', codex: 'Codex', antigravity: 'Antigravity CLI' },
+    localNames: { dreamina: 'Dreamina', codex: 'Codex', antigravity: 'Antigravity CLI', jimengWeb: 'Jimeng Web', pavoWeb: 'Pavo Web' },
   }) }
 }
 
@@ -32,13 +32,30 @@ describe('model settings connection projection', () => {
     expect(entry.auxiliaryCounts).toEqual({ tools: 1, routes: 1 })
     expect(entry.skipHealthProbe).toBe(true)
   })
+
+  it('projects web automation bridges as account connections instead of custom API providers', () => {
+    const vendorMeta = new Map<string, OnboardingVendorMeta>([['pavo-web', {
+      name: 'Pavo Web', hasApiKey: false, baseUrl: 'http://127.0.0.1:3458', enabled: true, authType: 'none', customCallOnly: false,
+    }]])
+    const result = projectOnboardingConnections({
+      models: [{ vendorKey: 'pavo-web', modelKey: 'pavo-video', labelZh: 'Pavo Video', kind: 'video', enabled: true }],
+      vendorMeta,
+      dreaminaStatus: null,
+      openPage: vi.fn(),
+      localNames: { dreamina: 'Dreamina', codex: 'Codex', antigravity: 'Antigravity CLI', jimengWeb: 'Jimeng Web', pavoWeb: 'Pavo Web' },
+    })
+    expect(result.otherVendorGroups).toEqual([])
+    expect(result.homeConnections).toEqual([
+      expect.objectContaining({ vendorKey: 'pavo-web', kind: 'account', name: 'Pavo Web' }),
+    ])
+  })
 })
 
 
 it('keeps a saved offline credential visible as pending in the available platform row', () => {
   const result = projectOnboardingConnections({
     models: [], dreaminaStatus: null, openPage: vi.fn(),
-    localNames: { dreamina: 'Dreamina', codex: 'Codex', antigravity: 'Antigravity' },
+    localNames: { dreamina: 'Dreamina', codex: 'Codex', antigravity: 'Antigravity', jimengWeb: 'Jimeng Web', pavoWeb: 'Pavo Web' },
     vendorMeta: new Map([['apimart', { name: 'APIMart', hasApiKey: true, enabled: false,
       credentialVerificationPending: true, baseUrl: 'http://127.0.0.1:1', authType: 'bearer', customCallOnly: false }]]),
   })

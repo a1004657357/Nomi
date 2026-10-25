@@ -39,14 +39,6 @@ test('cross-process exact copies stay debt until a neutral runtime contract exis
   const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
   const crossProcessGroups = [
     [
-      'electron/capabilityCore/mcpConfig.ts::type:McpConfigState/type-union',
-      'src/desktop/mcpBridgeTypes.ts::type:McpConfigState/type-union',
-    ],
-    [
-      'electron/capabilityCore/mcpVerify.ts::type:McpVerifyReason/type-union',
-      'src/desktop/mcpBridgeTypes.ts::type:McpVerifyReason/type-union',
-    ],
-    [
       'electron/ai/onboarding/vendorHealth.ts::type:VendorHealthState/type-union',
       'electron/preload.ts::property:onboarding/property:vendorHealth/property:state/type-union',
       'src/desktop/onboardingBridgeTypes.ts::type:VendorHealthState/type-union',
@@ -82,10 +74,6 @@ test('cross-process exact copies stay debt until a neutral runtime contract exis
     ],
     [
       'electron/catalog/codexCli.ts::type:CodexImageJobStatus/type-union',
-      'electron/runtime.ts::type:TaskResult/property:status/type-union',
-      'electron/tasks/responseParsing.ts::function:resolveTaskStatus/as-const',
-      'electron/tasks/responseParsing.ts::type:TaskStatus/type-union',
-      'src/workbench/api/taskApi.ts::type:TaskStatus/type-union',
     ],
   ]
 
@@ -99,11 +87,44 @@ test('cross-process exact copies stay debt until a neutral runtime contract exis
       assert.match(reason, /main.*preload.*renderer/i, site)
     }
   }
+  // 任务状态：renderer 的 TaskStatus / TERMINAL_STATUSES 副本已收进中立模块 electron/shared/taskStatus.ts（唯一 owner）。
+  for (const retired of [
+    'electron/runtime.ts::type:TaskResult/property:status/type-union',
+    'electron/tasks/responseParsing.ts::function:resolveTaskStatus/as-const',
+    'electron/shared/taskStatus.ts::type:TaskStatus/type-union',
+    'electron/shared/taskStatus.ts::function:isTerminalTaskStatus/type-union',
+  ]) {
+    assert.equal(debtBySite.has(retired), false, `${retired} must remain derived, not new debt`)
+    assert.equal(registeredSites.has(retired), false, `${retired} must not be re-registered as a duplicate owner`)
+  }
+  const taskSource = fs.readFileSync(path.join(repositoryRoot, 'electron/shared/taskStatus.ts'), 'utf8')
+  assert.match(taskSource, /export type TaskStatus = GenerationProviderTaskState/)
+  assert.match(taskSource, /\[Status in TaskStatus\].*TASK_STATUS_PHASE\)\[Status\]/)
+  assert.match(fs.readFileSync(path.join(repositoryRoot, 'electron/tasks/responseParsing.ts'), 'utf8'), /for \(const status of KNOWN_TASK_STATUSES\)/)
+  assert.equal(registeredSites.has('electron/capabilityCore/generationRuntimeAdapter.ts::type:GenerationProviderTaskState/type-union'), true)
+  assert.equal(registeredSites.has('electron/shared/taskStatus.ts::variable:TASK_STATUS_PHASE/type-union'), true)
   assert.equal(
     registeredSites.has('electron/shared/providerAdapterContract.ts::variable:ADAPTER_RUN_STAGES/as-const'),
     true,
     'Provider Adapter run stages have converged on the neutral shared contract',
   )
+  // 2026-09-14：MCP 接入状态 / 握手诊断两组跨进程副本已按各自 debt 写的收敛办法做掉——
+  // 中立模块 electron/shared/mcpConnectionContract.ts 是唯一 owner，main / renderer 都从它 derive。
+  for (const site of [
+    'electron/shared/mcpConnectionContract.ts::variable:MCP_CONFIG_STATES/as-const',
+    'electron/shared/mcpConnectionContract.ts::variable:MCP_VERIFY_REASONS/as-const',
+  ]) {
+    assert.equal(registeredSites.has(site), true, `${site} has converged on the neutral shared contract`)
+    assert.equal(debtBySite.has(site), false, site)
+  }
+  for (const retired of [
+    'electron/capabilityCore/mcpConfig.ts::type:McpConfigState/type-union',
+    'src/desktop/mcpBridgeTypes.ts::type:McpConfigState/type-union',
+    'electron/capabilityCore/mcpVerify.ts::type:McpVerifyReason/type-union',
+    'src/desktop/mcpBridgeTypes.ts::type:McpVerifyReason/type-union',
+  ]) {
+    assert.equal(debtBySite.has(retired), false, `${retired} must stay retired, not re-listed as debt`)
+  }
 })
 
 test('repository exact-set owners are upstream and every local projection stays in debt', () => {
@@ -193,10 +214,17 @@ test('repository helper subsets and incomplete projections remain debt', () => {
   const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
   const registeredSites = new Set(baseline.registered.map((entry) => entry.site))
   const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
-  const adapterSubsets = [
+  // 2026-09-12：这三条债已经**收敛掉**（不是搬家）——finishTerminal / finishWithError /
+  // finishRunWithFailure 三个同义终态入口合成了唯一的 finishTerminal，参数类型直接用
+  // ProviderAdapterRun["stage"]，不再各写一份子集。所以它们必须**同时**不在 registered、
+  // 也不在 debt 里；再冒出来就是有人又开了第二个终态入口。
+  const convergedAdapterSubsets = [
     'electron/providerAdapter/service.ts::class:ProviderAdapterService/method:finishTerminal/parameter:stage/type-union',
     'electron/providerAdapter/service.ts::class:ProviderAdapterService/method:finishWithError/parameter:stage/type-union',
+    'electron/providerAdapter/service.ts::class:ProviderAdapterService/method:finishRunWithFailure/parameter:stage/type-union',
   ]
+  // 2026-09-25：这三份手抄的 job 状态子集也**收敛掉**了——换成 productionShotPhase.productionJobPhase
+  // 这一个穷尽 mapper（新增 ProductionJobStatus 不给归属 = 编译不过）。它们必须同时不在 registered、也不在 debt 里。
   const shotSubsets = [
     'src/workbench/production/shotPlaceholderState.ts::variable:DONE_STATUSES/set',
     'src/workbench/production/shotPlaceholderState.ts::variable:FAILED_STATUSES/set',
@@ -205,15 +233,15 @@ test('repository helper subsets and incomplete projections remain debt', () => {
   const vendorProjection = 'src/ui/onboarding/useVendorHealth.ts::type:VendorConnection/property:state/type-union'
   const incompleteAssetOutcome =
     'src/workbench/generationCanvas/nodes/nodeAssetWrite.ts::type:AddAssetOutcome/property:status/type-union'
-  const shotPhase = 'src/workbench/production/shotPlaceholderState.ts::type:ShotPlaceholderPhase/type-union'
+  const shotPhase = 'electron/shared/productionShotPhase.ts::type:ProductionShotPhase/type-union'
 
-  for (const site of adapterSubsets) {
+  for (const site of convergedAdapterSubsets) {
     assert.equal(registeredSites.has(site), false, site)
-    assert.match(debtBySite.get(site)?.reason ?? '', /AdapterRunStage.*Extract/i, site)
+    assert.equal(debtBySite.has(site), false, site)
   }
   for (const site of shotSubsets) {
     assert.equal(registeredSites.has(site), false, site)
-    assert.match(debtBySite.get(site)?.reason ?? '', /ProductionJobStatus.*穷尽 mapper.*ShotPlaceholderPhase/i, site)
+    assert.equal(debtBySite.has(site), false, site)
   }
   assert.equal(registeredSites.has(shotPhase), true)
   assert.equal(debtBySite.has(shotPhase), false)
@@ -260,7 +288,7 @@ test('repository-specific runtime and view-model vocabularies are not mislabeled
       'src/workbench/taskCenter/taskCenterEntries.ts::function:resolveTaskButtonTone/type-union',
       /TaskCenter.*visual.*view model/i,
     ],
-    ['src/workbench/taskCenter/taskCenterProjection.ts::type:TaskCenterGroup/type-union', /TaskCenter.*view model/i],
+    ['src/workbench/taskCenter/taskCenterProjection.ts::variable:TASK_CENTER_GROUPS/as-const', /TaskCenter.*view model/i],
     ['src/workbench/taskCenter/taskCenterProjection.ts::type:TaskCenterOutcome/type-union', /TaskCenter.*view model/i],
   ])
 

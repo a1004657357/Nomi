@@ -1,13 +1,13 @@
 ---
 name: creation-edit
-description: "Direct creation-area document editing: read current content, append or replace text, and maintain the shot-list format."
+description: 'Direct creation-area document editing: read current content, append or replace text, and maintain the shot-list format.'
 metadata:
   nomi:
     selectable-in-workbench: true
     version: 1.0.0
     tools:
-      - creation_read
-      - creation_write
+      - read_script
+      - write_script
     required-providers:
       - text
     library:
@@ -19,7 +19,7 @@ metadata:
         zh-CN: 读取当前文稿，追加或改写内容，并保留分镜列表格式。
         en: Read, append and revise the current creation document.
       appliesTo:
-      - text
+        - text
       group:
         zh-CN: 创作流程
         en: Workflow
@@ -30,7 +30,7 @@ metadata:
         author: Nomi contributors
         changes: Nomi adds library presentation metadata; the skill body is unchanged.
         evidence:
-        - https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/creation-edit/SKILL.md
+          - https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/creation-edit/SKILL.md
       preview:
         path: assets/cover.png
         type: image
@@ -44,18 +44,18 @@ license: AGPL-3.0-only
 对创作区文档进行读取、追加或替换操作。
 
 ## 工具
-`creation_read`, `creation_write`
+`read_script`, `write_script`
 
 ## 流程
 
-1. **读取文档**：先调用 `creation_read` 获取当前全文内容与光标位置。
+1. **读取文档**：先调用 `read_script` 获取当前全文内容与光标位置。
 
 2. **判断写入方式**：
    - 用户要求续写/补充 → 追加到文档末尾（`append`）。
    - 用户要求改写/替换选中内容 → 替换指定范围（`replace`）。
    - 用户要求全量重写 → 替换全文（`replace_all`）。
 
-3. **调用写入**：调用 `creation_write`，传入操作类型与内容，不要在 `content` 中混入操作说明。
+3. **调用写入**：调用 `write_script`，传入操作类型与内容，不要在 `content` 中混入操作说明。
 
 4. **分镜描述格式**（当内容为分镜时）：
    ```

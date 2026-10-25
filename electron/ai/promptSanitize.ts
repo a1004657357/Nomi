@@ -14,8 +14,8 @@
  */
 
 // Use unicode escapes so the source is unambiguous across editors / linters.
-const ZERO_WIDTH = /[​‌‍‎‏‪-‮⁠﻿]/g;
-const SPECIAL_SPACE = /[  - 　]/g;
+const ZERO_WIDTH = /[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2060\ufeff]/g;
+const SPECIAL_SPACE = /[\u00a0\u2002-\u200a\u3000]/g;
 const EM_DASH_LIKE = /[—―]/g;          // — ―
 const EN_DASH = /–/g;                       // –
 const UNICODE_MINUS = /−/g;                 // −

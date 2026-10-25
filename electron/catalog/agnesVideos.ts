@@ -2,7 +2,7 @@
 // V2.0 keeps its existing model/archetype/mapping IDs. 2.5 is a different wire protocol.
 import type { HttpOperation, ProfileKind } from "./types";
 import type { ParamMap } from "./paramTranslate";
-import { AGNES_VIDEO_QUERY_OP, AGNES_VIDEO_25_QUERY_OP } from "./agnesVendor";
+import { AGNES_VIDEO_QUERY_OP, agnesVideoQueryOp } from "./agnesVendor";
 import "./agnesVideoContract";
 
 const HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type": "application/json" };
@@ -57,11 +57,13 @@ export type AgnesVideoModel = {
 };
 
 function video25(modelKey: string, labelZh: string): AgnesVideoModel {
+  // Keep the customized Flash mapping IDs stable for persisted tasks.
+  const seedKey = modelKey === "agnes-video-2.5-flash" ? "agnes-video-2-5-flash" : modelKey;
   return {
-    modelKey, labelZh, archetypeId: modelKey, query: AGNES_VIDEO_25_QUERY_OP,
+    modelKey, labelZh, archetypeId: modelKey, query: agnesVideoQueryOp(modelKey),
     mappings: [
-      { id: `seed-${modelKey}-text_to_video`, taskKind: "text_to_video", name: `${labelZh} · 文生视频`, create: video25CreateOp(false, modelKey.endsWith("-flash")) },
-      { id: `seed-${modelKey}-image_to_video`, taskKind: "image_to_video", name: `${labelZh} · 参考生视频`, create: video25CreateOp(true, modelKey.endsWith("-flash")) },
+      { id: `seed-${seedKey}-text_to_video`, taskKind: "text_to_video", name: `${labelZh} · 文生视频`, create: video25CreateOp(false, modelKey.endsWith("-flash")) },
+      { id: `seed-${seedKey}-image_to_video`, taskKind: "image_to_video", name: `${labelZh} · 参考生视频`, create: video25CreateOp(true, modelKey.endsWith("-flash")) },
     ],
   };
 }

@@ -11,7 +11,7 @@
  *
  * 一屏一个主动作：主动作是「复制指引」。分段控件是它的参数、折叠行是证据、末行是出口。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconCheck, IconChevronDown, IconCopy, IconExternalLink, IconInfoCircle, IconRobot,
@@ -27,10 +27,10 @@ import {
   ASSISTED_ONBOARDING_SKILL_MARKDOWN,
   ASSISTED_ONBOARDING_SKILL_PATH,
   OTHER_ONE_CLICK_CLIENTS,
-  assistedOnboardingMcpSnippet,
   buildAssistedOnboardingClipboard,
   type AssistedOnboardingHost,
 } from './aiAssistedOnboardingContent'
+import { genericMcpSnippet } from './mcpGenericSnippet'
 import { AssistedIntegrationProgress } from './AssistedIntegrationProgress'
 import type { AssistedProgressView } from './assistedProgressProjection'
 
@@ -42,7 +42,6 @@ export type AiAssistedOnboardingCardProps = {
   /** 「去连接」→ 打开自动化与权限的 AI 助手连接页（唯一的一键接入之家）。 */
   onOpenAssistantConnections: () => void
   /** 「或：手动接入 →」→ 滚到本页已有的「自定义 API / 中转站」那一行并高亮，不另开向导。 */
-  onManualConnect: () => void
   /** 首次出现时给一次 accent 描边（看过即消，不做常驻高亮）。 */
   firstSeen?: boolean
 }
@@ -51,7 +50,6 @@ export function AiAssistedOnboardingCard({
   info,
   progress,
   onOpenAssistantConnections,
-  onManualConnect,
   firstSeen = false,
 }: AiAssistedOnboardingCardProps): JSX.Element {
   const { t } = useTranslation()
@@ -62,7 +60,7 @@ export function AiAssistedOnboardingCard({
 
   const clientKey = host === 'other' ? null : ASSISTED_ONBOARDING_CLIENT_KEYS[host]
   const hostLabel = clientKey ? ASSISTANT_CLIENT_LABEL[clientKey] : t('onboardingProviders.assistedOnboarding.otherHost')
-  const mcpSnippet = host === 'other' && info ? assistedOnboardingMcpSnippet(info.server) : null
+  const mcpSnippet = host === 'other' && info ? genericMcpSnippet(info.server) : null
   const prompt = t('onboardingProviders.assistedOnboarding.promptBody')
   const headings = {
     prompt: t('onboardingProviders.assistedOnboarding.sections.prompt'),
@@ -281,15 +279,6 @@ export function AiAssistedOnboardingCard({
               })}
             </button>
           ) : null}
-
-          <button
-            type="button"
-            data-assisted-onboarding-manual
-            onClick={onManualConnect}
-            className="self-start text-micro text-nomi-ink-40 hover:text-nomi-accent"
-          >
-            {t('onboardingProviders.assistedOnboarding.manual')}
-          </button>
         </>
       )}
     </section>

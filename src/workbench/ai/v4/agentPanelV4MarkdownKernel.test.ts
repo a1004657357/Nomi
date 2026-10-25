@@ -7,10 +7,13 @@ import { V4AssistantMessage, V4UserBubble } from './AgentPanelV4Message';
 import { V4ErrorBar, V4Process, V4ToolReceipt } from './AgentPanelV4Receipt';
 import { V4Intervention, V4TaskCard } from './AgentPanelV4Cards';
 import { projectV4Intervention } from './agentPanelV4Intervention';
+
+// 介入槽的写口在生产里是必填（R28）。测试里显式给一份空壳，表示「这一格不验行为」。
+const NO_HANDLERS = { onPlanToggle: () => undefined, onCollapsePlan: () => undefined }
 const html = renderToStaticMarkup;
 const text = '这是**「重点」**的句子\n\n| 参数 | 值 |\n| --- | --- |\n| 时长 | 8 |\n\n- 项目';
-const labels = { copy: 'copy', retry: 'retry', continue: 'continue' };
-const slotLabels = { confirm: 'yes', reject: 'no', escalate: 'always', cancel: 'cancel', confirmReject: 'no', collapsePlan: 'collapse' };
+const labels = { copy: 'copy', retry: 'retry', continue: 'continue', stopped: 'stopped' };
+const slotLabels = { confirm: 'yes', reject: 'no', escalate: 'always', cancel: 'cancel', confirmReject: 'no', collapsePlan: 'collapse', expandPlan: 'expand' , ask: { dismiss: '', skip: '', continueLabel: '', send: '', customPlaceholder: '', recommended: '' } };
 const md = (source: string) => html(React.createElement(NomiMarkdown, { compact: true, profile: "agent-v4", children: source }));
 describe('B2e 审计 D1–D13：单一 Markdown 内核', () => {
     it('D1 代码复制消费内核 source，禁止从 ReactNode String 反提取', () => {
@@ -26,17 +29,17 @@ describe('B2e 审计 D1–D13：单一 Markdown 内核', () => {
             expect(output).toContain('<ul');
         }
     });
-    it('D3 工具摘要及正文都是富文本，input JSON 仍可读', () => {
-        const output = html(React.createElement(V4ToolReceipt, { receipt: { label: 'read', action: 'document', status: 'output-available', summary: '**摘要**', output: text, input: '{"limit":2}' }, statusLabel: "done" }));
+    it('D3 工具摘要及正文都是富文本，且展开体没有原始入参', () => {
+        const output = html(React.createElement(V4ToolReceipt, { receipt: { label: 'read', action: 'document', status: 'output-available', summary: '**摘要**', output: text, }, statusLabel: "done" }));
         expect(output).toContain('<table');
         expect(output).toMatch(/<strong[^>]*>摘要<\/strong>/);
-        expect(output).toContain('limit');
+        expect(output).not.toContain('limit');
     });
     it('D4 审批投影保留完整 Markdown 和换行', () => {
         const content = '- **镜头一**：窗边\n- **镜头二**：茶杯\n' + '完整正文'.repeat(30);
-        const output = projectV4Intervention({ toolName: 'append_to_end', args: { content }, effectClass: 'reversible_local', pendingCount: 1 }, { irreversible: '', reversible: '', spendBadge: '', credentialTitle: '', credentialConfirm: '', credentialAlternate: '', questionTitle: '', planTitle: '', more: '', scopeOnce: '', scopeCapability: '' }, key => key);
+        const output = projectV4Intervention({ toolName: 'append_to_end', args: { content }, effectClass: 'reversible_local', pendingCount: 1 }, { irreversible: '', reversible: '', spendBadge: '', credentialTitle: '', credentialConfirm: '', credentialAlternate: '', planTitle: '', more: '', scopeOnce: '', scopeCapability: '' }, key => key);
         expect(JSON.stringify(output)).toContain(JSON.stringify(content).slice(1, -1));
-        expect(html(React.createElement(V4Intervention, { data: output!, labels: slotLabels }))).toContain('<ul');
+        expect(html(React.createElement(V4Intervention, { ...NO_HANDLERS, data: output!, labels: slotLabels }))).toContain('<ul');
     });
     it('D5 展开的过程段同样保留表格', () => {
         expect(html(React.createElement(V4Process, { label: "process", segments: [text] }))).toContain('<table');
@@ -69,6 +72,17 @@ describe('B2e 审计 D1–D13：单一 Markdown 内核', () => {
         expect(output).toContain('data-streamdown="code-block"');
         expect(output).not.toContain('px-1 py-0.5');
     });
+    it('D11b 围栏按内容标字体：粘贴用的提示词是文字，JSON 仍是代码（皮肤只认这一个标记）', () => {
+        const output = md('英文版：\n\n```\nA cozy vintage camera shop at dawn, warm golden light, 35mm film grain, 16:9\n```\n\n```json\n{ "style": "cinematic" }\n```');
+        const bodies = [...output.matchAll(/data-streamdown="code-block-body"[^>]*/g)].map((match) => match[0]);
+        expect(bodies).toHaveLength(2);
+        expect(bodies[0]).toContain('data-nomi-code="prose"');
+        expect(bodies[1]).toContain('data-nomi-code="code"');
+        const skin = readFileSync('src/workbench/common/NomiMarkdown.tsx', 'utf8');
+        expect(skin).toContain('[&_[data-nomi-code=prose]_pre]:font-nomi-sans');
+        expect(skin).toContain('[&_pre]:whitespace-pre-wrap');
+        expect(skin).toContain('[&_[data-streamdown=code-block-body]]:border-0');
+    });
     it('D12 回答不折，用户输入只在超过 12 行时折', () => {
         const long = Array.from({ length: 13 }, (_, i) => `行 ${i}`).join('\n');
         expect(html(React.createElement(V4AssistantMessage, { text: long, status: "complete", labels: labels }))).not.toContain('<details');
@@ -82,7 +96,7 @@ describe('B2e 审计 D1–D13：单一 Markdown 内核', () => {
     it('同类出口：任务、错误、计划都经同一内核', () => {
         expect(html(React.createElement(V4ErrorBar, { reason: text }))).toContain('<table');
         expect(html(React.createElement(V4TaskCard, { task: { title: 'task', action: 'document', status: 'complete', excerpt: text }, labels: { status: { queued: '', running: '', complete: '', failed: '', stopped: '' }, adopt: '', undo: '' } }))).toContain('<table');
-        expect(html(React.createElement(V4Intervention, { data: { kind: 'plan', title: 'plan', plan: [{ label: '**步骤**', detail: text, checked: true }] }, labels: slotLabels }))).toContain('<table');
+        expect(html(React.createElement(V4Intervention, { ...NO_HANDLERS, data: { kind: 'plan', title: 'plan', plan: [{ label: '**步骤**', detail: text, checked: true }] }, labels: slotLabels }))).toContain('<table');
     });
 });
 

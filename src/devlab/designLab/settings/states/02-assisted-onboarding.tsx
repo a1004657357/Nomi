@@ -6,27 +6,28 @@
 // 夹具喂的是**真实调用点的形状**（AiAssistedOnboardingSection 传下来的那三个 props），
 // 不是编出来的：info 用 McpInfo 的真类型，progress 由现役投影函数 projectAssistedProgress
 // 从真实 stage 算出来——「那一步该亮着还是灰着」不许由夹具作者拍脑袋决定。
-import React from 'react'
+import React, { type JSX } from 'react'
 
 import { AiAssistedOnboardingCard } from '../../../../ui/onboarding/AiAssistedOnboardingCard'
 import { projectAssistedProgress } from '../../../../ui/onboarding/assistedProgressProjection'
 import type { McpInfo } from '../../../../desktop/mcpBridgeTypes'
+import { BUILTIN_MCP_CLIENTS } from '../../../../../electron/shared/mcpClientRegistry'
 import { SETTINGS_CELL_WIDTH } from '../settingsLabKit'
 import type { LabState } from '../../labScreen'
 
 /** 一台真机上 readMcpInfo() 的形状；command/args 写成确定值，基线才不会跟着机器变。 */
 function mcpInfo(connected: readonly string[]): McpInfo {
   const clients: McpInfo['clients'] = {}
-  for (const key of ['claude', 'codex', 'cursor', 'pi', 'workbuddy']) {
+  for (const key of BUILTIN_MCP_CLIENTS) {
     clients[key] = {
       installed: connected.includes(key),
       appInstalled: true,
       configPath: `/Users/me/.config/${key}/mcp.json`,
       snippet: '{}',
       configState: connected.includes(key) ? 'current' : 'absent',
+      configuredCommand: connected.includes(key) ? '/Applications/Nomi.app/Contents/MacOS/Nomi' : null,
+      configuredSettingsDir: connected.includes(key) ? '/Users/me/Library/Application Support/Nomi' : null,
       launcherKind: 'packaged',
-      migration: 'none',
-      backupPath: null,
     }
   }
   return {
@@ -69,7 +70,6 @@ export const ASSISTED_ONBOARDING_STATES: readonly LabState[] = [
           info={mcpInfo(['claude'])}
           progress={null}
           onOpenAssistantConnections={noop}
-          onManualConnect={noop}
         />
       </Stage>
     ),
@@ -86,7 +86,6 @@ export const ASSISTED_ONBOARDING_STATES: readonly LabState[] = [
           info={mcpInfo([])}
           progress={null}
           onOpenAssistantConnections={noop}
-          onManualConnect={noop}
         />
       </Stage>
     ),
@@ -108,7 +107,6 @@ export const ASSISTED_ONBOARDING_STATES: readonly LabState[] = [
             reasonCode: null,
           }}
           onOpenAssistantConnections={noop}
-          onManualConnect={noop}
         />
       </Stage>
     ),
@@ -130,7 +128,6 @@ export const ASSISTED_ONBOARDING_STATES: readonly LabState[] = [
             reasonCode: '402 insufficient_balance',
           }}
           onOpenAssistantConnections={noop}
-          onManualConnect={noop}
         />
       </Stage>
     ),
@@ -150,7 +147,6 @@ export const ASSISTED_ONBOARDING_STATES: readonly LabState[] = [
           info={mcpInfo(['claude'])}
           progress={null}
           onOpenAssistantConnections={noop}
-          onManualConnect={noop}
         />
       </Stage>
     ),
@@ -173,7 +169,6 @@ export const ASSISTED_ONBOARDING_STATES: readonly LabState[] = [
             reasonCode: '402 insufficient_balance',
           }}
           onOpenAssistantConnections={noop}
-          onManualConnect={noop}
         />
       </Stage>
     ),

@@ -153,7 +153,7 @@ describe("renderer Catalog mutation boundary", () => {
     expect(store.upsertModelCatalogVendor).not.toHaveBeenCalled();
   });
 
-  it("rejects security-scope edits on certification-owned connections", () => {
+  it("rejects sign-in placement edits on certification-owned connections, in words the user can read", () => {
     const catalog = state();
     catalog.vendors[0] = {
       ...catalog.vendors[0],
@@ -163,9 +163,27 @@ describe("renderer Catalog mutation boundary", () => {
     } as never;
 
     expect(() => sanitizeRendererVendorMutation(
-      { key: "relay", baseUrlHint: "https://new.example/v1" },
+      { key: "relay", authType: "x-api-key", authHeader: "X-Key" },
       catalog,
-    )).toThrow(/integration|certification|connection/i);
+    )).toThrow("这个连接的鉴权方式不能在这里改");
+    // 以前抛给用户的就是这句英文原话（2026-09-29 用户截图）。
+    expect(() => sanitizeRendererVendorMutation({ key: "relay", authType: "x-api-key" }, catalog))
+      .not.toThrow(/Certification-owned|integration session/);
+  });
+
+  // 2026-09-29：新装机点过「继续验证 → 自检」的 APIMart 会带上 meta.adapter，于是设置里改接口地址
+  // 被这道锁拒掉，老装机却能改。地址归用户在设置里亲手改——新老装机一个样。
+  it("lets the settings page change the address of a certification-owned connection", () => {
+    const catalog = state();
+    catalog.vendors[0] = {
+      ...catalog.vendors[0],
+      enabled: true,
+      baseUrlHint: "https://old.example/v1",
+      meta: { adapter: { activeRevision: "revision-old" } },
+    } as never;
+
+    expect(sanitizeRendererVendorMutation({ key: "relay", baseUrlHint: "https://new.example/v1" }, catalog))
+      .toMatchObject({ key: "relay", baseUrlHint: "https://new.example/v1" });
   });
 });
 
@@ -190,6 +208,32 @@ describe("B4 candidate credentials", () => {
     vi.mocked(fetchModelList).mockResolvedValue({ ok: false, statuses: [], failureKind: "network", error: "offline" });
     await upsertRendererCatalogVendorApiKey("relay", { apiKey: "candidate-test" });
     expect(store.upsertModelCatalogVendorApiKey).toHaveBeenCalledWith("relay", { apiKey: "candidate-test", enabled: false, verificationPending: true });
+  });
+  /**
+   *  的门岗（2026-09-18）。走查夹具「注入 key → hasApiKey」这条路整条死掉过，
+   * 而且是**静默**死的：所有靠它的走查照样跑、照样绿，只是模型那一档从来没真通过。
+   *
+   * 根因不是夹具写错，是 `ApiKeyRecord.enabled` 一个布尔背了两个意思——「用户停用了这把钥匙」
+   * （`credentialRecordCounts` 的读法）和「还没经过认证晋升」（渲染层写入的写法）。免鉴权的家
+   * （本地 ComfyUI / Ollama / loopback 夹具）没有第二种意思可讲：它不发鉴权，没有「验过没验过」。
+   * 于是它落进 enabled:false，`credentialRecordCounts` 判它不算数，`hasApiKey` 恒 false。
+   *
+   * 这两条断言就是那条不变量：免鉴权的家，① 不许拿「无法验证密钥」当失败报（没这件事可做），
+   * ② 凭据写进去必须算数。任一条回退，靠夹具注入凭据的走查会再次整批变成假绿。
+   */
+  it("a no-auth vendor's credential counts (fixture key injection stays alive)", async () => {
+    const catalog = state();
+    catalog.vendors[0] = { ...catalog.vendors[0], authType: "none", baseUrlHint: "http://127.0.0.1:1/v1" };
+    vi.mocked(store.readCatalog).mockReturnValue(catalog);
+    await upsertRendererCatalogVendorApiKey("relay", { apiKey: "fixture-key" });
+    expect(store.upsertModelCatalogVendorApiKey).toHaveBeenCalledWith("relay", { apiKey: "fixture-key", enabled: true });
+    expect(fetchModelList).not.toHaveBeenCalled();
+  });
+  it("a no-auth vendor never reports a credential verification failure", async () => {
+    const catalog = state();
+    catalog.vendors[0] = { ...catalog.vendors[0], authType: "none", baseUrlHint: null };
+    vi.mocked(store.readCatalog).mockReturnValue(catalog);
+    await expect(upsertRendererCatalogVendorApiKey("relay", { apiKey: "fixture-key" })).resolves.toBeDefined();
   });
   it.each([401, 403])("%i never overwrites the previous credential or disables its vendor", async (status) => {
     const catalog = state();

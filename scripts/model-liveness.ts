@@ -33,8 +33,9 @@ export async function probeWeeklyModels(input: {
       const apiKey = input.apiKey(vendor.key)
       if (!apiKey) { receipts.push({ vendorKey: vendor.key, modelKey, ok: false, reason: 'credential-missing' }); continue }
       const receipt: LivenessReceipt = { vendorKey: vendor.key, modelKey, checkedAt: input.now, ok: false }
+      if (!vendor.baseUrl) { receipts.push({ ...receipt, reason: 'invalid-response' }); continue }
       try {
-        const request = buildHttpRequest({ baseUrl: vendor.baseUrl, authType: vendor.authType, authHeaderName: vendor.authHeader || undefined,
+        const request = buildHttpRequest({ baseUrl: vendor.baseUrl, authType: vendor.authType ?? 'bearer', authHeaderName: vendor.authHeader || undefined,
           authQueryParam: vendor.authQueryParam || undefined, apiKey, context: { model: modelKey }, operation: declaration.request })
         const response = await fetcher(appendQueryParams(request.url, request.query), {
           method: request.method, headers: request.headers, body: JSON.stringify(request.body), redirect: 'error', signal: AbortSignal.timeout(15_000),

@@ -5,7 +5,7 @@
 //      展开有「重拍这镜」——成功镜第一次返工的唯一入口（另两个入口都在错误态上，等 ≥2 才出=入口死锁）。非多镜节点
 //      同 selected 同有 result 也不出条（阳性对照）。返工落第二版后：展开列版本；点旧版 → rollbackHistory 切 result
 //      （**切回旧版→再切新版**，计划 §4 J2 要求的断言）；顺序不跳（rollbackHistory 不重排）。
-//   ② 已停占位：resume 钮从 disabled 留位变 active（data-production-shot-action=resume-budget/-manual）。
+//   ② 已停占位：resume 钮从 disabled 留位变 active（data-production-shot-action=resume-consent/-manual）。
 //   ③ 失败占位：rework 钮 active（data-production-shot-action=rework）。
 // 截图人眼判断（R13）：版本条展开态（光/暗）。断言用 _assert 体系 + expectAbsent 阳性对照（切前旧版不是当前）。
 import fs from 'node:fs'
@@ -165,7 +165,7 @@ try {
     const run = {
       schemaVersion: 1, runId, projectId, revision: 1, status: 'needs_attention', stageId: 'generate',
       playbook: { name: 'generation.single-shot', version: '1.0.0' }, origin: { host: 'semantic-mcp' },
-      policy: { mode: 'balanced', trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: 13, maxAttemptsPerJob: 1, minimizeUploads: true },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: 13, maxAttemptsPerJob: 1, minimizeUploads: true },
       budget: { currency: 'CNY', authorized: 13, reserved: 0, actual: 0, unsettled: 0 },
       planVersion: 1, snapshotCursor: 0, stages: [], gates: [],
       jobs: [
@@ -177,36 +177,38 @@ try {
       generationPlan: { operationId: runId, state: 'submitted', candidate: shot('shot-a', stoppedNode).candidate, shots: [shot('shot-a', stoppedNode), shot('shot-b', failedNode)], updatedAt: NOW },
       createdAt: NOW, updatedAt: NOW,
     }
-    window.__nomiProductionLandingStore.setState({ projectId, run, pinnedForE2E: true })
+    window.__nomiProductionLandingStore.setState({ projectId, runs: { [runId]: run }, pinnedForE2E: true })
+    // 失败镜：主进程落地投影把「失败」写进节点自己的运行记录（2026-09-25 起失败卡就是普通生成那张 NodeErrorReport，
+    // 它的「重试」对多镜节点走返工链）。这里直接走同一组 store 动作（投影在渲染层落的就是这一步）。
+    store.appendNodeRun(failedNode, { id: 'production-job-b', status: 'error', error: '供应商拒绝了这次生成' })
     return { stoppedNode, failedNode }
   }, { runId: RUN_ID, projectId })
   await win.waitForTimeout(400)
 
-  // 已停占位的 resume 钮 = active 值（resume-budget 或 resume-manual），且非 disabled。
+  // 已停占位的 resume 钮 = active 值（resume-consent 或 resume-manual），且非 disabled。
   const resumeAction = await win.evaluate((id) => {
     const host = document.querySelector(`[data-production-shot-node="${id}"][data-shot-placeholder-state="stopped"]`)
     const btn = host?.querySelector('[data-production-shot-action]')
     return btn ? { action: btn.getAttribute('data-production-shot-action'), disabled: btn.disabled } : null
   }, stoppedNode)
-  check(resumeAction && /^resume-(budget|manual)$/.test(resumeAction.action || ''), `已停占位续拍钮=active（data-*=${resumeAction?.action}，非 pending-s6 留位）`)
+  check(resumeAction && /^resume-(consent|manual)$/.test(resumeAction.action || ''), `已停占位续拍钮=active（data-*=${resumeAction?.action}，非 pending-s6 留位）`)
   check(resumeAction && resumeAction.disabled === false, '续拍钮可点（非 disabled）')
 
-  // 失败占位的 rework 钮 = 'rework'，非 disabled。
-  const reworkAction = await win.evaluate((id) => {
-    const host = document.querySelector(`[data-production-shot-node="${id}"][data-shot-placeholder-state="failed"]`)
-    const btn = host?.querySelector('[data-production-shot-action]')
-    return btn ? { action: btn.getAttribute('data-production-shot-action'), disabled: btn.disabled } : null
+  // 失败镜 = 普通生成那张失败卡（节点 status=error），不再有制作专属的失败占位。
+  const failedCard = await win.evaluate((id) => {
+    const el = document.querySelector(`[data-node-id="${id}"]`)
+    return { status: el?.getAttribute('data-status'), placeholder: Boolean(el?.querySelector('[data-shot-placeholder-state="failed"]')) }
   }, failedNode)
-  check(reworkAction && reworkAction.action === 'rework', `失败占位返工钮=active（data-*=${reworkAction?.action}，非 retry-pending-s6 留位）`)
-  check(reworkAction && reworkAction.disabled === false, '返工钮可点（非 disabled）')
-  // 阳性对照：先证「data-production-shot-action 这个探针测得到钮」（active 的 rework 钮带它），
+  check(failedCard.status === 'error', `失败镜 = 节点自己的失败态（普通失败卡；实得 ${failedCard.status}）`)
+  check(failedCard.placeholder === false, '没有第二套「失败占位」')
+  // 阳性对照：先证「data-production-shot-action 这个探针测得到钮」（active 的续拍钮带它），
   // 再断言留位态旧值（*-pending-s6）不再出现在任何占位钮上（证真接线了，不是新增并行钮）。
-  const actionProof = await proveProbe(win.locator('[data-production-shot-action="rework"]'), 'data-production-shot-action 探针在 active 返工钮上可见')
+  const actionProof = await proveProbe(win.locator('[data-production-shot-action^="resume-"]'), 'data-production-shot-action 探针在 active 续拍钮上可见')
   await expectAbsent(win.locator('[data-production-shot-action="resume-pending-s6"], [data-production-shot-action="retry-pending-s6"]'), { provenBy: actionProof, message: '留位态 data-*（*-pending-s6）已全部被 active 值替换' })
 
   // 截图在**解 pin 前**（此刻已停/失败占位钮还在屏上，供人眼判断续拍/返工钮长相）。
   await win.screenshot({ path: path.join(shotsDir, '03-resume-rework-buttons.png') })
-  await win.evaluate(() => window.__nomiProductionLandingStore.setState({ pinnedForE2E: false, run: null }))
+  await win.evaluate(() => window.__nomiProductionLandingStore.setState({ pinnedForE2E: false, runs: {} }))
   for (const f of ['00-version-strip-first-version.png', '01-version-strip-light.png', '02-version-strip-dark.png', '03-resume-rework-buttons.png']) {
     const stat = fs.statSync(path.join(shotsDir, f))
     check(stat.size > 0, `截图 ${f} 落地且非空（${stat.size} 字节）`)

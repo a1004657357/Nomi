@@ -1,6 +1,7 @@
 import { ANTIGRAVITY_IMAGE_MODEL_KEY, ANTIGRAVITY_VENDOR_KEY } from '../../../electron/shared/antigravity'
 import { groupAntigravityCatalogModels } from './antigravityCardModel'
 import { KNOWN_VENDORS, isKnownVendor } from '../../config/knownVendors'
+import { VENDOR_LOGOS } from '../../assets/vendor-logos'
 import { isComfyuiVendorKey } from '../../workbench/generationCanvas/model/comfyuiVendor'
 import type { ChipModel } from './ModelChipGroups'
 import type { ModelSettingsHomeConnection } from './ModelSettingsHome'
@@ -11,13 +12,13 @@ import { COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
 import { CODEX_LOCAL_VENDOR_KEY } from './codexLocalProvider'
 import { LOCAL_TEXT_VENDOR_KEY } from './LocalModelCard'
 import { DREAMINA_CONNECTION_KEY } from './onboardingDrawerConstants'
-import { groupOtherVendorModels } from './onboardingDrawerDerivations'
+import { canAddModelsToConnection, groupOtherVendorModels } from './onboardingDrawerDerivations'
 
 export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatus, localNames, openPage }: {
   models: ChipModel[]
   vendorMeta: ReadonlyMap<string, OnboardingVendorMeta>
   dreaminaStatus: DreaminaStatus | null
-  localNames: { dreamina: string; codex: string; antigravity: string }
+  localNames: { dreamina: string; codex: string; antigravity: string; jimengWeb: string; pavoWeb: string }
   openPage: (page: Exclude<ModelSettingsPage, { type: 'home' }>) => void
 }) {
   const knownCards = KNOWN_VENDORS
@@ -34,13 +35,21 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
   // promotion publishes a usable revision.
   const connectedKnown = knownCards.filter((c) => c.meta.hasApiKey && c.meta.enabled)
   const availableKnown = knownCards.filter((c) => !c.meta.hasApiKey || !c.meta.enabled)
+  const webBridgeEntries = ['jimeng-web', 'pavo-web'].flatMap((vendorKey) => {
+    const meta = vendorMeta.get(vendorKey)
+    if (!meta) return []
+    return [{ vendorKey, meta, models: models.filter((model) => model.vendorKey === vendorKey) }]
+  })
+  // Membership follows the actual account cards, not a second vendor identity list.
+  const hasWebBridgeAccountCard = (vendorKey: string) => webBridgeEntries.some((entry) => entry.vendorKey === vendorKey)
   const otherModels = models.filter((m) =>
     !isKnownVendor(m.vendorKey) &&
     m.vendorKey !== 'dreamina' &&
     m.vendorKey !== COMFYUI_VENDOR_KEY &&
     m.vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
     m.vendorKey !== LOCAL_TEXT_VENDOR_KEY &&
-    m.vendorKey !== ANTIGRAVITY_VENDOR_KEY,
+    m.vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
+    !hasWebBridgeAccountCard(m.vendorKey),
   )
   const otherVendorKeys = [...vendorMeta.keys()].filter((vendorKey) => (
     !isKnownVendor(vendorKey) &&
@@ -49,7 +58,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     !isComfyuiVendorKey(vendorKey) &&
     vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
     vendorKey !== LOCAL_TEXT_VENDOR_KEY &&
-    vendorKey !== ANTIGRAVITY_VENDOR_KEY
+    vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
+    !hasWebBridgeAccountCard(vendorKey)
   ))
 
   const comfyuiInstances = [...vendorMeta.entries()]
@@ -86,6 +96,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     // 本地模型走 vendor 自己的 name（种子里是「本地模型」），不另建 localName 键。
     if (vendorKey === LOCAL_TEXT_VENDOR_KEY) return localTextMeta?.name ?? vendorKey
     if (vendorKey === ANTIGRAVITY_VENDOR_KEY) return localNames.antigravity
+    if (vendorKey === 'jimeng-web') return localNames.jimengWeb
+    if (vendorKey === 'pavo-web') return localNames.pavoWeb
     return vendorKey
   }
 
@@ -95,6 +107,9 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
   ): ModelSettingsHomeConnection => ({
     ...value,
     onOpen: onOpen ?? (() => openPage({ type: 'connection', vendorKey: value.vendorKey })),
+    ...(value.kind === 'api' && canAddModelsToConnection(value.vendorKey, vendorMeta)
+      ? { onAddModels: () => openPage({ type: 'add', existingVendorKey: value.vendorKey }) }
+      : {}),
   })
 
   const homeConnections: ModelSettingsHomeConnection[] = [
@@ -124,11 +139,20 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
           && group.models.every((model) => model.hasCustomCall || model.customCallDraft),
       })
     }),
+    ...webBridgeEntries.filter((entry) => entry.meta.enabled).map((entry) => homeConnection({
+      vendorKey: entry.vendorKey,
+      name: connectionTitle(entry.vendorKey),
+      kind: 'account',
+      models: entry.models,
+      glyph: entry.vendorKey === 'pavo-web' ? 'P' : 'J',
+      skipHealthProbe: true,
+    })),
     ...comfyuiConnected.map((instance) => homeConnection({
       vendorKey: instance.key,
       name: instance.meta.name,
       kind: 'local',
       models: instance.models,
+      logo: VENDOR_LOGOS.comfyui,
       glyph: 'C',
     })),
     ...(dreaminaConnected ? [homeConnection({
@@ -136,7 +160,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
       name: connectionTitle(DREAMINA_CONNECTION_KEY),
       kind: 'account',
       models: [],
-      glyph: 'D',
+      logo: VENDOR_LOGOS.dreamina,
+      glyph: 'Jm',
     })] : []),
     ...(codexImageEnabled ? [homeConnection({
       vendorKey: CODEX_LOCAL_VENDOR_KEY,
@@ -168,7 +193,10 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
       vendorKey: card.directory.vendorKey,
       name: card.meta.name,
       kind: 'api',
-      models: [],
+      // 未接入 ≠ 没有预置模型。这里曾硬写 `models: []`，把上面第 27 行刚算出来的真实清单
+      // 当场丢掉，于是「已有预置地址、模型和请求适配」这句话下面永远没有列表、搜索框也
+      // 搜不到还没接入那几家的模型名（2026-09-14 修）。
+      models: card.vendorModels,
       logo: card.directory.logo,
       glyph: card.directory.glyph,
       hasApiKey: card.meta.hasApiKey,
@@ -183,6 +211,7 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
       name: instance.meta.name,
       kind: 'local',
       models: [],
+      logo: VENDOR_LOGOS.comfyui,
       glyph: 'C',
     })),
     ...(dreaminaAvailable && !dreaminaConnected ? [homeConnection({
@@ -190,7 +219,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
       name: connectionTitle(DREAMINA_CONNECTION_KEY),
       kind: 'account',
       models: [],
-      glyph: 'D',
+      logo: VENDOR_LOGOS.dreamina,
+      glyph: 'Jm',
     })] : []),
     ...(codexImageAvailable && !codexImageEnabled ? [homeConnection({
       vendorKey: CODEX_LOCAL_VENDOR_KEY,
@@ -213,6 +243,14 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
       models: [],
       glyph: 'AG',
     })] : []),
+    ...webBridgeEntries.filter((entry) => !entry.meta.enabled).map((entry) => homeConnection({
+      vendorKey: entry.vendorKey,
+      name: connectionTitle(entry.vendorKey),
+      kind: 'account',
+      models: [],
+      glyph: entry.vendorKey === 'pavo-web' ? 'P' : 'J',
+      skipHealthProbe: true,
+    })),
   ]
   return { knownCards, otherVendorGroups, comfyuiInstances, comfyuiConnected, codexImageEnabled,
     antigravityEnabled, connectionTitle, homeConnections, availableHomeConnections }

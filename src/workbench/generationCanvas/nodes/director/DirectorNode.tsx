@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react、react-i18next、../../../../ui/chunkBoundary 的 lazyWithChunkBoundary、../../../../utils/cn、
  *          ../../../../design 的 WorkbenchButton、@tabler/icons-react 图标、../../store/generationCanvasStore、
- *          ../../model/generationCanvasTypes、../NodeConnectionHandles 的 MagneticConnectionHandle、../completeNodeConnection、
+ *          ../../model/generationCanvasTypes、
  *          ../../../project/workbenchProjectSession 的 persistActiveWorkbenchProjectNow、./model/directorProject（normalize/stats）、./model/assetKinds（连线文件类型判定）
  * [OUTPUT]: 对外提供 DirectorNode（default，React.memo）：画布上的导演台节点卡片 —— 统计摘要 + 入连摘要 + 打开按钮，
  *           打开时懒加载 DirectorEditor，关闭时把工程写回 node.meta.directorProject 并立即落盘
@@ -9,7 +9,7 @@
  *        模板参考 V1 Scene3DEditor（meta 读写、chunk 预热、关闭落盘），但作为顶层节点组件注册（不改 BaseGenerationNode）。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconMaximize, IconMovie } from '@tabler/icons-react'
 import { WorkbenchButton } from '../../../../design'
@@ -18,10 +18,7 @@ import { cn } from '../../../../utils/cn'
 import { persistActiveWorkbenchProjectNow } from '../../../project/workbenchProjectSession'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
-import { completeNodeConnection } from '../completeNodeConnection'
-import { MagneticConnectionHandle } from '../NodeConnectionHandles'
 import { resolveNodeVisualSize } from '../nodeSizing'
-import type { ConnectionAnchorSide } from '../../store/canvasStoreTypes'
 import { assetKindOfFileName } from './model/assetKinds'
 import { DIRECTOR_PROJECT_META_KEY } from './model/directorNodeMeta'
 import { normalizeDirectorProject, projectStats } from './model/directorProject'
@@ -45,9 +42,6 @@ function DirectorNode({ node: rawNode, selected, readOnly = false }: Props): JSX
   const { t } = useTranslation()
   const node = rawNode as GenerationCanvasNode
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
-  const startConnection = useGenerationCanvasStore((state) => state.startConnection)
-  const pendingSourceId = useGenerationCanvasStore((state) => state.pendingConnectionSourceId)
-  const pendingSourceSide = useGenerationCanvasStore((state) => state.pendingConnectionSourceSide)
   const incomingKey = useGenerationCanvasStore((state) =>
     state.edges
       .filter((edge) => edge.target === node.id)
@@ -139,11 +133,6 @@ function DirectorNode({ node: rawNode, selected, readOnly = false }: Props): JSX
     void persistActiveWorkbenchProjectNow().catch(() => {})
   }, [])
 
-  const handleConnectionStart = (event: React.PointerEvent<HTMLElement>, side: ConnectionAnchorSide): void => {
-    event.stopPropagation()
-    startConnection(node.id, side)
-  }
-
   return (
     <article
       className={cn(
@@ -157,30 +146,6 @@ function DirectorNode({ node: rawNode, selected, readOnly = false }: Props): JSX
       data-selected={selected ? 'true' : 'false'}
       data-testid="director-node"
     >
-      {!readOnly ? (
-        <>
-          <MagneticConnectionHandle
-            side="left"
-            active={pendingSourceId === node.id || pendingSourceSide === 'left'}
-            pendingTarget={Boolean(pendingSourceId && pendingSourceId !== node.id)}
-            onStart={handleConnectionStart}
-            onComplete={(event) => {
-              event.stopPropagation()
-              completeNodeConnection(node.id)
-            }}
-          />
-          <MagneticConnectionHandle
-            side="right"
-            active={pendingSourceId === node.id || pendingSourceSide === 'right'}
-            pendingTarget={Boolean(pendingSourceId && pendingSourceId !== node.id)}
-            onStart={handleConnectionStart}
-            onComplete={(event) => {
-              event.stopPropagation()
-              completeNodeConnection(node.id)
-            }}
-          />
-        </>
-      ) : null}
       <div
         className={cn(
           'generation-canvas-v2-node__preview flex h-full w-full flex-col overflow-hidden rounded-nomi border bg-nomi-paper shadow-nomi-md',

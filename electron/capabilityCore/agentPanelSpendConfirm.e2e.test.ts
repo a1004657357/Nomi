@@ -1,282 +1,19 @@
-import fs from "node:fs";
-import http from "node:http";
-import os from "node:os";
-import path from "node:path";
+import { currentPresentation, presentationIsOpen } from '../shared/productionGenerationPresentation';
+import { spendAuthorizationGates } from "../shared/productionSpendAuthority";
+import { createPendingSpendActions } from './appIntegrationSpendConfirm';
+import { registerSpendWaiter, spendDecisionAwaited } from './spendDecisionWaiters';
+import { withdrawStalePresentations } from '../productionRun/stalePresentationSweep';
+import { createProductionRunService } from '../productionRun/productionRunService';
+import { createProductionGenerationOperationStore } from '../productionRun/productionGenerationOperationStore';
 import { afterEach, describe, expect, it } from "vitest";
+import { verbToTransportCall } from "../agentLane/laneVerbTransport";
+import { createPiGenerationTransportAdapter } from "./generationTransportAdapters";
+import type { ProjectAgentApprovalPolicy } from "../shared/agentCapabilities/capabilityApprovalPolicy";
+import { canvasLandingOperationId } from "../productionRun/multiShotCanvasLanding";
+import { PROJECT_ID, OPERATION_ID, lease, now, PRICING, candidate, startLoopbackVendor, harness, buildActions, callTool, draft, resetSpendFixture, advanceClock, registry } from "./agentPanelSpendConfirmTestUtils";
+import { resolvePlanPatch } from "./generationPlanPatch";
 
-import { createApprovalReceiptAuthority } from "./approvalReceipt";
-import { createModuleRegistry } from "./moduleRegistry";
-import { createGenerationRuntimeAdapter, type GenerationProvider } from "./generationRuntimeAdapter";
-import { createGenerationPlanningHandler, type GenerationOperation, type GenerationOperationStore } from "./mcpGenerationTools";
-import { PROJECT_LEASE_ALGORITHM, PROJECT_LEASE_AUDIENCE, PROJECT_LEASE_VERSION, type ProjectLeaseV2 } from "./projectLease";
-import { createRunOwnedGenerationGateAuthority } from "./runOwnedGenerationGateAuthority";
-import { createPendingSpendActions } from "./appIntegrationSpendConfirm";
-import { createCanvasLandingHost } from "../productionRun/canvasLandingHost";
-import { canvasLandingOperationId, type MaterializeShotsWirePayload } from "../productionRun/multiShotCanvasLanding";
-import { createProductionGenerationOperationStore } from "../productionRun/productionGenerationOperationStore";
-import { createProductionGenerationSubmission } from "../productionRun/productionGenerationSubmission";
-import { prepareProductionGenerationAuthorization } from "../productionRun/prepareProductionGenerationAuthorization";
-import { createProductionRunRepository } from "../productionRun/productionRunRepository";
-import type { ModelPricing } from "../productionRun/shotPricing";
-
-// 「确认 → 真的开始生成」的端到端夹具（P1.1a · 2026-09-11）。
-//
-// 这条链此前**一个测试都没有**：`appIntegrationSpendConfirm.ts` 是付费卡按钮背后的全部编排
-// （改参数 → 撤旧授权 → 重新封印开门 → 主进程手势 → 铸收据 → 决门 → 消费收据 → start），
-// 而它只被 `appIntegration` 的启动 try 装配，没有任何断言看着它。这里补上，零额度：
-// 只有远端供应商是本机 loopback HTTP，其余（durable Run、封印/收据/门、提交-轮询-落库、画布落地口）全是真的。
-//
-// 三条核心断言（对应本轮验收）：
-//   ① **执行的参数就是卡上改后的那份**——供应商真正收到的 body 带改后的值，收据的上限也按新价重算；
-//   ② **收据绑定的候选版本 = 执行时的候选版本**——改参数会把候选推一版、撤掉旧授权，
-//      所以「用户照着点头的那份」和「供应商跑的那份」结构上不可能分叉；
-//   ③ **画布落地幂等**——建草稿 / 改参数 / 确认即落三个时机共用同一个 `canvas-landing:{runId}` 章，
-//      落三次仍然只有一个节点（换一个章就会堆出重复节点，这正是该章存在的理由）。
-
-const NOW_BASE = Date.parse("2026-09-11T00:00:00.000Z");
-const roots: string[] = [];
-let clock = NOW_BASE;
-const now = () => new Date(clock).toISOString();
-
-const PROJECT_ID = "project-1";
-const OPERATION_ID = "op-spend";
-const CANDIDATE_ID = "cand-hexagon";
-/** 目录价目：基价 0.30，命中 `size:1536x1024` 再加 0.20 —— 改参数会把价格从 0.30 推到 0.50。 */
-const PRICING: ModelPricing = { cost: 0.3, enabled: true, specCosts: [{ specKey: "size:1536x1024", cost: 0.2, enabled: true }] };
-
-const registry = createModuleRegistry([{
-  moduleId: "generation.single-shot",
-  version: "1.0.0",
-  inputKinds: ["text", "image"],
-  outputKinds: ["image"],
-  modes: ["text-to-image"],
-  // 尺寸是这个模型档案真的认识的参数：它必须一路活到冻结的合同里，不然「卡上改了」就是句空话。
-  parameterSchema: { size: { type: "string", enum: ["1024x1024", "1536x1024"] } },
-  assetInputSchema: { references: { kind: "image", max: 4 } },
-  providers: [{
-    providerId: "apimart",
-    models: [
-      { modelId: "image-model", modes: ["text-to-image"], parameterSchema: { size: { type: "string", enum: ["1024x1024", "1536x1024"] } }, capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true, materialize: true } },
-      { modelId: "image-model-pro", modes: ["text-to-image"], parameterSchema: { size: { type: "string", enum: ["1024x1024", "1536x1024"] } }, capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true, materialize: true } },
-    ],
-  }],
-}]);
-
-const lease: ProjectLeaseV2 = {
-  version: PROJECT_LEASE_VERSION,
-  keyId: "key-1",
-  algorithm: PROJECT_LEASE_ALGORITHM,
-  issuer: "nomi-main",
-  nonce: "nonce-1",
-  scopeHash: "scope-hash-1",
-  mac: "mac-1",
-  projectId: PROJECT_ID,
-  immutableProjectUuid: "project-uuid-1",
-  projectGeneration: 1,
-  canonicalRootDigest: "root-1",
-  manifestDigest: "manifest-1",
-  issuedAt: "2026-09-11T00:00:00.000Z",
-  expiresAt: "2026-09-11T01:00:00.000Z",
-  audience: PROJECT_LEASE_AUDIENCE,
-  leasePrincipal: "mcp:agent-panel",
-  sessionId: "session-1",
-  connectionNonce: "connection-1",
-  revocationEpoch: 0,
-  scopeSet: ["generation:create", "generation:plan", "generation:preview", "generation:gate", "generation:submit", "generation:read"],
-};
-
-/** 真 loopback 供应商（零额度）：收下任务、报 succeeded、回一个可解码的 data URL，并记下每次请求体。 */
-async function startLoopbackVendor() {
-  const bodies: Array<Record<string, unknown>> = [];
-  const pngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-  const server = http.createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      try { bodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")); } catch { bodies.push({}); }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ created: 1, data: [{ task_id: `task-${bodies.length}`, status: "succeeded", url: pngDataUrl }] }));
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  const { port } = server.address() as { port: number };
-  return { origin: `http://127.0.0.1:${port}`, bodies, close: () => new Promise<void>((r) => server.close(() => r())) };
-}
-
-/**
- * 供应商适配器。`buildRequest` 把**合同里冻着的那份载荷**原样带出来，`submit` 原样发给 loopback ——
- * 于是 `vendor.bodies` 里躺着的就是「供应商真正收到的参数」，而不是我们复述的一份。
- */
-function loopbackProvider(origin: string, submits: string[]): GenerationProvider {
-  return {
-    providerId: "apimart",
-    capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true, materialize: true },
-    buildRequest: (input) => input,
-    submit: async (request, idempotencyKey) => {
-      submits.push(idempotencyKey);
-      const contract = (request ?? {}) as { modelId?: string; parameters?: Record<string, unknown> };
-      const res = await fetch(`${origin}/v1/images/generations`, {
-        method: "POST",
-        body: JSON.stringify({ idempotencyKey, model: contract.modelId, parameters: contract.parameters ?? {} }),
-      });
-      const json = await res.json() as { data: Array<{ task_id: string }> };
-      return { providerTaskId: json.data[0].task_id, raw: json };
-    },
-    query: async (providerTaskId) => ({ status: "succeeded", raw: { id: providerTaskId, status: "succeeded" } }),
-    materialize: async ({ providerTaskId }) => ({ outputs: [{ kind: "image", url: `nomi-local://asset/${PROJECT_ID}/${providerTaskId}.png` }] }),
-  };
-}
-
-function candidate(modelId: string, parameters: Record<string, unknown>) {
-  return {
-    candidateId: CANDIDATE_ID, revision: 1, moduleId: "generation.single-shot", providerId: "apimart",
-    modelId, mode: "text-to-image", prompt: "一个悬浮的六棱柱，柔和的演播室灯光", parameters, references: [],
-  };
-}
-
-/**
- * 渲染层替身：它只实现那条**契约里写着的**去重不变量（`materializationStamp.ts`）——
- * 每个 `(materializationOperationId, shotId)` 至多一个节点。所以「同一次生成落了两个节点」
- * 只可能来自宿主每次换了一个章，而这正是这条断言要抓的东西。
- */
-function recordingRenderer() {
-  const payloads: MaterializeShotsWirePayload[] = [];
-  const nodes = new Map<string, string>();
-  const resultsByNode = new Map<string, { url: string }>();
-  let nodeSequence = 0;
-  const requestRenderer = async (op: string, payload: unknown): Promise<unknown> => {
-    if (op !== "production.materialize-shots") return null;
-    const wire = payload as MaterializeShotsWirePayload;
-    payloads.push(structuredClone(wire));
-    const bindings = wire.shots.map((shot) => {
-      const key = `${wire.materializationOperationId}::${shot.shotId}`;
-      const existing = nodes.get(key);
-      const nodeId = existing ?? `node-${++nodeSequence}`;
-      if (!existing) nodes.set(key, nodeId);
-      if (shot.result) resultsByNode.set(nodeId, { url: shot.result.url });
-      return { shotId: shot.shotId, nodeId };
-    });
-    return { bindings };
-  };
-  return { payloads, nodes, resultsByNode, requestRenderer };
-}
-
-function harness() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-spend-confirm-e2e-"));
-  roots.push(root);
-  const repository = createProductionRunRepository({ projectDirResolver: (p) => (p === PROJECT_ID ? root : null), now });
-  const owner = {
-    createGenerationDraft: repository.createGenerationDraft,
-    readFull: (projectId: string, operationId: string) => {
-      const run = repository.read(projectId, operationId);
-      if (!run) throw new Error(`Run not found: ${operationId}`);
-      return run;
-    },
-    command: async (projectId: string, operationId: string, command: Parameters<typeof repository.execute>[2]) => repository.execute(projectId, operationId, command),
-  };
-  const renderer = recordingRenderer();
-  const canvasLanding = createCanvasLandingHost({
-    readRun: (projectId, runId) => repository.read(projectId, runId),
-    command: async (projectId, runId, command) => repository.execute(projectId, runId, command as Parameters<typeof repository.execute>[2]),
-    requestRenderer: renderer.requestRenderer,
-    resolveProjectRoot: () => root,
-    previewSecret: () => "preview-secret",
-    isProjectOpen: () => true,
-  });
-  const operations = createProductionGenerationOperationStore(owner as never, {
-    onPlanChanged: (projectId, operationId) => canvasLanding.landDraftOnCanvas(projectId, operationId),
-  }) as GenerationOperationStore;
-  return { root, repository, owner, operations, renderer, canvasLanding };
-}
-
-function buildActions(base: ReturnType<typeof harness>, vendorOrigin: string, submits: string[]) {
-  const { root, repository, owner, operations, canvasLanding } = base;
-  const provider = loopbackProvider(vendorOrigin, submits);
-  createGenerationRuntimeAdapter({ providers: [provider] }); // sanity: the real adapter accepts this provider
-  const submission = createProductionGenerationSubmission({
-    repository, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1,
-    projectRevision: 0, intentMacKey: "test-intent-key", providers: [provider],
-    materializeOutput: async ({ providerTaskId }) => {
-      // 真写一个字节到项目里：落地时的产物投影要读得到这个文件，读不到就只落占位、不回填 result。
-      const relative = path.join(".nomi", "out", `${providerTaskId}.png`);
-      fs.mkdirSync(path.join(root, ".nomi", "out"), { recursive: true });
-      fs.writeFileSync(path.join(root, relative), Buffer.from("89504e470d0a1a0a", "hex"));
-      return { artifactId: `artifact-${providerTaskId}`, kind: "image" as const, contentHash: `hash-${providerTaskId}`, projectRelativePath: relative };
-    },
-    now,
-  });
-  const handler = createGenerationPlanningHandler({
-    registry,
-    operations,
-    resolveModelPricing: () => PRICING,
-    now,
-    prepareAuthorization: ({ lease: projectLease, operation, contract, multiShot }) => prepareProductionGenerationAuthorization({
-      lease: projectLease, projectRevision: 0, operation, contract,
-      ...(multiShot ? { multiShot } : {}),
-      providers: [provider],
-      resolveShotPrice: (shotContract) => {
-        // 价格按**合同里冻着的那份参数**算，不是按草稿现有的：改完参数重新封印之后，收据的上限
-        // 必须跟着新规格走，否则「印在卡上的数」和「冻进合同的数」会分叉。
-        const spec = shotContract.parameters ?? {};
-        const bump = PRICING.specCosts.filter((entry) => entry.enabled && Object.entries(spec).some(([key, value]) => entry.specKey === `${key}:${String(value)}` || entry.specKey === String(value))).reduce((sum, entry) => sum + entry.cost, 0);
-        return { known: true, amount: PRICING.cost + bump };
-      },
-      now: now(),
-    }),
-    // appIntegration 的**单镜 start 分支**原样搬过来：start → 确认即落 → 观察到底（这里无需等待，
-    // loopback 一次就 succeeded）。多镜那条由 multiShotBatchScheduler 的 e2e 覆盖。
-    start: async (operation: GenerationOperation) => {
-      const started = await submission.start({ projectId: PROJECT_ID, operationId: operation.operationId }) as { nextAction: string };
-      await canvasLanding.landCanvasBestEffort(PROJECT_ID, operation.operationId);
-      if (started.nextAction === "observe") {
-        const polled = await submission.poll({ projectId: PROJECT_ID, operationId: operation.operationId }) as { nextAction: string };
-        if (polled.nextAction === "materialize") await submission.materialize({ projectId: PROJECT_ID, operationId: operation.operationId });
-        await canvasLanding.landCanvasBestEffort(PROJECT_ID, operation.operationId);
-      }
-      return started;
-    },
-  });
-  let receiptSequence = 0;
-  const receipts = createApprovalReceiptAuthority({
-    filePath: path.join(root, "approval-receipts.json"),
-    macKey: "test-receipt-key",
-    storeMacKey: "test-receipt-store-key",
-    keyId: "test-receipt-v1",
-    now,
-    randomId: () => `receipt-sequence-${++receiptSequence}`,
-  });
-  const authority = createRunOwnedGenerationGateAuthority({ owner: owner as never, operations, planning: handler, receipts, projectRevisionResolver: () => 0, now });
-  const actions = (rendererTarget: () => { webContentsId: number; frameId: number; origin: string } | null) => createPendingSpendActions({
-    isProjectOpen: () => true,
-    runs: { read: (projectId, runId) => repository.read(projectId, runId), list: (projectId) => repository.list(projectId) },
-    operations,
-    planning: handler,
-    requestGenerationGate: authority.requestGenerationGate,
-    authorizeGeneration: authority.authorizeGeneration,
-    receipts,
-    rendererTarget,
-    committedBinding: () => ({ projectId: PROJECT_ID, immutableProjectUuid: "project-uuid-1", projectGeneration: 1 }),
-    leaseFor: async () => lease,
-    resolvePricing: () => PRICING,
-    now,
-  });
-  const window = () => ({ webContentsId: 1, frameId: 0, origin: "app://nomi" });
-  return { actions, withWindow: actions(window), withoutWindow: actions(() => null), submission, handler, receipts };
-}
-
-/** Agent 在面板里建的那份草稿（origin.host='nomi' 才会投影成面板上的付费卡）。 */
-async function draft(base: ReturnType<typeof harness>): Promise<void> {
-  await base.operations.create({
-    operationId: OPERATION_ID, projectId: PROJECT_ID, candidate: candidate("image-model", { size: "1024x1024" }),
-    now: now(), origin: { host: "nomi", actorId: "agent-panel" },
-  });
-  await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
-}
-
-afterEach(() => {
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
-  clock = NOW_BASE;
-});
+afterEach(resetSpendFixture);
 
 describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loopback）", () => {
   it("卡上改参数 → 按主按钮 → 重新封印/铸收据/决门/开跑 → 供应商收到的就是改后那份，产物落回同一个画布节点", async () => {
@@ -299,8 +36,8 @@ describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loop
 
       // ── 用户在卡上换模型 + 改尺寸，然后按主按钮 ──
       // `confirm` 之前的 `revise` 是面板 hook 在按下那一刻做的同一件事（useAgentPanelSpendConfirm.confirm）。
-      clock += 1000;
-      const revised = await withWindow.revisePendingSpend({
+      advanceClock(1000);
+      const revised = await withWindow.revisePendingSpend({ quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId,
         projectId: PROJECT_ID, operationId: OPERATION_ID,
         patch: { parameters: { size: "1536x1024" } },
       });
@@ -313,8 +50,8 @@ describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loop
       expect(afterEdit.shots[0]).toMatchObject({ modelId: "image-model", parameters: { size: "1536x1024" } });
       expect(afterEdit.knownSubtotal).toBeCloseTo(0.5, 6);
 
-      clock += 1000;
-      const confirmed = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID });
+      advanceClock(1000);
+      const confirmed = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: withWindow.listPendingSpend(PROJECT_ID)[0]?.quoteId ?? "stale" });
       expect(confirmed).toMatchObject({ ok: true, code: "spend_confirmed" });
       await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
 
@@ -330,14 +67,15 @@ describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loop
       // ── ② 收据绑定的候选版本 = 执行时的候选版本 ──
       // 门是在**改完之后**才开的，所以信封里冻着的 candidateRevision 只可能是改后那一版；
       // 决门的那张收据就绑在这个 gateId + digest 上（对不上批不动）。
-      const envelopeTargets = (plan.authorizationEnvelope?.jobs ?? []).map((job) => job.target as { candidateRevision?: number });
+      // 信封住在批它的那道门上（每点一次一份）。
+      const gate = spendAuthorizationGates(run).at(-1)!;
+      const envelopeTargets = gate.authorizationEnvelope.jobs.map((job) => job.target as { candidateRevision?: number });
       expect(envelopeTargets).toHaveLength(1);
       expect(envelopeTargets[0].candidateRevision).toBe(2);
       expect(plan.candidate.revision).toBe(2);
-      const gate = run.gates.find((entry) => entry.gateId === plan.authorizationGateId)!;
       expect(gate.status).toBe("approved");
       expect(gate.receiptId).toBeTruthy();
-      expect(gate.authorizationDigest).toBe(plan.authorizationDigest);
+      expect(plan, "授权不挂在计划上").not.toHaveProperty("authorizationDigest");
       // 执行出来的那个 job 也绑在同一份合同上（收据 = 实际执行，不是注释保证的）。
       const job = run.jobs[0]!;
       expect(job.status === "ready" || job.status === "adopted").toBe(true);
@@ -364,7 +102,7 @@ describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loop
     const { withoutWindow } = buildActions(base, vendor.origin, submits);
     try {
       await draft(base);
-      const result = await withoutWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID });
+      const result = await withoutWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: withoutWindow.listPendingSpend(PROJECT_ID)[0]!.quoteId });
       expect(result).toMatchObject({ ok: false, code: "unavailable" });
       expect(submits).toHaveLength(0);
       expect(vendor.bodies).toHaveLength(0);
@@ -381,15 +119,15 @@ describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loop
     const { withWindow } = buildActions(base, vendor.origin, submits);
     try {
       await draft(base);
-      clock += 1000;
-      expect(await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID })).toMatchObject({ ok: true });
+      advanceClock(1000);
+      expect(await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: withWindow.listPendingSpend(PROJECT_ID)[0]?.quoteId ?? "stale" })).toMatchObject({ ok: true });
       await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
       expect(submits).toHaveLength(1);
 
       // 卡消失了：`submitted` 不再投影成「等你点头」（已经答过的问题不再问第二遍）。
       expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(0);
-      clock += 1000;
-      const again = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID });
+      advanceClock(1000);
+      const again = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: withWindow.listPendingSpend(PROJECT_ID)[0]?.quoteId ?? "stale" });
       expect(again.ok).toBe(false);
       expect(submits).toHaveLength(1);
       expect(vendor.bodies).toHaveLength(1);
@@ -398,37 +136,516 @@ describe("Agent 面板付费卡：确认 → 真的开始生成（零额度 loop
     }
   });
   /**
-   * 已知缺口（2026-09-11 本轮实测发现，**不在 P1.1a 范围内修**，记在
-   * docs/plan/2026-09-10-permission-model-rework.md 的「P1.1a 已知缺口」）：
+   * #748 记下的已知缺口，本轮修好，断言随之翻成正面（不是删掉它）。
    *
-   * 卡上的模型 chip 让用户换模型，面板 hook 也会把 `modelId` 打进补丁（`candidatePatchFromNode`），
-   * 但 Run 的 policy `allowedModels` 是**建草稿那一刻**从候选身份冻下来的，于是换了模型再确认会被
-   * 白名单挡下——用户看到的是一句「模型未加入白名单」，而他做的只是在卡上选了另一个模型。
+   * 缺口是什么：Run 的 policy `allowedModels` 在**建草稿那一刻**从候选身份冻下来，
+   * 于是用户在卡上换个模型再确认，会撞上一句「模型未加入白名单」——而他做的只是
+   * 在下拉里选了另一个模型。冻它本是为了拦 **agent** 偷换模型（agent 走
+   * `generation.patch`，那条路一个字没改）；`generation.revise` 只有付费卡这一个入口。
    *
-   * 这条断言把现状钉住：它现在证明「换模型会被拒」。修好之后这条会红，那正是提醒——
-   * 届时把它改成正向断言（换模型也能确认并执行），而不是删掉。
+   * 现在放行的边界是**同一个任务类别**（`candidate.mode`）。跨类别仍然 fail-closed。
    */
-  it("【已知缺口】卡上换模型后确认会被 Run 白名单挡下（建草稿时冻的 allowedModels）", async () => {
+  it("卡上换模型 → 确认 → 供应商收到的就是换后那个模型（#748 缺口已修）", async () => {
     const vendor = await startLoopbackVendor();
     const base = harness();
     const submits: string[] = [];
     const { withWindow } = buildActions(base, vendor.origin, submits);
     try {
       await draft(base);
-      clock += 1000;
-      expect(await withWindow.revisePendingSpend({
+      const nodeId = [...base.renderer.nodes.values()][0];
+
+      advanceClock(1000);
+      expect(await withWindow.revisePendingSpend({ quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId,
         projectId: PROJECT_ID, operationId: OPERATION_ID, patch: { modelId: "image-model-pro" },
-      })).toMatchObject({ ok: true });
-      clock += 1000;
-      const confirmed = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID });
-      expect(confirmed.ok).toBe(false);
-      expect(confirmed.message ?? "").toContain("image-model-pro");
-      // 被拒得干净：没花钱，草稿还在，用户还能改回去。
-      expect(submits).toHaveLength(0);
-      expect(vendor.bodies).toHaveLength(0);
-      expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(1);
+      })).toMatchObject({ ok: true, code: "revised" });
+      await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
+
+      // 卡上印的已经是换后那个模型，价格按同一条算式重算（这个模型同价：0.30）。
+      const afterEdit = withWindow.listPendingSpend(PROJECT_ID)[0];
+      expect(afterEdit.shots[0]).toMatchObject({ modelId: "image-model-pro" });
+      expect(afterEdit.knownSubtotal).toBeCloseTo(0.3, 6);
+
+      advanceClock(1000);
+      expect(await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: withWindow.listPendingSpend(PROJECT_ID)[0]?.quoteId ?? "stale" }))
+        .toMatchObject({ ok: true, code: "spend_confirmed" });
+      await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
+
+      // 供应商真正收到的是换后那个模型——不是「没被拒」而已。
+      expect(submits).toHaveLength(1);
+      expect(vendor.bodies).toHaveLength(1);
+      expect(vendor.bodies[0]).toMatchObject({ model: "image-model-pro" });
+
+      const run = base.repository.read(PROJECT_ID, OPERATION_ID)!;
+      expect(run.generationPlan!.state).toBe("submitted");
+      // 白名单认下了新模型，**旧的没被顶掉**（用户还能换回去），而那笔钱的闸一个都没松。
+      expect(run.policy.allowedModels).toContain("image-model-pro");
+      expect(run.policy.allowedModels).toContain("image-model");
+      // 换模型没有多开一个画布节点：还是草稿一建就落的那一个。
+      expect(base.renderer.nodes.size).toBe(1);
+      expect([...base.renderer.nodes.values()][0]).toBe(nodeId);
     } finally {
       await vendor.close();
     }
   });
+
+  it("跨任务类别换模型：卡上改一下也过并入规则，目录里没有这一对就当场拒——那换掉的是整个花钱量级，不叫「改一下」", async () => {
+    const vendor = await startLoopbackVendor();
+    const base = harness();
+    const submits: string[] = [];
+    const { withWindow } = buildActions(base, vendor.origin, submits);
+    try {
+      await draft(base);
+      advanceClock(1000);
+      // 以前卡这一条把补丁原样并进候选，要等到确认那一下才被白名单挡下；现在和 Agent 改草稿同一条规则，改的那一下就拒。
+      expect(await withWindow.revisePendingSpend({ quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId,
+        projectId: PROJECT_ID, operationId: OPERATION_ID,
+        patch: { modelId: "video-model", mode: "image-to-video" },
+      })).toMatchObject({ ok: false, message: "generation_not_started" });
+      // 被拒得干净：没花钱，草稿还在、还是原来那个模型，用户还能接着改。
+      expect(submits).toHaveLength(0);
+      expect(vendor.bodies).toHaveLength(0);
+      expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(1);
+      expect(withWindow.listPendingSpend(PROJECT_ID)[0].shots[0]?.modelId).toBe("image-model");
+    } finally {
+      await vendor.close();
+    }
+  });
+});
+
+/**
+ * 「全自动」档：付费生成不再出报价卡（2026-09-12 用户拍板）。
+ *
+ * 三条断言构成这一档的全部含义，缺一条它就变味：
+ *   ① **没有卡**——面板上一张待确认都不该有（否则「全自动」只是换了个说法的「自动改」）；
+ *   ② **真的跑了**——供应商收到了那一次请求（否则它是「全自动地什么都不做」）；
+ *   ③ **闸一步没少**——门被批准、收据存在，而且收据上写着是**策略**批的，不是编了一个人出来。
+ *
+ * 另外两档拿同一个夹具跑一遍：它们必须**一个字都没变**——卡在、供应商没被碰。
+ * 只测「全自动能跑」不够：这一改真正的风险是它顺手把另外两档也放行了。
+ */
+describe("三档 × 付费报价卡（2026-09-12 拍板）", () => {
+  /**
+   * 模型那一侧真正走得到的一轮：**建草稿**。
+   *
+   * 桌面 lane 上这就是模型的最后一步——付费门不在它的工具表里，连 preview 都不在这个宿主的
+   * schema 里。草稿一建好，报价卡就该出现；「全自动」档的免卡放行正发生在同一刻。
+   */
+  async function modelTurn(base: ReturnType<typeof harness>, vendorOrigin: string, submits: string[], mode: ProjectAgentApprovalPolicy["mode"]) {
+    const built = buildActions(base, vendorOrigin, submits);
+    const transport = built.transport(mode);
+    const created = await callTool(transport, "nomi_generation_plan", {
+      operation: "create", taskKind: "text_to_image", candidate: candidate("image-model", { size: "1024x1024" }),
+    });
+    await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
+    const operationId = ((created as { result?: { drafted?: { operation?: { operationId?: string } }; operation?: { operationId?: string } } }).result);
+    const resolved = operationId?.drafted?.operation?.operationId ?? operationId?.operation?.operationId ?? "";
+    return { ...built, created, operationId: resolved };
+  }
+
+  it("全自动：草稿一建好宿主就自己决门 → 没有报价卡、生成真的开始了、收据写着 policy:full_auto", async () => {
+    const vendor = await startLoopbackVendor();
+    const base = harness();
+    const submits: string[] = [];
+    try {
+      const { withWindow, operationId, created, receipts } = await modelTurn(base, vendor.origin, submits, "project");
+      expect(operationId, "建草稿必须成功——后面每一条断言都以它为前提").toBeTruthy();
+
+      // ① 没有卡：等用户点头的那一笔不存在了，因为已经决过了。
+      expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(0);
+
+      // ② 真的跑了：供应商收到一次，且只有一次。
+      expect(submits).toHaveLength(1);
+      expect(vendor.bodies).toHaveLength(1);
+
+      // ③ 闸一步没少，而且账本上说得出是谁批的。
+      const run = base.repository.read(PROJECT_ID, operationId)!;
+      const plan = run.generationPlan!;
+      expect(plan.state).toBe("submitted");
+      const gate = spendAuthorizationGates(run).at(-1)!;
+      expect(gate.status).toBe("approved");
+      expect(gate.receiptId).toBeTruthy();
+      const receipt = receipts.verifyReceipt(receipts.resolveReceiptToken(gate.receiptId!));
+      expect(receipt.decidedBy).toBe("policy:full_auto");
+      expect(receipt.gestureAttestation.kind).toBe("policy_decision");
+      // 没有人点，所以 humanActor 记的是那条策略——不是编一个 web_contents 出来。
+      expect(receipt.humanActor).toBe("policy:project:agent-lane");
+
+      // 工具结果里也说得出这一笔是策略批的（模型据此知道「已经开跑」，不会再去催用户点卡）。
+      expect(created).toMatchObject({ ok: true, result: { spendDecision: { decidedBy: "policy:full_auto" } } });
+    } finally {
+      await vendor.close();
+    }
+  });
+
+  /**
+   * ：**代答进行中的那一段**，面板上也不许有卡。
+   *
+   * 上面那条只看得见「决完之后没有卡」——而用户撞到的恰恰是决完之前那一段：草稿一落盘投影就出卡，
+   * 面板每 1.5s 读一次，于是他刚在切档卡上答应过「不再逐笔问」，转头又被问了一遍。
+   *
+   * 观察点选在 `requestGenerationGate`：它是代答链的第一步，跑在草稿已经落盘之后。
+   * 阳性对照就在同一次观察里——那一刻 Run 确实存在且还没封印（`draftedAtGate`），
+   * 所以「0 张卡」不是因为我们看了个空项目。
+   */
+  it("全自动：从草稿落盘到封印的那一段也不出卡（用户刚授权过的事不该被再问一遍）", async () => {
+    const vendor = await startLoopbackVendor();
+    const base = harness();
+    const submits: string[] = [];
+    try {
+      const built = buildActions(base, vendor.origin, submits);
+      const observed: { cards: number; state: string | undefined }[] = [];
+      const transport = createPiGenerationTransportAdapter(
+        { projectId: PROJECT_ID, immutableProjectUuid: "project-uuid-1", projectGeneration: 1 },
+        {
+          planning: built.handler,
+          requestGenerationGate: async (input) => {
+            const runId = String((input.params as { operationId?: unknown }).operationId ?? "");
+            const current = runId ? base.repository.read(PROJECT_ID, runId) : null;
+            observed.push({
+              cards: built.withWindow.listPendingSpend(PROJECT_ID).length,
+              state: current?.generationPlan?.state,
+            });
+            return built.authority.requestGenerationGate(input);
+          },
+          authorizeGeneration: built.authority.authorizeGeneration,
+          approvalReceiptAuthority: built.receipts,
+          leaseFor: () => lease,
+          approvalPolicy: () => ({ mode: "project", spend: "confirm" }),
+        },
+      );
+      await callTool(transport, "nomi_generation_plan", {
+        operation: "create", taskKind: "text_to_image", candidate: candidate("image-model", { size: "1024x1024" }),
+      });
+      await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
+
+      expect(observed, "观察点没被走到 = 这条测试什么都没验").toHaveLength(1);
+      // 阳性对照：那一刻草稿真的在盘上、还没封印——也就是旧代码会出卡的那一刻。
+      expect(observed[0].state).toBe("draft");
+      expect(observed[0].cards).toBe(0);
+      expect(submits).toHaveLength(1);
+    } finally {
+      await vendor.close();
+    }
+  });
+
+  for (const mode of ["step", "safe-auto"] as const) {
+    it(`${mode}：一个字都没变——报价卡照常出现，供应商一次都没被碰`, async () => {
+      const vendor = await startLoopbackVendor();
+      const base = harness();
+      const submits: string[] = [];
+      try {
+        const { withWindow, operationId } = await modelTurn(base, vendor.origin, submits, mode);
+
+        const pending = withWindow.listPendingSpend(PROJECT_ID);
+        expect(pending).toHaveLength(1);
+        expect(pending[0].operationId).toBe(operationId);
+        expect(submits).toHaveLength(0);
+        expect(vendor.bodies).toHaveLength(0);
+        expect(base.repository.read(PROJECT_ID, operationId)!.generationPlan!.state).not.toBe("submitted");
+      } finally {
+        await vendor.close();
+      }
+    });
+  }
+
+  it("档位读不到时按默认档走：不许替用户花钱", async () => {
+    const vendor = await startLoopbackVendor();
+    const base = harness();
+    const submits: string[] = [];
+    try {
+      const built = buildActions(base, vendor.origin, submits);
+      // 没有 `approvalPolicy` 这一项的适配器 = 这条路没有档位可读（MCP 那一侧就是这样）。
+      const transport = createPiGenerationTransportAdapter(
+        { projectId: PROJECT_ID, immutableProjectUuid: "project-uuid-1", projectGeneration: 1 },
+        {
+          planning: built.handler,
+          requestGenerationGate: built.authority.requestGenerationGate,
+          authorizeGeneration: built.authority.authorizeGeneration,
+          approvalReceiptAuthority: built.receipts,
+          leaseFor: () => lease,
+        },
+      );
+      await callTool(transport, "nomi_generation_plan", {
+        operation: "create", taskKind: "text_to_image", candidate: candidate("image-model", { size: "1024x1024" }),
+      });
+      await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
+      // 不知道档位时**不许**替用户花钱：供应商一次都没被碰，卡还在原处等人。
+      expect(submits).toHaveLength(0);
+      expect(built.withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(1);
+    } finally {
+      await vendor.close();
+    }
+  });
+});
+
+it('C09: a delayed close cannot dismiss a newer displayed quote', async () => {
+  const base = harness();
+  const { withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+  await draft(base);
+  const displayed = withWindow.listPendingSpend(PROJECT_ID)[0];
+  await withWindow.revisePendingSpend({ quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId, projectId: PROJECT_ID, operationId: OPERATION_ID, patch: { prompt: 'new version' } });
+  const before = base.repository.read(PROJECT_ID, OPERATION_ID);
+  const action = { projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: displayed.quoteId };
+  expect(await withWindow.discardPendingSpend(action)).toMatchObject({ ok: false });
+  expect(base.repository.read(PROJECT_ID, OPERATION_ID)).toEqual(before);
+});
+
+// 逐镜（2026-09-30）：点一镜不再先收窄这一批（没有 present 那一步可插队），等价的风险是「卡摆出来之后、点下去之前
+// 这一镜被改了」——确认带的是卡上那一份的报价指纹，对不上就拒，用户没看过的改动一个都不批。
+it('C09: a per-shot confirmation never approves an edit made after the card was displayed', async () => {
+  const base = harness();
+  const submits: string[] = [];
+  const { withWindow } = buildActions(base, 'http://127.0.0.1:1', submits);
+  const shots = [1, 2].map(i => ({ shotId: `shot-${i}`, candidate: { ...candidate('image-model', {}), candidateId: `candidate-${i}` } }));
+  await base.operations.create({ operationId: OPERATION_ID, projectId: PROJECT_ID, candidate: shots[0].candidate, shots, origin: { host: 'nomi' }, now: now() });
+  const displayed = withWindow.listPendingSpend(PROJECT_ID)[0];
+  await base.operations.patch(PROJECT_ID, OPERATION_ID, { prompt: 'unseen replacement' }, now(), 'shot-1');
+  const result = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID,
+    quoteId: displayed.quoteId, shotId: 'shot-1' });
+  expect(result).toMatchObject({ ok: false });
+  expect(submits).toEqual([]);
+  expect(base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!.state).toBe('draft');
+});
+
+// Taskbook F2: the real adapter, durable Run and pending read model share one scope.
+describe('reliability: scoped presentation and dismissal', () => {
+  async function mixedDraft(base: ReturnType<typeof harness>) {
+    const shots = Array.from({ length: 33 }, (_, i) => ({
+      shotId: `shot-${i + 1}`,
+      role: i < 6 ? 'anchor' as const : 'shot' as const,
+      candidate: { ...candidate('image-model', { size: '1024x1024' }), candidateId: `candidate-${i + 1}` },
+    }));
+    await base.operations.create({ operationId: OPERATION_ID, projectId: PROJECT_ID,
+      candidate: shots[0].candidate, shots, cardHidden: true, origin: { host: 'nomi' }, now: now() });
+    await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
+  }
+
+  it('S01: presents only three requested roles in plan order, retaining all 33 draft shots', async () => {
+    const base = harness();
+    await mixedDraft(base);
+    const { transport, withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+    const result = await callTool(transport('safe-auto'), 'nomi_generation_plan',
+      { operation: 'present', operationId: OPERATION_ID, shotIds: ['shot-3', 'shot-1', 'shot-2'] });
+    expect(result).toMatchObject({ ok: true });
+    const pending = withWindow.listPendingSpend(PROJECT_ID)[0];
+    expect(pending.shots.map((shot) => shot.shotId)).toEqual(['shot-1', 'shot-2', 'shot-3']);
+    expect(pending.knownSubtotal).toBeCloseTo(0.9);
+    expect(base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!.shots).toHaveLength(33);
+  });
+
+  it.each([[], ['shot-1', 'shot-1'], ['foreign-shot'], ['shot-1', 'foreign-shot']].map((shotIds) => ({ shotIds })))(
+    'S03: rejects invalid scope $shotIds atomically', async ({ shotIds }) => {
+      const base = harness();
+      await mixedDraft(base);
+      const { handler } = buildActions(base, 'http://127.0.0.1:1', []);
+      const before = base.repository.read(PROJECT_ID, OPERATION_ID);
+      await expect(handler({ capability: 'present', params: { operationId: OPERATION_ID, shotIds }, lease }))
+        .rejects.toThrow(/shot|scope/i);
+      expect(base.repository.read(PROJECT_ID, OPERATION_ID)).toEqual(before);
+    });
+
+  it('one presented shot revises and saves only that shot, then survives dismissal', async () => {
+    const base = harness();
+    await mixedDraft(base);
+    const { handler, withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+    await handler({ capability: 'present', params: { operationId: OPERATION_ID, shotIds: ['shot-17'] }, lease });
+    const before = base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!;
+    expect(withWindow.listPendingSpend(PROJECT_ID)[0].shots).toHaveLength(1);
+    expect(await withWindow.revisePendingSpend({ quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId,projectId:PROJECT_ID, operationId:OPERATION_ID,
+      shotId:'shot-17', patch:{prompt:'edited seventeenth'}})).toMatchObject({ok:true});
+    const after = base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!;
+    expect(after.candidate).toEqual(before.candidate);
+    expect(after.shots?.filter(shot => shot.shotId !== 'shot-17')).toEqual(before.shots?.filter(shot => shot.shotId !== 'shot-17'));
+    expect(after.shots?.find(shot => shot.shotId === 'shot-17')?.candidate.prompt).toBe('edited seventeenth');
+    const pending = withWindow.listPendingSpend(PROJECT_ID)[0];
+    expect(await withWindow.discardPendingSpend({projectId:PROJECT_ID,operationId:OPERATION_ID,quoteId:pending.quoteId})).toMatchObject({ok:true});
+    expect(base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!.shots).toEqual(after.shots);
+    expect(base.repository.read(PROJECT_ID, OPERATION_ID)!.jobs).toEqual([]);
+  });
+
+  // 2026-09-22 下午用户拍板改窄裁决 D：× **只关这次请求，节点和草稿都留着**。所以这条钉的是
+  // 「收回这一次出价」那条边（与裁决 C 同一条）：卡没了，计划回到 draft / 未 present，镜头一个字不丢、
+  // 节点一个不动，同一个 operationId 还能再出价。
+  //
+  // 当天上午那一版把 × 落成 `cancelled + declined` 的计划级终态，这里钉的是「不许再 present」。
+  // 它在 33 镜的计划上说不通（卡上摆 3 镜，× 终结整份计划，另外 30 个占位成孤儿），已被推翻。
+  it('S02: × withdraws only this quote; the draft, its shots and the canvas nodes all survive and it can be presented again', async () => {
+    const base = harness();
+    await mixedDraft(base);
+    const { handler, withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+    await handler({ capability: 'present', params: { operationId: OPERATION_ID }, lease });
+    const before = base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!.shots;
+    const nodes = [...base.renderer.nodes.entries()];
+    expect(await withWindow.discardPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID,
+      quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId })).toMatchObject({ ok: true });
+    expect(withWindow.listPendingSpend(PROJECT_ID)).toEqual([]);
+    const after = base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!;
+    expect(after.state, '没有人说「不要这份草稿」：计划还是 draft').toBe('draft');
+    expect(currentPresentation(after)?.closed?.by, '只是不再摆在用户面前：这一次出价按 × 关了').toBe('user_closed');
+    expect(after.shots).toEqual(before);
+    expect([...base.renderer.nodes.entries()]).toEqual(nodes);
+    // 对同一份草稿再 generate = 重新出价，同一个 operationId 再出一张卡。
+    await handler({ capability: 'present', params: { operationId: OPERATION_ID, shotIds: ['shot-1'] }, lease });
+    expect(withWindow.listPendingSpend(PROJECT_ID)[0].shots.map((shot) => shot.shotId)).toEqual(['shot-1']);
+  });
+
+  // ── 裁决 C（2026-09-22 二次裁决）：重启作废的是「那一次出价」，不是「那份计划」──
+  // 2026-09-22 下午起 × 走的也是这条边（用户拍板「× 只关这次请求」），所以这条同时是 × 的下半身。
+  it('C: 收回出价——卡没了，计划、镜头、节点都在，同一个 operationId 还能再出价', async () => {
+    const base = harness();
+    await mixedDraft(base);
+    const { handler, withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+    await handler({ capability: 'present', params: { operationId: OPERATION_ID, shotIds: ['shot-1', 'shot-2'] }, lease });
+    expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(1);
+    const nodes = [...base.renderer.nodes.entries()];
+    await handler({ capability: 'withdraw', params: { operationId: OPERATION_ID }, lease });
+    expect(withWindow.listPendingSpend(PROJECT_ID), '收回之后面板上不许再有那张卡').toEqual([]);
+    const plan = base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!;
+    expect(plan.state, '不是 cancelled：没有人说过「不要这份草稿」').toBe('draft');
+    expect(presentationIsOpen(plan)).toBe(false);
+    expect(plan.shots).toHaveLength(33);
+    expect([...base.renderer.nodes.entries()]).toEqual(nodes);
+    // 幂等：再收一次什么都不变（重启清扫与「按停止」可能先后各来一次）。
+    const revision = base.repository.read(PROJECT_ID, OPERATION_ID)!.revision;
+    await handler({ capability: 'withdraw', params: { operationId: OPERATION_ID }, lease });
+    expect(presentationIsOpen(base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan)).toBe(false);
+    expect(base.repository.read(PROJECT_ID, OPERATION_ID)!.revision).toBeGreaterThanOrEqual(revision);
+    // 用户再说一句「生成」= 对同一份草稿重新出价。
+    await handler({ capability: 'present', params: { operationId: OPERATION_ID, shotIds: ['shot-1'] }, lease });
+    expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(1);
+  });
+
+  it('C: 启动清扫只收「早于本进程」的出价；本进程里摆出去的卡有人在等，不许抽走；× 过的不在范围里', async () => {
+    const base = harness();
+    await mixedDraft(base);
+    const { handler, withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+    await handler({ capability: 'present', params: { operationId: OPERATION_ID, shotIds: ['shot-1'] }, lease });
+    const runs = () => [base.repository.read(PROJECT_ID, OPERATION_ID)!];
+    const withdraw = (projectId: string, operationId: string, at: string, reason: "stopped") => base.operations.withdraw(projectId, operationId, at, reason);
+    const presentedAt = runs()[0].generationPlan!.updatedAt;
+    // 本进程启动早于这次出价 → 有人在等 → 不动。
+    expect(await withdrawStalePresentations({ listRuns: runs, withdraw, processStartedAt: '2000-01-01T00:00:00.000Z' }, PROJECT_ID)).toEqual([]);
+    expect(withWindow.listPendingSpend(PROJECT_ID)).toHaveLength(1);
+    // 本进程启动晚于这次出价（= 上一个进程摆的）→ 收回。
+    const later = new Date(Date.parse(presentedAt) + 1000).toISOString();
+    expect(await withdrawStalePresentations({ listRuns: runs, withdraw, processStartedAt: later, now }, PROJECT_ID)).toEqual([OPERATION_ID]);
+    expect(withWindow.listPendingSpend(PROJECT_ID)).toEqual([]);
+    expect(runs()[0].generationPlan!.state).toBe('draft');
+    // 关的原因是「被停」（问这句话的那个回合随上一个进程没了），不是「用户关了卡」：回执据此说真话。
+    expect(runs()[0].generationPlan!.presentations?.at(-1)?.closed?.by).toBe('stopped');
+    // 已经收回的 / × 过的：再扫一遍是 no-op。
+    expect(await withdrawStalePresentations({ listRuns: runs, withdraw, processStartedAt: later, now }, PROJECT_ID)).toEqual([]);
+  });
+
+  // ── 裁决 A/B：报价卡上的结论递给正在等的那个回合，身份锚 operationId ──
+  it('A/B: 确认成功才递「confirmed」，× 递「declined」；改参数换了 quoteId 也递得到；没人等是 no-op', async () => {
+    const vendor = await startLoopbackVendor();
+    try {
+      const base = harness();
+      const { withWindow } = buildActions(base, vendor.origin, []);
+      await draft(base);
+      const heard: string[] = [];
+      const release = registerSpendWaiter(PROJECT_ID, OPERATION_ID, (decision) => heard.push(decision.kind));
+      const shown = withWindow.listPendingSpend(PROJECT_ID)[0];
+      // 旧报价确认 → 失败 → **不递**：卡还在等，等的那个回合也该继续等。
+      expect(await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: 'stale-quote' })).toMatchObject({ ok: false });
+      expect(heard).toEqual([]);
+      expect(await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: shown.quoteId })).toMatchObject({ ok: true });
+      expect(heard).toEqual(['confirmed']);
+      expect(spendDecisionAwaited(PROJECT_ID, OPERATION_ID), '递完即注销：同一笔不会被递第二次').toBe(false);
+      release();
+    } finally { await vendor.close(); }
+  });
+});
+
+it('S05: an old displayed quote cannot approve a revised candidate or higher price', async () => {
+  const vendor = await startLoopbackVendor();
+  const base = harness();
+  const submits: string[] = [];
+  const { withWindow } = buildActions(base, vendor.origin, submits);
+  try {
+    await draft(base);
+    const displayed = withWindow.listPendingSpend(PROJECT_ID)[0];
+    await withWindow.revisePendingSpend({ quoteId: withWindow.listPendingSpend(PROJECT_ID)[0].quoteId, projectId: PROJECT_ID, operationId: OPERATION_ID,
+      patch: { parameters: { size: '1536x1024' } } });
+    const result = await withWindow.confirmPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: displayed.quoteId });
+    expect(result).toMatchObject({ ok: false, message: 'generation_quote_changed' });
+    expect(submits).toEqual([]);
+    expect(base.repository.read(PROJECT_ID, OPERATION_ID)!.generationPlan!.state).toBe('draft');
+  } finally { await vendor.close(); }
+});
+
+it('rejects a revision from an older displayed quote before mutating the current batch', async () => {
+  const base = harness();
+  const { withWindow } = buildActions(base, 'http://127.0.0.1:1', []);
+  await draft(base);
+  const displayed = withWindow.listPendingSpend(PROJECT_ID)[0];
+  await base.operations.revise!(PROJECT_ID, OPERATION_ID, { patch: { prompt: 'new batch' } }, new Date().toISOString());
+  const before = base.repository.read(PROJECT_ID, OPERATION_ID);
+  expect(await withWindow.revisePendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: displayed.quoteId, patch: { prompt: 'old edit' } })).toMatchObject({ ok: false });
+  expect(base.repository.read(PROJECT_ID, OPERATION_ID)).toEqual(before);
+});
+
+
+// 2026-09-22 下午用户拍板改窄裁决 D：× 收回的是**这一次出价**。所以这条钉回原来那件事
+// （× 之后再 present，报价身份会变、候选一字不变），并把「第二次 × 不许变成错误」一起留着。
+it('× withdraws the quote: the card is gone, nothing is submitted, and the same operation re-quotes the identical candidate', async () => {
+  const base = harness(); const submits: string[] = [];
+  const { withWindow, handler } = buildActions(base, 'http://127.0.0.1:1', submits);
+  await draft(base);
+  const displayed = withWindow.listPendingSpend(PROJECT_ID)[0];
+  expect(await withWindow.discardPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: displayed.quoteId })).toMatchObject({ok:true});
+  expect(withWindow.listPendingSpend(PROJECT_ID)).toEqual([]);
+  // × 第二次（用户连点、或面板晚到一拍）不许变成一个错误弹给他：那张卡已经不在了。
+  expect(await withWindow.discardPendingSpend({ projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: displayed.quoteId }))
+    .toMatchObject({ ok: false });
+  await handler({capability:'present', params:{operationId:OPERATION_ID}, lease});
+  const reopened = withWindow.listPendingSpend(PROJECT_ID)[0];
+  expect(reopened.quoteId, '重新出价 = 新的报价身份（旧卡上那个数不许批这一张）').not.toBe(displayed.quoteId);
+  expect(reopened.planVersion).toBeGreaterThan(displayed.planVersion);
+  expect(reopened.shots, '候选一个字不变').toEqual(displayed.shots);
+  expect(submits).toEqual([]);
+});
+
+
+it('C12/C15: a real node id is not a task; a draft taskRef reports not_started without creating or cancelling execution', async () => {
+  const base = harness(); const submits: string[] = [];
+  const service = createProductionRunService({ repository: base.repository, projectRootResolver: () => base.root, previewSecret: 'test', requestRenderer: base.renderer.requestRenderer });
+  base.operations = createProductionGenerationOperationStore(service, { onPlanChanged: (projectId, operationId) => base.canvasLanding.landDraftOnCanvas(projectId, operationId) });
+  const { transport } = buildActions(base, 'http://127.0.0.1:1', submits);
+  await draft(base);
+  const nodeId = [...base.renderer.nodes.values()][0];
+  expect(nodeId).toBeTruthy(); expect(nodeId).not.toBe(OPERATION_ID);
+  const before = base.repository.read(PROJECT_ID, OPERATION_ID)!;
+  const adapter = transport('step');
+  for (const toolName of ['check_job', 'cancel_job']) {
+    const wrong = verbToTransportCall({ toolCallId: toolName, toolName, args: {domain:'generation', jobId:nodeId} })!;
+    expect(await adapter.tryExecute(wrong.call, new AbortController().signal)).toMatchObject({ok:false,code:'generation_operation_not_found'});
+    expect(base.repository.read(PROJECT_ID, OPERATION_ID)).toEqual(before);
+  }
+  const correct = verbToTransportCall({ toolCallId:'correct', toolName:'check_job', args:{domain:'generation',jobId:OPERATION_ID} })!;
+  const result = await adapter.tryExecute(correct.call,new AbortController().signal);
+  expect(result).toMatchObject({ok:true,result:{executionState:'not_started',taskRef:{domain:'generation',jobId:OPERATION_ID},operation:{operationId:OPERATION_ID,state:'draft'}}});
+  expect(before.jobs).toEqual([]);
+  expect(base.repository.read(PROJECT_ID, OPERATION_ID)).toEqual(before);
+  expect(submits).toEqual([]);
+});
+
+
+for (const pauseAt of ['lease','gate'] as const) it(`project replacement during ${pauseAt} cannot authorize a pending card`,async()=>{
+  const base=harness(); const submits:string[]=[];const built=buildActions(base,'http://127.0.0.1:1',submits);await draft(base);
+  let binding={projectId:PROJECT_ID,immutableProjectUuid:'project-uuid-1',projectGeneration:1};
+  let resume!:()=>void;let entered!:()=>void;
+  const blocked=new Promise<void>(r=>{resume=r});const reached=new Promise<void>(r=>{entered=r});let authorized=0;
+  const pause=async()=>{entered();await blocked};
+  const actions=createPendingSpendActions({isProjectOpen:()=>true,runs:{read:base.repository.read,list:base.repository.list},operations:base.operations,
+    planning:built.handler,receipts:built.receipts,rendererTarget:()=>({webContentsId:1,frameId:0,origin:'app://nomi'}),
+    committedBinding:()=>binding,leaseFor:async()=>{if(pauseAt==='lease')await pause();return lease},resolvePricing:()=>PRICING,now,
+    normalizePatch:(baseCandidate,patch)=>resolvePlanPatch({baseCandidate,userPatch:patch,registry}).normalizedPatch,
+    requestGenerationGate:async input=>{const gate=await built.authority.requestGenerationGate(input);if(pauseAt==='gate')await pause();return gate},
+    authorizeGeneration:async()=>{authorized++;throw new Error('authorization must not be reached')},
+  });
+  const quote=actions.listPendingSpend(PROJECT_ID)[0];const confirming=actions.confirmPendingSpend({projectId:PROJECT_ID,operationId:OPERATION_ID,quoteId:quote.quoteId});
+  await reached;binding={...binding,projectGeneration:2};resume();expect(await confirming).toMatchObject({ok:false});
+  expect(authorized).toBe(0);expect(submits).toEqual([]);
 });

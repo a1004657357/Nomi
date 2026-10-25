@@ -1,5 +1,5 @@
 /** 自定义调用编辑器：材料辅助生成，脚本与供应商配置才是持久化内容。 */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { useTranslation } from 'react-i18next'
 import { IconAlertTriangle, IconCheck, IconCopy, IconPlayerPlay, IconPlayerStop, IconPlus, IconSparkles, IconTrash } from '@tabler/icons-react'
@@ -14,7 +14,7 @@ import {
   confirmDialog,
 } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { resolveArchetypeForModel } from '../../config/modelArchetypes'
+import { resolveArchetypeForModel } from '../../../electron/shared/modelArchetypes'
 import { getTextBrain } from '../../workbench/api/promptLibraryApi'
 import { runWorkbenchTextTaskStream } from '../../workbench/api/taskApi'
 import { stripCodeFences } from './customCallIntent'
@@ -196,6 +196,7 @@ export function CustomCallEditor({
         await runWorkbenchTextTaskStream(
           brain.vendor,
           { kind: 'prompt_refine', prompt: instruction, extras: { modelKey: brain.modelKey } },
+          null, // 接入配置里的脚本起草不属于任何项目
           {
             signal: ctrl.signal,
             onDelta: (delta) => {

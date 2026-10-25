@@ -2,6 +2,18 @@ import type { GenerationNodeResult } from '../model/generationCanvasTypes'
 
 export const LIGHTWEIGHT_NODE_RENDER_THRESHOLD = 80
 export const LIGHTWEIGHT_NODE_ZOOM_THRESHOLD = 0.55
+export const DENSE_EDGE_PAN_THRESHOLD = 24
+export const MEDIA_HEAVY_NODE_THRESHOLD = 16
+export const VIDEO_HEAVY_NODE_THRESHOLD = 4
+
+export type CanvasPerformancePreference = 'auto' | 'smooth'
+
+export type CanvasPerformanceProfile = {
+  lightweightNodes: boolean
+  reduceEffects: boolean
+  suspendMediaWhileMoving: boolean
+  deferEdgesWhileMoving: boolean
+}
 
 export type LightweightNodePreview = {
   kind: 'image' | 'video'
@@ -26,27 +38,39 @@ export function resolveLightweightNodePreview(input: {
   return null
 }
 
-export function shouldUseLightweightNodeRendering(nodeCount: number, zoom: number): boolean {
-  return nodeCount > LIGHTWEIGHT_NODE_RENDER_THRESHOLD && zoom < LIGHTWEIGHT_NODE_ZOOM_THRESHOLD
+/**
+ * 订阅原语（2026-09-25 画布跟手）：节点外壳只订这两个布尔，跨过门槛才重渲。
+ * 之前每张卡订节点总数 + `useViewport()`，新建 / 删除一个节点、平移缩放的每一帧，全部卡片都重渲。
+ */
+export function isLargeCanvas(nodeCount: number): boolean {
+  return nodeCount > LIGHTWEIGHT_NODE_RENDER_THRESHOLD
+}
+
+export function isZoomedOutForLightweight(zoom: number): boolean {
+  return zoom < LIGHTWEIGHT_NODE_ZOOM_THRESHOLD
+}
+
+export function shouldUseLightweightNodeRendering(largeCanvas: boolean, zoomedOut: boolean): boolean {
+  return largeCanvas && zoomedOut
 }
 
 export function shouldUseLightweightNodeRenderingForSelection(input: {
-  nodeCount: number
-  zoom: number
+  largeCanvas: boolean
+  zoomedOut: boolean
   selected: boolean
   primarySelection: boolean
 }): boolean {
-  return shouldUseLightweightNodeRendering(input.nodeCount, input.zoom)
-    || (input.nodeCount > LIGHTWEIGHT_NODE_RENDER_THRESHOLD && input.selected && !input.primarySelection)
+  return shouldUseLightweightNodeRendering(input.largeCanvas, input.zoomedOut)
+    || (input.largeCanvas && input.selected && !input.primarySelection)
 }
 
 export function retainLargeCanvasLightweightRendering(input: {
   retained: boolean
-  nodeCount: number
+  largeCanvas: boolean
   selected: boolean
   primarySelection: boolean
 }): boolean {
-  if (input.nodeCount <= LIGHTWEIGHT_NODE_RENDER_THRESHOLD || input.primarySelection) return false
+  if (!input.largeCanvas || input.primarySelection) return false
   return input.retained || input.selected
 }
 
@@ -57,4 +81,51 @@ export function shouldRenderFullNodeContent(input: {
 }): boolean {
   if (!input.lightweightMode) return true
   return input.selected || input.focusFlash
+}
+
+export function shouldDeferCanvasEdgesWhilePanning(edgeCount: number): boolean {
+  return edgeCount >= DENSE_EDGE_PAN_THRESHOLD
+}
+
+export function resolveCanvasPerformanceProfile(input: {
+  preference: CanvasPerformancePreference
+  nodeCount: number
+  edgeCount: number
+  mediaNodeCount: number
+  videoNodeCount: number
+  zoom: number
+}): CanvasPerformanceProfile {
+  const automaticLightweight = shouldUseLightweightNodeRendering(isLargeCanvas(input.nodeCount), isZoomedOutForLightweight(input.zoom))
+  const mediaHeavy = input.mediaNodeCount >= MEDIA_HEAVY_NODE_THRESHOLD
+  const videoHeavy = input.videoNodeCount >= VIDEO_HEAVY_NODE_THRESHOLD
+  const reduceEffects =
+    input.preference === 'smooth'
+    || input.nodeCount > 50
+    || input.edgeCount >= 40
+    || mediaHeavy
+    || videoHeavy
+  const lightweightNodes =
+    automaticLightweight
+    || (
+      input.preference === 'smooth'
+      && input.nodeCount > 24
+      && input.zoom < 0.85
+    )
+    || (
+      mediaHeavy
+      && input.nodeCount > 40
+      && input.zoom < 0.7
+    )
+
+  return {
+    lightweightNodes,
+    reduceEffects,
+    suspendMediaWhileMoving:
+      input.preference === 'smooth'
+      || input.mediaNodeCount >= 8
+      || input.videoNodeCount >= 2,
+    deferEdgesWhileMoving:
+      input.preference === 'smooth'
+      || shouldDeferCanvasEdgesWhilePanning(input.edgeCount),
+  }
 }

@@ -63,7 +63,6 @@ function syntheticContract(
     aliases: { mcp: alias },
     effect,
     exposure,
-    projections: { mcp: { description: `${id} description` } },
   };
 }
 
@@ -147,7 +146,7 @@ describe("canvas.read MCP capability projection", () => {
     expect(CANVAS_READ_MCP_ADAPTER.transportInputSchema).toEqual({
       type: "object",
       properties: {
-        leaseHandle: { type: "string", minLength: 1, description: "nomi_session_open 返回的项目租约句柄。" },
+        leaseHandle: { type: "string", minLength: 1, description: "Project lease handle from nomi_session_open." },
         projectId: { type: "string", minLength: 1 },
       },
       required: ["leaseHandle"],
@@ -170,9 +169,12 @@ describe("canvas.read MCP capability projection", () => {
   });
 
   it("registers only the explicitly project-session-authorized canvas.read adapter", () => {
-    // 11 = 9 + 剪辑面板布局两口（layout.read / layout.write，2026-09-05 T1 面板系统）。
     // 9，不是 10：nomi_canvas_plan 于 2026-09-05 退役（与 nomi_canvas_edit 在 tools/list 里字节级相同）。
-    expect(MCP_CAPABILITY_RESOLVER.list()).toHaveLength(11);
+    // 11 = 9 + 接模型两口（model.onboarding.setup / .remove，2026-09-18 #754：手写的
+    // nomi_integration / nomi_integration_manage 同 commit 删掉，换成从动词声明派生的这两个）。
+    // 12 = 11 + 试跑（model.onboarding.try，2026-09-21）：它花钱，所以是自己一个契约而不是
+    // setup 的第五个 action——付费边界的判据全挂在契约的 effect 上。
+    expect(MCP_CAPABILITY_RESOLVER.list()).toHaveLength(12);
     const [tool] = MCP_CAPABILITY_RESOLVER.list();
     expect(tool).toMatchObject({
       name: CANVAS_READ_CAPABILITY.aliases.mcp,
@@ -245,7 +247,6 @@ describe("canvas.read MCP capability projection", () => {
     const forgedContract: CapabilityContract<unknown, unknown> = {
       ...CANVAS_READ_CAPABILITY,
       aliases: { mcp: "nomi_forged_canvas_read" },
-      projections: { mcp: { description: "forged legacy canvas read" } },
     };
     const forgedClone = {
       ...CANVAS_READ_MCP_ADAPTER,

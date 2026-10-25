@@ -1,5 +1,8 @@
 import { defaultCustomCallTaskKind, resolveCapabilityModeEvidence } from "./capabilityModeManifest";
 import type { BillingModelKind, ProfileKind } from "../catalog/types";
+import { CODEX_IMG2_MODEL_SEED, CODEX_VENDOR_SEED } from "../catalog/codexImagegen";
+import { JIMENG_WEB_IMAGE_MODEL_SEED, JIMENG_WEB_SEEDANCE_MODEL_SEED, JIMENG_WEB_VENDOR_SEED } from "../catalog/jimengWeb";
+import { PAVO_WEB_AGNES_FLASH_MODEL_SEED, PAVO_WEB_VENDOR_SEED } from "../catalog/pavoWeb";
 
 export type PublishedExecutionModel = {
   enabled?: boolean;
@@ -45,6 +48,15 @@ const EXECUTABLE_TASKS_BY_KIND: Record<BillingModelKind, readonly ProfileKind[]>
   audio: ["text_to_audio", "image_to_audio", "transcribe"],
   model3d: ["text_to_3d", "image_to_3d"],
 };
+
+// runTask routes these shipped models to codexImageTask / webBridge before HTTP mapping lookup.
+// Match exact seed identities: sibling connections and user-created models need their own evidence.
+const NATIVE_EXECUTION_MODELS = [
+  { vendorKey: CODEX_VENDOR_SEED.key, model: CODEX_IMG2_MODEL_SEED },
+  { vendorKey: JIMENG_WEB_VENDOR_SEED.key, model: JIMENG_WEB_IMAGE_MODEL_SEED },
+  { vendorKey: JIMENG_WEB_VENDOR_SEED.key, model: JIMENG_WEB_SEEDANCE_MODEL_SEED },
+  { vendorKey: PAVO_WEB_VENDOR_SEED.key, model: PAVO_WEB_AGNES_FLASH_MODEL_SEED },
+] as const;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -124,14 +136,31 @@ export function derivePublishedExecution(
   const adapter = record(record(model.meta)?.adapter);
   const publicationMask = adapterPublicationModeMask(model.meta);
   const activeRevision = typeof adapter?.activeRevision === "string" && Boolean(adapter.activeRevision.trim());
-  const restoredPredecessorPublication = Boolean(adapter)
-    && publicationMask.present
-    && !Object.keys(adapter || {}).some((key) => key !== ADAPTER_PUBLICATION_MODES);
 
-  // Adapter metadata means this row belongs to the certification domain. Raw
-  // enabled mappings or scripts are staging declarations, never publication
-  // evidence. Only a certified active revision may contribute executable modes.
-  if (!adapter) {
+  // A certified active revision is the strongest evidence: it names exactly which
+  // modes were proven. Without one the row still publishes whatever its enabled
+  // mappings and scripts declare.
+  //
+  // 这一条是 2026-09-11 拍板的不变量：**自检失败不下架**。此前 `meta.adapter` 一存在就改判
+  // 「只认 activeRevision」，而一次失败的自检恰好只写 `adapter.state="failed"`、不写
+  // activeRevision —— 于是一个手动配好、本来能在画布模型框里选到的模型，按一次「验证」按钮
+  // 就永久消失，且没有回头路（单向门）。自检只增不减：它能把一行从「未试跑」升格为「已验证」，
+  // 永远不能把它降到比没自检过更差。回归钉子见 modelPublication.test.ts。
+  if (activeRevision) {
+    if (Array.isArray(adapter?.modes)) {
+      for (const rawMode of adapter.modes) {
+        const mode = record(rawMode);
+        const taskKind = mode?.taskKind as ProfileKind;
+        if (mode?.state === "verified" && typeof mode.taskKind === "string" && supported.includes(taskKind)) {
+          modes.add(taskKind);
+        }
+      }
+    }
+  } else {
+    const nativeExecution = NATIVE_EXECUTION_MODELS.some((entry) =>
+      entry.vendorKey === model.vendorKey && entry.model.modelKey === model.modelKey && entry.model.kind === model.kind,
+    );
+    if (nativeExecution) for (const taskKind of supported) modes.add(taskKind);
     for (const mapping of evidence.mappings || []) {
       if (
         mapping.enabled === true &&
@@ -142,34 +171,10 @@ export function derivePublishedExecution(
         modes.add(mapping.taskKind as ProfileKind);
       }
     }
-    for (const taskKind of customCallModes(model, supported)) modes.add(taskKind);
-  } else if (activeRevision) {
-    if (Array.isArray(adapter.modes)) {
-      for (const rawMode of adapter.modes) {
-        const mode = record(rawMode);
-        const taskKind = mode?.taskKind as ProfileKind;
-        if (mode?.state === "verified" && typeof mode.taskKind === "string" && supported.includes(taskKind)) {
-          modes.add(taskKind);
-        }
-      }
-    }
-    for (const taskKind of customCallModes(model, supported)) modes.add(taskKind);
-    if (model.kind === "text") modes.add("chat");
-  } else if (restoredPredecessorPublication) {
-    // Candidate deletion is a certification-domain command. It restores the
-    // predecessor by writing a publication-only adapter mask, while the old
-    // executable mappings/scripts remain the concrete evidence. Renderer raw
-    // writes cannot create this marker (rendererCatalogMutation strips it).
-    for (const mapping of evidence.mappings || []) {
-      if (mapping.enabled === true && mapping.vendorKey === model.vendorKey
-        && (!mapping.modelKey || mapping.modelKey === model.modelKey)
-        && supported.includes(mapping.taskKind as ProfileKind)) modes.add(mapping.taskKind as ProfileKind);
-    }
-    for (const taskKind of customCallModes(model, supported)) modes.add(taskKind);
-    if (model.kind === "text") modes.add("chat");
   }
+  for (const taskKind of customCallModes(model, supported)) modes.add(taskKind);
+  if (model.kind === "text") modes.add("chat");
 
-  if (!adapter && model.kind === "text") modes.add("chat");
   const allowed = publicationMask.present ? new Set(publicationMask.modes) : null;
   const publishedModes = supported.filter((taskKind) => modes.has(taskKind) && (!allowed || allowed.has(taskKind)));
   return {

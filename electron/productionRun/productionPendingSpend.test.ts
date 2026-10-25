@@ -1,3 +1,4 @@
+import { normalizeLegacyPresentation } from "../shared/productionGenerationPresentation";
 import { describe, expect, it } from "vitest";
 
 import type { PlanCandidate } from "../capabilityCore/executionContract";
@@ -33,19 +34,22 @@ function candidate(id: string, modelId: string, parameters: Record<string, unkno
   };
 }
 
+/**
+ * 夹具按上一版的形状写（没有 `presentations`）：和仓库读盘一样先过唯一的归一点——「草稿没藏卡 = 卡开着」。
+ */
 function run(overrides: Partial<ProductionRun> = {}): ProductionRun {
   const top = candidate("cand-a", "priced", { duration: "3" });
-  return {
+  return normalizeLegacyPresentation({
     schemaVersion: 1, runId: "op-a", projectId: "project-1", revision: 3,
     status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
     origin: { host: "nomi", actorId: "project-agent-host" },
-    policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-    budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+    policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+    budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
     planVersion: 1, snapshotCursor: 3, stages: [], gates: [], jobs: [], artifacts: [],
     generationPlan: { operationId: "op-a", state: "draft", candidate: top, nodeId: "node-a", updatedAt: NOW },
     createdAt: NOW, updatedAt: NOW,
     ...overrides,
-  };
+  });
 }
 
 describe("付费卡的宿主投影", () => {
@@ -79,24 +83,29 @@ describe("付费卡的宿主投影", () => {
 
   it("已封印 + 付费门在等 = 同一张卡的另一档（带 gateId；卡不区分这两档，命令那层才区分）", () => {
     const sealed = run({
-      gates: [{ gateId: "gate-1", scope: "budget_envelope", status: "waiting", planHash: "d1", authorizationDigest: "d1", title: "", summary: "", jobIds: [], createdAt: NOW, expiresAt: NOW } as ProductionRun["gates"][number]],
+      gates: [{ gateId: "gate-1", scope: "budget_envelope", status: "waiting", planHash: "d1", authorizationDigest: "d1", authorizationEnvelope: { gateId: "gate-1", jobs: [] } as never, title: "", summary: "", jobIds: [], createdAt: NOW, expiresAt: NOW } as ProductionRun["gates"][number]],
     });
-    sealed.generationPlan = { ...sealed.generationPlan!, state: "sealed", authorizationGateId: "gate-1", authorizationDigest: "d1" };
+    sealed.generationPlan = { ...sealed.generationPlan!, state: "sealed" };
     const pending = projectPendingSpendConfirm(sealed, resolvePricing);
     expect(pending?.gateId).toBe("gate-1");
   });
 
-  it("门已经批过 / 计划已提交 / 已取消 → 不出卡（那已经不是「等你决定」了）", () => {
+  it("这一次出价里每一镜都决定了 / 卡关了 / 计划取消了 → 不出卡（那已经不是「等你决定」了）", () => {
+    // 逐镜（付费卡①）：卡在不在只看这一次出价——每一镜都有一份批过的授权盖着，就没有要问的了。
     const decided = run({
-      gates: [{ gateId: "gate-1", scope: "budget_envelope", status: "approved", planHash: "d1", authorizationDigest: "d1", title: "", summary: "", jobIds: [], createdAt: NOW, expiresAt: NOW } as ProductionRun["gates"][number]],
+      gates: [{ gateId: "gate-1", scope: "budget_envelope", status: "approved", planHash: "d1", authorizationDigest: "d1",
+        authorizationEnvelope: { gateId: "gate-1", jobs: [{ shotId: "cand-a" }] } as never, title: "", summary: "", jobIds: [], createdAt: NOW, expiresAt: NOW } as ProductionRun["gates"][number]],
     });
-    decided.generationPlan = { ...decided.generationPlan!, state: "sealed", authorizationGateId: "gate-1", authorizationDigest: "d1" };
+    // 那道门是在这一次出价里点出来的（出价开着时 Run 上还没有付费门：fromGate 0）。
+    decided.generationPlan = { ...decided.generationPlan!, state: "sealed", presentations: [{ shotIds: ["cand-a"], openedAt: NOW, fromGate: 0 }] };
     expect(projectPendingSpendConfirm(decided, resolvePricing)).toBeUndefined();
-    for (const state of ["submitted", "cancelled"] as const) {
-      const other = run();
-      other.generationPlan = { ...other.generationPlan!, state };
-      expect(projectPendingSpendConfirm(other, resolvePricing)).toBeUndefined();
-    }
+    const closed = run();
+    closed.generationPlan = { ...closed.generationPlan!, state: "submitted",
+      presentations: [{ shotIds: ["cand-a"], openedAt: NOW, fromGate: 0, closed: { at: NOW, by: "user_closed" } }] };
+    expect(projectPendingSpendConfirm(closed, resolvePricing)).toBeUndefined();
+    const cancelled = run();
+    cancelled.generationPlan = { ...cancelled.generationPlan!, state: "cancelled" };
+    expect(projectPendingSpendConfirm(cancelled, resolvePricing)).toBeUndefined();
   });
 
   it("外部 MCP 宿主发起的那笔不进面板：它的用户此刻没在看这块面板", () => {
@@ -105,19 +114,68 @@ describe("付费卡的宿主投影", () => {
   });
 
   it("多镜只投影被勾选的那些，序号从 1 起（翻页器印的就是它）", () => {
-    const multi = run();
-    multi.generationPlan = {
-      ...multi.generationPlan!,
+    const base = run();
+    const multi = run({ generationPlan: {
+      ...base.generationPlan!,
+      presentations: undefined,
       shots: [
         { shotId: "s1", candidate: candidate("c1", "priced"), nodeId: "node-1", updatedAt: NOW },
         { shotId: "s2", candidate: candidate("c2", "priced"), included: false, updatedAt: NOW },
         { shotId: "s3", candidate: candidate("c3", "unpriced"), nodeId: "node-3", updatedAt: NOW },
       ],
-    };
+    } });
     const pending = projectPendingSpendConfirm(multi, resolvePricing)!;
     expect(pending.shots.map((shot) => shot.shotId)).toEqual(["s1", "s3"]);
     expect(pending.shots.map((shot) => shot.index)).toEqual([1, 2]);
     expect(pending.unknownShotCount).toBe(1);
+  });
+
+  /**
+   * 「我知道有一笔在等，但我一镜都画不出来」——这不是空，是失败（2026-09-12）。
+   *
+   * 它原来写的是 `return undefined`，和「真的没有要确认的东西」长得一模一样。后果是：
+   * 门一直 `waiting`，面板一张卡都没有，用户只看到沉默。现在它喊出来，读通道据此拒绝，
+   * 渲染层渲那张会说话的卡。
+   */
+  it("等人点头却投影不出任何一镜 → 抛，不写成「没有」", () => {
+    const broken = run();
+    broken.generationPlan = { ...broken.generationPlan!, shots: [] };
+    // 阳性对照：`shotsOf` 的退路把 `plan.candidate` 当成那一镜，所以正常的空 shots 仍然出卡。
+    expect(projectPendingSpendConfirm(broken, resolvePricing)?.shots).toHaveLength(1);
+
+    // 退路自己也塌了的时候：**抛**，不是回 undefined。断在 `shotsOf` 还是断在那道守卫都行，
+    // 这条测试要的只有一件事——这个函数不许在「明明有一笔在等」的时候安静地回「没有」。
+    const empty = run();
+    empty.generationPlan = { ...empty.generationPlan!, shots: [], candidate: undefined as never };
+    let outcome: unknown;
+    try { outcome = projectPendingSpendConfirm(empty, resolvePricing); } catch (error) { outcome = error; }
+    expect(outcome).toBeInstanceOf(Error);
+  });
+
+  // ── ：「全自动」档不该再弹报价卡 ───────────────────────────────────
+  //
+  // 三条一起才算钉住，少一条就会退回旧形状：①「代答中不出卡」是新行为；②「代答不上的那一笔
+  // 照旧出卡」是**必须保留**的行为（策略答不了才问人，也包括用户看着一张卡时切进全自动）；
+  // ③ 封印那一支一个字不动——代答链第一步就是封印，之后任何一步失败都停在「sealed + 门还等着」。
+  it("全自动档代答中的那一笔不投影成卡（草稿落盘到封印之间不许闪卡）", () => {
+    const answered = (projectId: string, operationId: string) => projectId === "project-1" && operationId === "op-a";
+    expect(projectPendingSpendConfirm(run(), resolvePricing, answered)).toBeUndefined();
+    expect(listPendingSpendConfirms([run()], resolvePricing, answered)).toEqual([]);
+  });
+
+  it("没有代答在飞的草稿照旧出卡（每步问 / 自动改两档，以及代答失败后卡回到原处）", () => {
+    const answeringSomethingElse = (_projectId: string, operationId: string) => operationId === "op-other";
+    expect(projectPendingSpendConfirm(run(), resolvePricing, answeringSomethingElse)).toBeDefined();
+    // 谓词缺席 = 外部 MCP 宿主那条路，逐字不变。
+    expect(projectPendingSpendConfirm(run(), resolvePricing)).toBeDefined();
+  });
+
+  it("封印后门还等着的那一笔，在全自动档下仍然出卡（代答链失败 = 它真的在等人）", () => {
+    const sealed = run({
+      gates: [{ gateId: "gate-a", scope: "budget_envelope", status: "waiting", planHash: "d-a", authorizationDigest: "d-a", authorizationEnvelope: { gateId: "gate-a", jobs: [] } as never, title: "", summary: "", jobIds: [], createdAt: NOW, expiresAt: NOW } as ProductionRun["gates"][number]],
+    });
+    sealed.generationPlan = { ...sealed.generationPlan!, state: "sealed" };
+    expect(projectPendingSpendConfirm(sealed, resolvePricing, () => true)).toBeDefined();
   });
 
   it("一个项目里多笔时按 updatedAt 排序（介入槽只显示第一张，其余算「还有 N 条」）", () => {
