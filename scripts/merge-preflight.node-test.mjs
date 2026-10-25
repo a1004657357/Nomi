@@ -234,6 +234,25 @@ let out = result.stdout || Buffer.alloc(0)
 if (args[0] === 'diff' && args.includes('--unified=0')) {
   if (process.env.PREFLIGHT_GIT_FAULT === 'patch-empty') out = Buffer.alloc(0)
   if (process.env.PREFLIGHT_GIT_FAULT === 'patch-error') process.exit(1)
+  if (process.env.PREFLIGHT_GIT_FAULT === 'patch-body-empty') out = out.subarray(0, out.indexOf(Buffer.from([0, 0])) + 2)
+  if (process.env.PREFLIGHT_GIT_FAULT === 'patch-identity') {
+    const boundary = out.indexOf(Buffer.from([0, 0]))
+    const meta = out.subarray(0, boundary).toString('utf8').split('\\0')
+    meta[1] = 'invented/not-in-tree.ts'
+    out = Buffer.concat([Buffer.from(meta.join('\\0')), out.subarray(boundary)])
+  }
+  if (process.env.PREFLIGHT_GIT_FAULT === 'patch-oid') {
+    const text = out.toString('utf8')
+    out = Buffer.from(text.replace(/(:[0-7]{6} [0-7]{6} )[a-f0-9]{40}/, '$1' + 'f'.repeat(40)))
+  }
+}
+if (args[0] === 'diff' && args.includes('-G') && args.includes('--name-status')) {
+  const parts = out.toString('utf8').split('\\0')
+  if (process.env.PREFLIGHT_GIT_FAULT === 'candidate-dropped') parts.splice(0, 2)
+  if (process.env.PREFLIGHT_GIT_FAULT === 'candidate-foreign') parts.splice(0, 0, 'A', 'invented/not-in-tree.ts')
+  if (process.env.PREFLIGHT_GIT_FAULT === 'candidate-status') parts[0] = 'D'
+  if (process.env.PREFLIGHT_GIT_FAULT === 'candidate-duplicate') parts.splice(0, 0, ...parts.slice(0, 2))
+  out = Buffer.from(parts.join('\\0'))
 }
 if (args[0] === 'diff' && args.includes('--name-status')) {
   const parts = out.toString('utf8').split('\\0')
@@ -278,14 +297,14 @@ test('真实 CLI：HTTP406 清空 diff + missing #961，保留 files 仍必须�
   assert.doesNotMatch(result.stdout, /扫描干净|之前开的 PR/)
 })
 
-function runPreflight({ view = fixture.view, policy = '2026-10-04T00:00:00Z', metadataError } = {}) {
+function runPreflight({ view = fixture.view, policy = '2026-10-04T00:00:00Z', metadataError, cwd = fixture.cwd } = {}) {
   // Before implementation this guard fails without ever running the real gh CLI.
   assert.equal(typeof preflight.readPullRequestChanges, 'function')
   const logs = []
   const errors = []
   const calls = []
   const code = preflight.main(['2', '--repo', TARGET_REPO], {
-    cwd: fixture.cwd,
+    cwd,
     log: (text) => logs.push(text), error: (text) => errors.push(text),
     runGh: (args) => {
       calls.push(args)
@@ -428,8 +447,91 @@ test('gitattributes binary 标记及任意后缀 binary blob 都不能隐藏新�
     head: { ...fixture.view.head, sha: fixture.opaqueHead }, changed_files: 7,
   }, { cwd: fixture.cwd })
   assert.match(opaque.addedLines, /AbortSignal/)
-  assert.ok(opaque.addedLines.split('\n').includes('+++AbortSignal'), 'source starting ++ is not a +++ file header')
+  assert.ok(opaque.addedLines.split('\n').includes('++AbortSignal'), 'keep raw source ++, strip only the native diff indicator')
   assert.deepEqual(classifyChange(opaque.files, opaque.addedLines).classes, ['可打断'])
+})
+
+test('非空 raw tree 允许空 cancellation patch；候选清单/身份/状态/patch 不一致仍拒绝', async t => {
+  const empty = preflight.readPullRequestChanges({ ...fixture.view,
+    base: { ...fixture.view.base, sha: fixture.ancestor },
+    head: { ...fixture.view.head, sha: fixture.view.base.sha }, changed_files: 1,
+  }, { cwd: fixture.cwd })
+  assert.equal(empty.files.length, 1)
+  assert.equal(empty.addedLines, '')
+  assert.deepEqual(empty.cancellationPaths, [])
+  for (const gitFault of ['candidate-dropped', 'candidate-foreign', 'candidate-status', 'candidate-duplicate', 'patch-body-empty', 'patch-identity', 'patch-oid']) {
+    await t.test(gitFault, () => {
+      const result = runCliFixture({ gitFault })
+      assert.equal(result.status, 2, result.stdout + result.stderr)
+      assert.match(result.stderr, /候选|patch|完整|身份/)
+      assert.doesNotMatch(result.stdout, /扫描干净/)
+    })
+  }
+})
+
+test('65MiB 无关 binary 超原 buffer，原生 -G 只取任意后缀的跨行/++ 取消文本', t => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-preflight-large-'))
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }))
+  const git = (args, input) => execFileSync('git', args, {
+    cwd, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GIT_ALLOW_PROTOCOL: '' },
+  }).trim()
+  git(['init', '-b', 'main'])
+  git(['config', 'user.name', 'Preflight fixture'])
+  git(['config', 'user.email', 'preflight@example.invalid'])
+  const emptyTree = git(['mktree'], '')
+  const base = git(['commit-tree', emptyTree, '-m', 'empty base'])
+  const payload = Buffer.alloc(1024 * 1024, 120)
+  payload[0] = 0
+  payload[payload.length - 1] = 10
+  const binary = git(['hash-object', '-w', '--stdin'], payload)
+  const code = git(['hash-object', '-w', '--stdin'], 'const controller = new\n  AbortController()\n++AbortSignal\n')
+  const sourcePath = 'flow\nsource.data'
+  const entries = Array.from({ length: 65 }, (_, i) => `100644 blob ${binary}\topaque-${i}.payload\0`)
+  const makeHead = records => git(['commit-tree', git(['mktree', '-z'], records.join('')), '-p', base, '-m', 'generated blobs'])
+  const head = makeHead([...entries, `100644 blob ${code}\t${sourcePath}\0`])
+  const view = { ...fixture.view,
+    base: { ...fixture.view.base, sha: base }, head: { ...fixture.view.head, sha: head }, changed_files: 66,
+  }
+  const outcome = run => { try { return { result: run() } } catch (error) { return { code: error.code || error.message } } }
+  const baseline = outcome(() => execFileSync('git', ['diff', '--text', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--unified=0', `${base}...${head}`], {
+    cwd, maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GIT_ALLOW_PROTOCOL: '' },
+  }))
+  assert.equal(baseline.code, 'ENOBUFS', 'real unfiltered patch must exceed the unchanged original limit')
+  const filtered = outcome(() => preflight.readPullRequestChanges(view, { cwd }))
+  assert.equal(filtered.code, undefined, `filtered patch failed: ${filtered.code}`)
+  const result = filtered.result
+  assert.equal(result.files.length, 66, 'all binary paths remain in complete raw classification')
+  assert.deepEqual(result.cancellationPaths, [sourcePath])
+  assert.match(result.addedLines, /new\n  AbortController/)
+  assert.ok(result.addedLines.split('\n').includes('++AbortSignal'))
+  assert.equal(classifyChange(result.files, result.addedLines).fourClass, true)
+  const constructorOnly = git(['hash-object', '-w', '--stdin'], 'const controller = new\n  AbortController()\n')
+  const crossLineHead = makeHead([`100644 blob ${constructorOnly}\t${sourcePath}\0`])
+  const crossLineView = { ...view, head: { ...view.head, sha: crossLineHead }, changed_files: 1 }
+  const crossLine = preflight.readPullRequestChanges(crossLineView, { cwd })
+  assert.deepEqual(classifyChange(crossLine.files, crossLine.addedLines).classes, ['可打断'])
+  const starOnly = FULL_CARD.replace(/^\| [5-8] .*\n/gm, '').split('## 独立验收')[0]
+  const blocked = runPreflight({ cwd, view: { ...crossLineView, body: starOnly } })
+  assert.equal(blocked.code, 1)
+  assert.match(blocked.text, /四类：命中（可打断）/)
+  assert.match(blocked.text, /缺格：5、6、7、8/)
+  assert.match(blocked.text, /缺 `## 独立验收`/)
+  assert.doesNotMatch(blocked.text, /扫描干净/)
+  const accepted = runPreflight({ cwd, view: crossLineView })
+  assert.equal(accepted.code, 0)
+  assert.match(accepted.text, /设计卡：9 格都填了/)
+  assert.match(accepted.text, /验收线 线 B ≠ 实现线 线 A/)
+  const mention = git(['hash-object', '-w', '--stdin'], 'const constructorType = AbortController\n')
+  const mentionHead = makeHead([`100644 blob ${mention}\t${sourcePath}\0`])
+  const mentionOnly = preflight.readPullRequestChanges({ ...view, head: { ...view.head, sha: mentionHead }, changed_files: 1 }, { cwd })
+  assert.deepEqual(mentionOnly.cancellationPaths, [sourcePath])
+  assert.equal(classifyChange(mentionOnly.files, mentionOnly.addedLines).fourClass, false, '-G is only a superset, not the classifier')
+  // A large relevant candidate must still hit the same cap, never truncate/pass.
+  payload.write('AbortSignal', 1)
+  const relevantBlob = git(['hash-object', '-w', '--stdin'], payload)
+  const relevantHead = makeHead(entries.map(line => line.replace(binary, relevantBlob)))
+  const capped = outcome(() => preflight.readPullRequestChanges({ ...view, head: { ...view.head, sha: relevantHead }, changed_files: 65 }, { cwd }))
+  assert.equal(capped.code, 'ENOBUFS')
 })
 
 test('旧 Git 忽略 NO_LAZY_FETCH 时，缺对象仍零 transport；canonical helper 同样阻断', t => {

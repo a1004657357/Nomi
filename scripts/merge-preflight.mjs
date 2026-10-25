@@ -29,6 +29,9 @@ const FOUR_CLASS_RULES = [
 ]
 
 const TEST_FILE = /\.(?:test|spec)\.[^.]+$|\.node-test\.[cm]?js$|(?:^|\/)(?:tests?|__tests__)\//
+const CANCELLATION_SYMBOLS = { constructor: 'AbortController', signal: 'AbortSignal' }
+const CANCELLATION_GIT_PATTERN = Object.values(CANCELLATION_SYMBOLS).join('|')
+const CANCELLATION_ADDED_PATTERN = new RegExp(`\\bnew\\s+${CANCELLATION_SYMBOLS.constructor}\\b|\\b${CANCELLATION_SYMBOLS.signal}\\b`)
 
 /** files: [{ path, status }]；addedLines: diff 里新增行的文本（用来认 AbortController）。 */
 export function classifyChange(files, addedLines = '') {
@@ -42,7 +45,7 @@ export function classifyChange(files, addedLines = '') {
     if (/^src\/design\//.test(p)) hits.push({ cls: '新界面', path: p })
     if (/^src\/.*\.tsx$/s.test(p) && file.status === 'A') hits.push({ cls: '新界面', path: p })
   }
-  if (/\bnew\s+AbortController\b|\bAbortSignal\b/.test(addedLines)) hits.push({ cls: '可打断', path: '(diff 新增 AbortController)' })
+  if (CANCELLATION_ADDED_PATTERN.test(addedLines)) hits.push({ cls: '可打断', path: '(diff 新增 AbortController)' })
   const classes = [...new Set(hits.map((hit) => hit.cls))]
   return { fourClass: classes.length > 0, classes, hits }
 }
@@ -217,6 +220,47 @@ function readCompleteTrees(commits, cwd) {
   return trees
 }
 
+function readCancellationPatch({ range, options, files, before, after, cwd }) {
+  const filtered = [...options, '-G', CANCELLATION_GIT_PATTERN]
+  const candidates = gitNameStatus(['diff', ...filtered, '--name-status', range, '--'], {
+    cwd, env: gitEnvironment(), maxBuffer: GIT_MAX_BUFFER,
+  })
+  const rawByPath = new Map(files.map(file => [file.path, file.status]))
+  const candidateByPath = new Map(candidates.map(file => [file.path, file.status]))
+  if (candidateByPath.size !== candidates.length || candidates.some(file => rawByPath.get(file.path) !== file.status)) {
+    throw new Error('取消文本候选不是完整 raw 清单的唯一同状态子集')
+  }
+  // Native Git emits the NUL-safe raw identities and their patches together.
+  // Successful bounded capture, not a hand-parsed filename header, owns the read.
+  const output = git(['diff', ...filtered, '--patch-with-raw', '-z', '--no-abbrev',
+    '--output-indicator-new=>', '--unified=0', range, '--'], cwd)
+  if (!candidates.length) {
+    if (output.length) throw new Error('空取消候选却返回非空 patch')
+    return { addedLines: '', cancellationPaths: [] }
+  }
+  const boundary = output.indexOf('\0\0')
+  if (boundary < 0 || !output.slice(boundary + 2).startsWith('diff --git ')) {
+    throw new Error('取消候选缺少完整 raw 身份或 patch 正文')
+  }
+  const identities = splitNulPaths(output.slice(0, boundary + 1))
+  const seen = new Set()
+  for (let i = 0; i < identities.length; i += 2) {
+    const match = /^:([0-7]{6}) ([0-7]{6}) ([a-f0-9]{40}) ([a-f0-9]{40}) ([ADMT])$/.exec(identities[i])
+    const file = identities[i + 1]
+    const old = before.get(file)?.split(' ') ?? ['000000', '', '0'.repeat(40)]
+    const next = after.get(file)?.split(' ') ?? ['000000', '', '0'.repeat(40)]
+    if (!match || seen.has(file) || candidateByPath.get(file) !== match[5]
+      || match[1] !== old[0] || match[2] !== next[0] || match[3] !== old[2] || match[4] !== next[2]) {
+      throw new Error('取消候选 raw 身份与完整 tree/候选清单不匹配')
+    }
+    seen.add(file)
+  }
+  if (seen.size !== candidates.length) throw new Error('取消候选 patch 清单不完整')
+  const patch = output.slice(boundary + 2)
+  const addedLines = patch.split('\n').filter(line => line.startsWith('>')).map(line => line.slice(1)).join('\n')
+  return { addedLines, cancellationPaths: candidates.map(file => file.path) }
+}
+
 /** Exact immutable PR comparison; a missing local object is not an empty diff. */
 export function readPullRequestChanges(view, { cwd = repoRoot } = {}) {
   const base = view.base?.sha
@@ -253,10 +297,8 @@ export function readPullRequestChanges(view, { cwd = repoRoot } = {}) {
   if (counts.reported < counts.min || counts.reported > counts.max) {
     throw new Error(`PR 展示计数超出可证 rename 分组范围：${counts.reported} 不在 [${counts.min},${counts.max}]`)
   }
-  const diff = git(['diff', ...options, '--output-indicator-new=>', '--unified=0', range, '--'], cwd)
-  if ((files.length > 0) !== (diff.length > 0)) throw new Error('缺少或不匹配的完整 Git patch')
-  const addedLines = diff.split('\n').filter(line => line.startsWith('>')).map(line => `+${line.slice(1)}`).join('\n')
-  return { files, addedLines, counts, mergeBase }
+  const { addedLines, cancellationPaths } = readCancellationPatch({ range, options, files, before, after, cwd })
+  return { files, addedLines, cancellationPaths, counts, mergeBase }
 }
 
 export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh, log = console.log, error = console.error } = {}) {
@@ -276,7 +318,7 @@ export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh,
     if (view.number !== Number(prArg) || baseRepo.toLowerCase() !== slug.toLowerCase()) {
       throw new Error('PR 元数据与目标仓库或 PR 编号不匹配')
     }
-    const { files, addedLines, counts, mergeBase } = readPullRequestChanges(view, { cwd })
+    const { files, addedLines, cancellationPaths, counts, mergeBase } = readPullRequestChanges(view, { cwd })
     const classification = classifyChange(files, addedLines)
     const body = view.body ?? ''
     const contracts = []
@@ -298,6 +340,7 @@ export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh,
     }
     log(`· PR 绑定：${slug} #${prArg} base=${baseRepo}@${view.base.sha} head=${headRepo}@${view.head.sha} merge-base=${mergeBase}`)
     log(`· 完整 tree/diff 原始路径 ${counts.rawTotal}（A=${counts.added},D=${counts.deleted}）；GitHub=${counts.reported}，rename 分组范围 [${counts.min},${counts.max}]`)
+    log(`· 取消文本候选 ${cancellationPaths.length}；仅内容 patch 使用 -G 超集预筛，raw tree 不裁剪`)
     if (typeof effectiveAt !== 'string' || !Number.isFinite(Date.parse(effectiveAt))) {
       log(`⚠ 无法取得有效 #${RULES_INTRODUCED_BY_PR} 生效时间，按严格规则检查，不适用历史豁免`)
     }

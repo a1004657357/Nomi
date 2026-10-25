@@ -59,3 +59,17 @@
 - 修改后最终定向 Node 与原 gitPaths 回归 50/50 通过，0 skipped/cancelled；binary 与旧 Git 独立回归 2/2 通过。单份 v3 validateRootCauseChange 校验通过，git diff --check 通过；不运行全仓门岗。
 - 本地 transport canary 允许协议时真实触发，禁止协议时预检及共享 NUL helper 均零调用；不访问真实网络，不修改用户 Git 全局配置。
 - 用户真实数字有 6864-6807=57 且 M50 已证明可形成67组，故 57<=67<=min(A,D)，该展示计数在数学可行范围内；不推断 GitHub 算法。真实 PR 完整扫描仍待协调者/D 验收。
+
+## 第三批：只缩小内容 Patch，不缩小完整 Tree
+
+- 真实58报告保留：完整强制 text patch 超64MiB产生 ENOBUFS；不提高或取消上限。
+- raw 全路径/状态、三棵完整树、全部本地 blob、双端 repo/SHA、唯一 merge-base 和 rename 数学范围仍逐项证明。
+- cancellation 唯一原词 owner 同时派生原 JS predicate 与 Git -G 的 AbortController|AbortSignal 超集；预筛文件不按后缀、MIME 或人工名单。
+- NUL-safe 候选路径必须唯一、属于 raw 且状态一致。原生同一次 Git 返回候选 raw 身份与 patch，核对 mode/OID/status/path 与快照及候选；成功退出并完整限额读取才可用。
+- 空候选仅允许空 filtered patch；非空候选缺 patch、错身份、漏候选、伪造候选均失败。保留 --text/no-textconv/no-ext-diff、协议阻断和64MiB上限。
+- addedLines 只移除原生新增行标记，保留真实 ++ 文本及新增行间空白，使原 new\\s+Ctor predicate 能识别跨新增行；不新增分类词或改变原路径规则。
+- 有限65MiB合成 Git blob 夹具：未过滤原生命令真实超限，过滤后全部66路径保留且任意后缀关键代码命中；若大 blob 本身相关仍须 ENOBUFS。无真实媒体、网络、App 或重门岗。
+- D 的跨行 P2 用真实 main 验证：只有★5格且无独立验收时返回1、要求5–8格及独立线；完整9格和不同独立线返回0。无 AbortSignal 的跨行构造单独验证，避免被其他关键词替代命中。
+- 关键文件名含真实换行，NUL-safe候选身份与patch一致；保留原单行、++、binary/任意后缀、缺对象、未知cutoff及旧PR兼容测试。
+- 初始3项聚焦回归全红（ENOBUFS、空filtered patch、人工+标记）；核心修改后8/8通过。最终完整定向 Node 59/59，0 skipped/cancelled；最后补充基线禁用external diff/textconv后，65MiB夹具单独复核1/1通过。单份v3校验与diff检查通过，未跑全仓合同门。
+- 主协调build61期间不触碰其目录/PNG/字体/日常项目，不启动App/浏览器/重套件；交付后等待协调者真实复验及D审核，不自行集成。
