@@ -4,6 +4,7 @@
 //
 // 用法：pnpm run build && pnpm run test:e2e
 import { launchNomiApp } from "./_launchApp.mjs";
+import { expect } from "./_assert.mjs";
 import { checkComposerFixedFooter } from "./_composerFixedFooter.mjs";
 import { addCanvasNodeFromRail } from "./_canvasRail.mjs";
 import { panCanvasUntilInside } from "./_canvasHit.mjs";

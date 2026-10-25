@@ -1,0 +1,139 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-smoke-expect-import",
+  "problem_type": "Standalone ESM entry uses test-runner-style assertions without an explicit canonical import",
+  "symptom": "CI e2e smoke starts Electron and passes four initial checks, then aborts at the first expect with ReferenceError: expect is not defined.",
+  "direct_cause": "smoke.e2e.mjs contains three active expect calls but imports neither expect nor the canonical assertion owner. Standalone Node execution does not supply a runner global.",
+  "class_root": "A standalone entry must explicitly bind assertion symbols to the canonical collecting owner rather than depend on globals or direct runner imports.",
+  "affected_population": [
+    "smoke.e2e.mjs standalone execution",
+    "Other standalone journeys that use the same canonical expect"
+  ],
+  "scope_paths": [
+    "tests/ux/smoke.e2e.mjs",
+    "tests/ux/standalone-assert-owner.test.mjs"
+  ],
+  "entry_points": [
+    "CI test:e2e -> node tests/ux/smoke.e2e.mjs -> existing expect calls",
+    "core-smoke-spend-confirm.walk.mjs as a second actual standalone ownership control"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The failure is a missing local ESM binding, confirmed by the exact CI log and source. The existing ./_assert.mjs export is the internal canonical collecting owner; no external runtime/library change is required.",
+  "invariants": [
+    "Explicitly import expect from ./_assert.mjs in smoke, without changing any assertion or pass count",
+    "Do not declare a global expect, change ESLint globals or bypass the collecting owner with direct runner imports",
+    "New structural tests read source only; do not import or execute Electron standalone modules",
+    "Removing the actual canonical import must be rejected for both real standalone scripts",
+    "Preserve all three active smoke expect calls and reject vacuous/no-assertion inputs"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "tests/ux/core-smoke-spend-confirm.walk.mjs",
+      "symbol": "expect"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/core-smoke-spend-confirm.walk.mjs",
+      "symbol": "expect"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "expect"
+    }
+  ],
+  "door_reduction": {
+    "before": 3,
+    "after": 3,
+    "why_not": "These two actual standalone entries run distinct scenarios and must retain their own assertions. They share the existing canonical owner; adding the missing import does not remove legitimate calls. Generated with the existing mapDoors API over exactly the user-scoped smoke and actual second-standalone control, using Git base content for before and current files for after."
+  },
+  "generality_proof": "The regression checks the actual smoke and a second real core-smoke standalone. It requires a named local expect binding from the canonical owner and nonempty actual calls; virtual removal of each real import is rejected. Separate negative fixtures reject globals, comments, local stubs, wrong runner owners and a mismatched alias; an empty assertion body cannot pass. The scripts themselves are never imported or run.",
+  "shared_boundaries": [
+    {
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "expect",
+      "responsibility": "Bind the standalone module's existing assertion calls to ./_assert.mjs and its collecting wrapper"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "tests/ux/smoke.e2e.mjs",
+      "entry_point": "top-level expect calls",
+      "disposition": "enforced",
+      "evidence": "Add the missing explicit canonical import; retain the three original locator/text assertions unchanged."
+    },
+    {
+      "path": "tests/ux/core-smoke-spend-confirm.walk.mjs",
+      "entry_point": "standalone canonical expect import and calls",
+      "disposition": "not-affected",
+      "evidence": "Already imports expect from ./_assert.mjs. New structural regression checks its real source and removes its import only in an in-memory negative control."
+    },
+    {
+      "path": "tests/ux/_assert.mjs",
+      "entry_point": "collectingExpect(nativeExpect) -> export expect",
+      "disposition": "not-affected",
+      "evidence": "Existing shared owner remains unchanged; smoke reuses it rather than a global or direct framework expect."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Runner globals can hide an omitted standalone import in any executable journey. A parser-level ownership assertion makes the same omission observable without starting an App.",
+    "same_class_scan": [
+      "Read CI ci-e102-e2e-25.log 1649-1658 and smoke's exact import and three expect call sites",
+      "Read the canonical expect export and collecting wrapper in _assert.mjs",
+      "Read a second actual standalone core-smoke-spend-confirm and verified its canonical import",
+      "Initial CLI default excludes tests; used the unchanged exported mapDoors API with the two explicit standalone source files and generated real before/after maps",
+      "Separately reported other unresolved smoke symbols; did not silently expand scope or claim an end-to-end pass"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "tests/ux/smoke.e2e.mjs",
+    "invariant": "Standalone expect calls have a local canonical ESM import, not an ambient runner dependency.",
+    "failure_mode": "Source ownership regression rejects missing/misowned bindings before a browser/App run; the actual explicit import supplies the runtime binding.",
+    "exception_policy": "none",
+    "strategy": "Add one import from the already-existing canonical wrapper and directly guard its ownership with source-only negative controls.",
+    "artifacts": [
+      "tests/ux/smoke.e2e.mjs"
+    ]
+  },
+  "regression_tests": [
+    "tests/ux/standalone-assert-owner.test.mjs"
+  ],
+  "class_regression_tests": [
+    "tests/ux/standalone-assert-owner.test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "tests/ux/smoke.e2e.mjs"
+    ],
+    "rationale": "Remove dependence on an undeclared ambient expect while retaining all original assertions and journey steps."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse the existing assertion wrapper and existing TypeScript/Vitest structural-test pattern; no new dependency or API replacement.",
+    "exit_criteria": []
+  },
+  "migration": "None; only a local standalone module binding is added. No app/project/media data is changed.",
+  "residual_risks": [
+    "No App, browser, screenshot, Provider, full suite or large typecheck run; actual e2e smoke success remains coordination acceptance",
+    "Other pre-existing unresolved smoke symbols screenshotDir/screenshotSettled/electronProcess are reported and deliberately not changed under the user-limited import-only scope",
+    "The structural scope is the actual smoke plus a second real standalone control, not a claim that every unrelated journey was audited",
+    "The structural test targets canonical expect ownership, not a complete free-variable audit of every standalone symbol",
+    "The real-diff contract check retains one structural-prevention advisory because its path classifier treats executable tests/ux/smoke.e2e.mjs as test-only. The actual ESM import fixes runtime binding; no fake src artifact, scope change, checker exemption or one_off downgrade is added."
+  ],
+  "invariant_owner_layer": {
+    "layer": "tests/ux/smoke.e2e.mjs",
+    "tests": [
+      "tests/ux/standalone-assert-owner.test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "tests/ux/standalone-assert-owner.test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}
