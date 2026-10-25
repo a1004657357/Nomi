@@ -1,0 +1,58 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-model-group-and-retired-route-characterizations",
+  "change_kind": "structural",
+  "problem_type": "现行模型组与显式退役拒绝被旧测试误判",
+  "symptom": "已有Pixstag H3成为第五条渠道，旧四渠道列表失败；含明确拒绝分支的旧operation名字被无字面量断言误报为复活。",
+  "direct_cause": "精确测试没有记录既有渠道，也没有区分拒绝语句与可执行旧路径。",
+  "class_root": "测试应按真实模型身份和控制流守边界，不能靠过期计数或标识符出现与否反推执行。",
+  "scope_paths": [
+    "src/config/modelIdentity.channelMerge.test.ts",
+    "src/workbench/capability/legacyGenerationPathGuard.test.ts"
+  ],
+  "affected_population": [
+    "现有MiniMax H3模型供应商分组",
+    "退役renderer production.generate-node"
+  ],
+  "entry_points": [
+    "既有模型身份全表",
+    "真实项目issuer下的退役操作拒绝"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "只对账仓内既有seed与早期拒绝控制流，不改Provider或运行逻辑。",
+  "invariants": [
+    "只精确加pixstag:MiniMax-H3，其他供应商、模型Key变体与分档断言原样。",
+    "真实已打开项目下旧路径仍以capability_input_invalid拒绝，不借无项目错误假通过。",
+    "AST证明拒绝分支直接throw指定错误，原禁止mintSpendGrant/runGenerationNode实现守卫保留。",
+    "不修改任何生产实现、冻结、超时、skip或权限。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "src/config/modelIdentity.channelMerge.test.ts",
+      "src/workbench/capability/legacyGenerationPathGuard.test.ts"
+    ],
+    "preserved_exports": [],
+    "behavior_preservation": "两个测试更新，生产字节不动。旧模型列表仍精确有界；旧route的早拒绝和无grant/provider实现以源码AST及真实项目正条件验证。",
+    "verification_limits": "离线契约，不是Provider生成或Nomi真窗口验收。"
+  },
+  "regression_tests": [
+    "src/config/modelIdentity.channelMerge.test.ts",
+    "src/workbench/capability/legacyGenerationPathGuard.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "不恢复或删除生产执行路径。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "沿用已有TypeScript AST和项目测试harness，无新依赖。",
+    "exit_criteria": []
+  },
+  "migration": "无运行期或数据迁移。",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "完整全仓和独立审查仍需执行，不据本批合并main。"
+  ]
+}

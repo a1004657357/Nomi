@@ -42,7 +42,7 @@ const channelGroups = (groups: readonly DedupedModel[]) => groups.filter((group)
 /** 本次并进来的组（组名取中转站那一行的名字，不带渠道名）。 */
 const MERGED: ReadonlyArray<{ kind: Kind; canonicalId: string; label: string; providers: readonly string[] }> = [
   { kind: 'video', canonicalId: 'seedance 2.5', label: 'Seedance 2.5', providers: ['kie:bytedance/seedance-2-5', 'apimart:doubao-seedance-2.5', 'volcengine:doubao-seedance-2-5-260628', 'fal:bytedance/seedance-2.5', 'runway:seedance2_5'] },
-  { kind: 'video', canonicalId: 'minimax h3', label: 'MiniMax H3', providers: ['kie:minimax-h3', 'apimart:MiniMax-H3', 'minimax:MiniMax-H3', 'runway:hailuo3'] },
+  { kind: 'video', canonicalId: 'minimax h3', label: 'MiniMax H3', providers: ['kie:minimax-h3', 'apimart:MiniMax-H3', 'minimax:MiniMax-H3', 'runway:hailuo3', 'pixstag:MiniMax-H3'] },
   { kind: 'video', canonicalId: 'wan 3.0', label: 'Wan 3.0', providers: ['kie:wan/3-0-video', 'apimart:wan3.0-video', 'runway:wan3'] },
   { kind: 'video', canonicalId: 'grok imagine 1.5', label: 'Grok Imagine 1.5', providers: ['apimart:grok-imagine-1.5-video-apimart', 'runway:grok_imagine_1_5'] },
   { kind: 'video', canonicalId: 'gemini omni 1.1 flash', label: 'Gemini Omni 1.1 Flash', providers: ['kie:google/gemini-omni-flash-1-1', 'fal:google/gemini-omni-flash/v1.1', 'runway:gemini_omni_flash'] },
