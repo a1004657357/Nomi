@@ -182,12 +182,14 @@ test('new integration Node regressions run exactly once in the existing engineer
   const commands = scripts['test:eng-system'].split(' && ')
   const original = ['./scripts/merge-preflight.node-test.mjs', './scripts/eng-metrics.node-test.mjs', './scripts/archetype-autosync-workflow.node-test.mjs']
   assert.equal(commands.length, 2)
-  assert.equal(commands[0], ['node', '--test', ...original].join(' '))
+  const summary = './tests/ux/multimodal-provider-summary.node-test.mjs'
+  assert.equal(commands[0], ['node', '--test', summary, ...original].join(' '))
   const args = commands[1].split(/\s+/)
   assert.deepEqual(args.slice(0, 4), ['node', '--import', 'tsx', '--test'])
   const additions = ['agent-tool-face-usecases', 'browser-shortcut-label', 'check-fresh-base', 'main-style-content-flow', 'main-style-reference-repair', 'root-cause-history-evidence', 'self-written-closeout', 'tsx-diagnostics-lint', 'tsx-i18n-display', 'tsx-redundant-bindings']
   assert.equal(args.length, 4 + additions.length)
   const allArgs = commands.flatMap(command => command.split(/\s+/))
+  assert.equal(allArgs.filter(arg => arg === summary).length, 1)
   for (const file of [...original, ...additions.map(name => `./scripts/${name}.node-test.mjs`)]) assert.equal(allArgs.filter(arg => arg === file).length, 1, file)
   assert.ok(!args.some(arg => arg.includes('extension-lint-hosts')), 'the existing quality workflow gate already owns this suite')
   assert.ok(scripts['check:quality-gate-workflow'].includes('./scripts/extension-lint-hosts.node-test.mjs'))

@@ -1,3 +1,4 @@
+// Run with node:test, not Vitest; this executes only the isolated report reducer.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -30,4 +31,11 @@ test('single-image mode cannot start the second media intent', () => {
   assert.ok(source.includes("else if (channel !== 'cliproxy')"))
   assert.ok(source.includes("activeIntent.httpPosts >= 1"))
   assert.ok(source.includes("if (singleImage && (batch || channel !== 'cliproxy'))"))
+})
+
+test('the unchanged summary cases are owned by the reachable Node runner, not Vitest', () => {
+  const scripts = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).scripts
+  assert.match(scripts['test:eng-system'], /node --test[^&]*\.\/tests\/ux\/multimodal-provider-summary\.node-test\.mjs/)
+  assert.match(scripts.test, /pnpm run test:eng-system/)
+  assert.equal(fs.existsSync(new URL('./multimodal-provider-summary.test.mjs', import.meta.url)), false)
 })
