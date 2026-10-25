@@ -28,11 +28,28 @@ describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）
     expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("shot-frame");
   });
 
-  it.each(['whiteboard', 'audio', 'character', 'scene'])('%s honors every declared explicit render kind without mutating the node', (kind) => {
+  it.each(['character', 'scene'])('%s honors every declared explicit render kind without mutating the node', (kind) => {
     for (const renderKind of NODE_RENDER_KINDS) {
       const input = Object.freeze(node({ kind, categoryId: 'shots', renderKind, meta: { userValue: 'unchanged' } }));
       const before = JSON.stringify(input);
       expect(resolveNodeRenderKind(input)).toBe(renderKind);
+      expect(JSON.stringify(input)).toBe(before);
+    }
+  });
+
+  it.each([['whiteboard', 'whiteboard-card'], ['audio', 'audio-strip']])('%s keeps its functional body with the exact historical shot-frame pollution', (kind, expected) => {
+    const input = Object.freeze(node({ kind, categoryId: 'shots', renderKind: 'shot-frame', meta: { userValue: 'unchanged' } }));
+    const before = JSON.stringify(input);
+    expect(resolveNodeRenderKind(input)).toBe(expected);
+    expect(isCardRenderKind(resolveNodeRenderKind(input))).toBe(true);
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each([['whiteboard', 'whiteboard-card'], ['audio', 'audio-strip']])('%s cannot lose functionality to any stored presentation card value', (kind, expected) => {
+    for (const renderKind of NODE_RENDER_KINDS) {
+      const input = Object.freeze(node({ kind, categoryId: 'cast', renderKind, meta: { userFlag: false, userValue: 0 } }));
+      const before = JSON.stringify(input);
+      expect(resolveNodeRenderKind(input)).toBe(expected);
       expect(JSON.stringify(input)).toBe(before);
     }
   });

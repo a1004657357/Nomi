@@ -21,6 +21,15 @@ describe("resolveNodeVisualSize — 真实渲染尺寸（连线锚点单一真�
     expect(audio).toEqual({ width: 420, height: 80 });
   });
 
+  it.each(['whiteboard', 'audio'])('%s keeps functional geometry with a historical shot-frame value', (kind) => {
+    const clean = { kind, categoryId: 'shots', size: { width: 320, height: 240 }, meta: { userFlag: false, userValue: 0 } };
+    const polluted = Object.freeze({ ...clean, renderKind: 'shot-frame' });
+    const before = JSON.stringify(polluted);
+    expect(resolveNodeVisualSize(node(polluted))).toEqual(resolveNodeVisualSize(node(clean)));
+    if (kind === 'audio') expect(resolveNodeVisualSize(node(polluted))).toEqual({ width: 420, height: 80 });
+    expect(JSON.stringify(polluted)).toBe(before);
+  });
+
   it("非卡片节点（无 size）回退到默认宽，不被卡片固定宽影响", () => {
     // image 在 shots（无 categoryId 信号）→ 非卡片；无 size 时按 max(minWidth, 默认宽)
     const v = resolveNodeVisualSize(node({ kind: "image", size: { width: 340, height: 280 } }));
