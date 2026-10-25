@@ -155,6 +155,9 @@ test('only reviewed copy, preview and scroll-marker snapshots differ; all bindin
   assert.equal(fixture.bindings.length, 111)
   assert.equal(digest(fixture.bindings), 'bbc286e4f3396183fb7ffaa4f09afe4f1b82d08036394600453428e0b1196f48')
   const restoredCopy = { ...fixture.zh }
+  const confirmationKey = 'inParallelNoRequestsOrChargesBeforeConfirmation'
+  assert.equal(restoredCopy[confirmationKey], ' 个并行,确认前不调用', 'reviewed removal of an unsupported billing promise')
+  restoredCopy[confirmationKey] = ' 个并行,确认前不调用不扣费'
   for (const [key, before, approved] of approvedCopy.zh) {
     assert.equal(restoredCopy[key], approved, key)
     restoredCopy[key] = before

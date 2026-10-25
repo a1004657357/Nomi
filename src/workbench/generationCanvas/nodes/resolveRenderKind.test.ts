@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveNodeRenderKind, isCardRenderKind, nodeHasGenerationComposer } from "./resolveRenderKind";
+import { NODE_RENDER_KINDS } from '../../project/projectCategories';
 
 const node = (over: { kind: string; renderKind?: string; categoryId?: string; meta?: Record<string, unknown> }) =>
   over as Parameters<typeof resolveNodeRenderKind>[0];
@@ -25,6 +26,19 @@ describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）
 
   it("显式 node.renderKind 覆盖一切", () => {
     expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("shot-frame");
+  });
+
+  it.each(['whiteboard', 'audio', 'character', 'scene'])('%s honors every declared explicit render kind without mutating the node', (kind) => {
+    for (const renderKind of NODE_RENDER_KINDS) {
+      const input = Object.freeze(node({ kind, categoryId: 'shots', renderKind, meta: { userValue: 'unchanged' } }));
+      const before = JSON.stringify(input);
+      expect(resolveNodeRenderKind(input)).toBe(renderKind);
+      expect(JSON.stringify(input)).toBe(before);
+    }
+  });
+
+  it.each(['asset', 'skill', 'scene3d', 'vibingDirector', 'agent-artifact'])('%s retains its protected workspace even with an explicit card render kind', (kind) => {
+    expect(resolveNodeRenderKind(node({ kind, categoryId: 'cast', renderKind: 'character-card' }))).toBeUndefined();
   });
 
   it("分镜表语义覆盖 shots 迁移写入的 shot-frame，并走专属卡片 body", () => {

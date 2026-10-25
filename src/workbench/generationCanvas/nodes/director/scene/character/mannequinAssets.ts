@@ -1,14 +1,16 @@
 /**
- * [INPUT]: 依赖 src/assets 的 x-bot.glb 与 src/assets/director/pose 的 9 个 Mixamo FBX（构建产物 URL，只喂 three loader）、../../model/actionLibrary 的 ACTION_LIBRARY
- * [OUTPUT]: 对外提供 MANNEQUIN_MODEL_URL、POSE_CLIP_ASSETS（动作库 id → { fbx }）、poseClipAssetFor
+ * [INPUT]: 依赖 src/assets 既有 Nomi/动画/UE4 GLB 与 director/pose 的 9 个 FBX（构建产物 URL，只喂 three loader）、../../model/actionLibrary 的 ACTION_LIBRARY
+ * [OUTPUT]: 对外提供 MANNEQUIN_MODEL_URL、MANNEQUIN_ANIMATION_URL、UE4_MANNEQUIN_MODEL_URL、POSE_CLIP_ASSETS、poseClipAssetFor
  * [POS]: director/scene/character 的内置资产地址单一真相（V1 scene3dConstants 入籍 + 2026-09-03 Mixamo 姿态库入籍）；
  *        只渲染不持久化，登记在 src/bundleAssetUrlBoundary.test.ts 的 RENDER_ONLY_ALLOWLIST。Vite 要静态字面量才能收进产物，所以逐条写 URL，不拼字符串。
- *        机位机身是 entities/CameraEntity 的程序化几何、泼溅场景由用户自备上传，这里不再持有任何第三方二进制资产。
+ *        scene3d 与 UE4 rig 复用此地址 owner，保留不同模型及动画身份；本模块不写项目资产或节点结果。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { ACTION_LIBRARY } from '../../model/actionLibrary'
 
 export const MANNEQUIN_MODEL_URL = new URL('../../../../../../assets/nomi-mannequin.glb', import.meta.url).href
+export const MANNEQUIN_ANIMATION_URL = new URL('../../../../../../assets/nomi-mannequin-animations.glb', import.meta.url).href
+export const UE4_MANNEQUIN_MODEL_URL = new URL('../../../../../../assets/ue-mannequin-retopology.glb', import.meta.url).href
 
 export type PoseClipAsset = { fbx: string }
 

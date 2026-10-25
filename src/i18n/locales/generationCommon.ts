@@ -1886,7 +1886,7 @@ export const enGenerationCommon = {
       },
       network: {
         reason: 'Cannot reach the provider',
-        hint: 'The network request did not complete. Check your network or proxy. Without connection-stage evidence, this does not establish whether the provider received or charged for the request.',
+        hint: 'The network request did not complete. Check your network or proxy. Without connection-stage evidence, Nomi cannot determine whether the provider received the request.',
       },
       configurationTimeout: {
         reason: 'Timed out waiting for verification',

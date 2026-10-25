@@ -12,6 +12,7 @@
  * 规划本身是一条独立的单次模型请求，只返回 JSON，不发工具调用。
  */
 import { type StoryboardPlan } from './storyboardPlan';
+import { SCREEN_VISIBILITY_PROMPT_RULE } from './storyboardShotPrompts';
 
 export const STORYBOARD_PLANNER_SKILL = {
   key: 'workbench.storyboard.planner',
@@ -68,6 +69,7 @@ export function buildStoryboardPlanningMessage(input: {
     return [
       '用户正在审阅你之前产出的分镜方案，现在要求你修改它。请基于下面的「当前方案」按用户要求改——',
       '**只改用户点名要改的部分，其余镜头/锚/已选模型/镜号一律原样保留**；改完只返回 JSON 对象，重新产出**整份**方案（不是增量、不是片段）。',
+      SCREEN_VISIBILITY_PROMPT_RULE,
       '',
       '--- 当前方案(JSON) ---',
       JSON.stringify(input.currentPlan),
@@ -89,6 +91,7 @@ export function buildStoryboardPlanningMessage(input: {
     '画幅是**整片级**的：写在方案顶层 aspectRatio（如 "9:16"），只有"这一镜真的不一样"时才在那一镜的 params.aspect_ratio 上覆盖。不要把同一个画幅抄进每一镜。',
     '',
     '输出硬约束：JSON 根必须是对象，anchors/shots 必须是数组本体；不要把任何数组序列化成字符串。',
+    SCREEN_VISIBILITY_PROMPT_RULE,
     '',
     '--- 故事正文 ---',
     trimmed,

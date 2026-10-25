@@ -120,10 +120,9 @@ export const WHEEL_TRAVEL_SPEED = 0.0045
 export const FOLLOW_ORBIT_MIN_POLAR_ANGLE = THREE.MathUtils.degToRad(26)
 export const FOLLOW_ORBIT_MAX_POLAR_ANGLE = THREE.MathUtils.degToRad(100)
 export const CAMERA_LENS_DEPTH_MAX_FACTOR = 0.85
-export const MANNEQUIN_MODEL_URL = new URL('../../../../assets/nomi-mannequin.glb', import.meta.url).href
 // 第一方程序化假人的 locomotion 动画。模型与动画由同一个生成脚本和骨架契约产出，
 // mixamorig 名称只用于旧项目姿势兼容，不包含外部 Mixamo 网格或动作数据。
-export const MANNEQUIN_ANIMATION_URL = new URL('../../../../assets/nomi-mannequin-animations.glb', import.meta.url).href
+export { MANNEQUIN_MODEL_URL, MANNEQUIN_ANIMATION_URL } from '../director/scene/character/mannequinAssets'
 
 // possess 态自动 locomotion：clip 名（须与 nomi-mannequin-animations.glb 内 clip 名逐字一致）。
 export type Scene3DLocomotionClip = 'idle' | 'walk' | 'run'

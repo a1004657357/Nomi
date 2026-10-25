@@ -2,7 +2,7 @@ import type { CharacterBodyType } from "./bodyTypes";
 import { degreesToRadians, getBodyTypePoseLimit } from "./mannequinPose";
 
 
-export const UE4_MANNEQUIN_MODEL_URL = new URL("../../../../../assets/ue-mannequin-retopology.glb", import.meta.url).href
+export { UE4_MANNEQUIN_MODEL_URL } from '../../director/scene/character/mannequinAssets'
 
 export const UE4_MANNEQUIN_BONE_MAP = {
   body: "Bip001_Pelvis_03",

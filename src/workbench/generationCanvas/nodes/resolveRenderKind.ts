@@ -24,10 +24,10 @@ const RENDER_KIND_BY_NODE_KIND: Record<string, string> = {
  * 推断节点的 renderKind。优先级：
  * 1. 素材节点（kind=asset）永远纯图片预览（renderKind=undefined）——否则落进 cast/scene 分类的
  *    素材会被误判成角色/场景卡。
- * 2. node.renderKind 显式覆盖（对无专属卡的 kind，如 shots 的 image 节点 → shot-frame 媒体预览）。
+ * 2. 非受保护工作区的 node.renderKind 显式覆盖（如角色节点可明确选择 shot-frame 媒体预览）。
  * 3. **kind 专属卡**：没有显式覆盖时，画板/声音/角色/场景节点在任意分类都长成自己的卡——V51→V60 迁移曾把
  *    shots 分类默认值 `shot-frame` 盖章到这些节点的 renderKind 上，画板节点因此渲染成通用媒体壳、
- *    「打开画板」入口消失（2026-07-29 真机复现）。kind 压过存量脏显式值 = 行为层自愈全部已损数据。
+ *    「打开画板」入口消失（2026-07-29 真机复现）。kind 只提供默认值，不能推翻有效的显式选择。
  * 4. categoryId 仅作「无 kind 信号」时的兜底（如 prop 分类的 image 节点 → prop-card）。
  */
 export function resolveNodeRenderKind(
@@ -42,8 +42,6 @@ export function resolveNodeRenderKind(
   // 素材与 Agent 手艺产物都走「壳内 kind 专属渲染」，永远纯预览/专属 body（renderKind=undefined）——
   // 否则落进 cast/scene/prop 分类会被误判成角色/场景/道具卡（asset 的历史边界 1，agent-artifact 同款）。
   if (node.kind === "agent-artifact") return undefined;
-  const kindOwned = RENDER_KIND_BY_NODE_KIND[node.kind as string];
-  if (kindOwned) return kindOwned;
   const explicit = node.renderKind as string | undefined;
   // 注：`shot-frame`（shots 分类默认 renderKind，历史迁移回填）不在 CARD_RENDER_KINDS，故按 explicit
   // 返回后走「媒体预览」路径——镜头节点就该显生成出的图/视频，不套卡片。分镜序号由 BaseGenerationNode

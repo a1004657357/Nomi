@@ -440,7 +440,7 @@ export const enCustomWorkflow = {
   "candidateChangedSourceLabel": "Candidate changed",
   "localQualitySourceLabel": "Local quality check",
   "unknownAgentToolSource": "Unknown Agent tool: {{v0}}",
-  "textToImageRationale": "No existing visual assets; free composition with text-to-image",
+  "textToImageRationale": "No existing visual assets; unrestricted composition with text-to-image",
   "imageToImageRationale": "Preserve character/scene identity using reference anchors for image-to-image",
   "textToVideoRationale": "No existing visual assets; use text-to-video",
   "firstFrameRationale": "A first-frame image locks the starting composition",
