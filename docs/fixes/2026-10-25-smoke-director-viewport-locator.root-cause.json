@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-smoke-director-viewport-locator",
+  "change_kind": "structural",
+  "problem_type": "Smoke viewport selector lags the existing Director V2 DOM owner",
+  "symptom": "App69 reaches the real full-screen V2 grid but times out on the retired V1 localized aria-label canvas locator.",
+  "direct_cause": "The smoke still locates a removed V1 label instead of the current director-viewport test ID inside the editor shell.",
+  "class_root": "Pixel smoke locators must bind to the actual main viewport producer, not a historical label or any page canvas.",
+  "scope_paths": ["tests/ux/smoke.e2e.mjs", "tests/ux/standalone-assert-owner.test.mjs"],
+  "structural_evidence": {
+    "affected_paths": ["tests/ux/smoke.e2e.mjs", "tests/ux/standalone-assert-owner.test.mjs"],
+    "preserved_exports": [],
+    "behavior_preservation": "Only replace the obsolete viewport locator with the existing shell-scoped V2 marker and retain the exact canvas child. All original assertions, visibility timeout, screenshot/decoding/sampling and width>300/height>200/colors>8 remain unchanged. JSX owner checks and actual-source mutation negatives reject stale/global/PiP locators and missing/non-R3F producers. No production aliases, scene injection or fake canvas.",
+    "verification_limits": "Only lightweight source-owner tests, numerical predicate negative controls and existing Node waiting guard. No App, browser, rendering claim, heavy suite, coordinator merge/write, PNG, threshold, baseline or global setup changes. Independent D reviews; coordinator performs fresh App verification."
+  },
+  "regression_tests": ["tests/ux/standalone-assert-owner.test.mjs"],
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-24"
+}

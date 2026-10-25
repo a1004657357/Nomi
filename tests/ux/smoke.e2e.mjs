@@ -185,7 +185,7 @@ try {
   await directorShell.waitFor({ state: "visible", timeout: stationTimeout({ operations: 2 }) });
   assert(await directorShell.count() > 0, "导演台节点「进入导演台」后全屏壳挂出（data-testid=director-editor）");
 
-  const sceneCanvas = win.locator('[aria-label="3D 场景编辑器"] canvas').first();
+  const sceneCanvas = directorShell.getByTestId('director-viewport').locator('canvas').first();
   await expect(sceneCanvas).toBeVisible({ timeout: stationTimeout() });
   const viewportPng = await sceneCanvas.screenshot();
   const viewportPixels = await win.evaluate(async (base64) => {

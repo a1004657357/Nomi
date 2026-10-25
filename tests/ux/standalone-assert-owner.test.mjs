@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Linter } from 'eslint'
@@ -321,4 +321,111 @@ it('isolates actual evidence expressions per run and rejects the old root or an 
   expect(source).toContain('writeFileSync(path.join(evidenceDir, "failure.json")')
   expect(source).toContain('win.screenshot({ path: path.join(evidenceDir, "failure.png") })')
   expect(source).toContain('checkComposerFixedFooter(win, { composer, promptInput, flowNode, longPrompt, evidenceDir })')
+})
+
+const directorOwnerPaths = {
+  viewport: '../../src/workbench/generationCanvas/nodes/director/panels/viewport/DirectorViewport.tsx',
+  scene: '../../src/workbench/generationCanvas/nodes/director/scene/DirectorCanvas.tsx',
+  fence: '../../src/workbench/generationCanvas/nodes/fencedCanvas.tsx',
+}
+
+function directorViewportContract(source, owners = Object.fromEntries(Object.entries(directorOwnerPaths)
+  .map(([key, file]) => [key, read(file)]))) {
+  const ast = parse(source), declarations = [], calls = []
+  const visit = node => {
+    if (ts.isVariableDeclaration(node)) declarations.push(node)
+    if (ts.isCallExpression(node)) calls.push(node)
+    ts.forEachChild(node, visit)
+  }
+  visit(ast)
+  const binding = name => declarations.find(node => node.name.getText(ast) === name)?.initializer?.getText(ast)
+  if (binding('sceneCanvas') !== "directorShell.getByTestId('director-viewport').locator('canvas').first()") {
+    throw Error('Smoke must select the shell-scoped V2 main viewport canvas')
+  }
+  if (binding('directorShell') !== `win.locator('[data-testid="director-editor"]').first()`
+    || binding('viewportPng') !== 'await sceneCanvas.screenshot()') throw Error('Capture must retain the actual editor/main-canvas owner')
+  const jsx = (text, name) => ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const find = (root, predicate) => {
+    if (predicate(root)) return root
+    return ts.forEachChild(root, child => find(child, predicate))
+  }
+  const imports = (tree, symbol, module) => tree.statements.some(node => ts.isImportDeclaration(node)
+    && node.moduleSpecifier.text === module && node.importClause?.namedBindings?.elements?.some(item => item.name.text === symbol))
+  const viewport = jsx(owners.viewport, 'DirectorViewport.tsx')
+  const host = find(viewport, node => ts.isJsxElement(node) && node.openingElement.attributes.properties.some(prop =>
+    ts.isJsxAttribute(prop) && prop.name.text === 'data-testid' && prop.initializer?.text === 'director-viewport'))
+  if (!host || !host.children.some(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(viewport) === 'DirectorCanvas')
+    || !imports(viewport, 'DirectorCanvas', '../../scene/DirectorCanvas')) throw Error('V2 marker must own the real DirectorCanvas')
+  const scene = jsx(owners.scene, 'DirectorCanvas.tsx')
+  const canvas = find(scene, node => ts.isFunctionDeclaration(node) && node.name?.text === 'DirectorCanvas')
+  const returned = canvas?.body.statements.find(ts.isReturnStatement)?.expression
+  const root = returned && ts.isParenthesizedExpression(returned) ? returned.expression : returned
+  if (!root || !ts.isJsxElement(root) || root.openingElement.tagName.getText(scene) !== 'FencedCanvas'
+    || !imports(scene, 'FencedCanvas', '../../fencedCanvas')) throw Error('Main viewport must render the fenced canvas owner')
+  const fence = jsx(owners.fence, 'fencedCanvas.tsx')
+  if (!imports(fence, 'Canvas', '@react-three/fiber') || !find(fence, node => ts.isJsxSelfClosingElement(node)
+    && node.tagName.getText(fence) === 'Canvas')) throw Error('Canvas must come from the actual R3F renderer')
+  const pixelAssert = calls.find(call => call.expression.getText(ast) === 'assert'
+    && call.arguments[0]?.getText(ast).includes('viewportPixels.colors'))
+  const predicate = pixelAssert?.arguments[0]?.getText(ast)
+  if (predicate?.replace(/\s+/g, ' ') !== 'viewportPixels.width > 300 && viewportPixels.height > 200 && viewportPixels.colors > 8') {
+    throw Error('Original strict viewport pixel thresholds must remain')
+  }
+  return { owners, predicate }
+}
+
+it('binds the smoke canvas to the real V2 JSX producer and preserves strict pixel thresholds', () => {
+  expect(() => directorViewportContract(read('smoke.e2e.mjs'))).not.toThrow()
+})
+
+it('rejects stale/global/PiP captures, weakened thresholds and mutations of the real viewport producers', () => {
+  const source = read('smoke.e2e.mjs'), { owners } = directorViewportContract(source)
+  const current = "directorShell.getByTestId('director-viewport').locator('canvas').first()"
+  for (const replacement of [
+    `win.locator('[aria-label="3D 场景编辑器"] canvas').first()`,
+    "win.locator('canvas').first()",
+    "directorShell.getByTestId('director-pip').locator('canvas').first()",
+  ]) expect(() => directorViewportContract(source.replace(current, replacement))).toThrow(/shell-scoped/)
+  for (const field of ['width > 300', 'height > 200', 'colors > 8']) {
+    expect(() => directorViewportContract(source.replace(field, field.replace('>', '>=')))).toThrow(/strict viewport pixel/)
+  }
+  for (const [key, original, replacement] of [
+    ['viewport', 'data-testid="director-viewport"', 'data-testid="retired-viewport"'],
+    ['viewport', '<DirectorCanvas', '<PipViewport'],
+    ['scene', '<FencedCanvas', '<div'],
+    ['fence', "from '@react-three/fiber'", "from './fake-renderer'"],
+  ]) {
+    const changed = owners[key].replace(original, replacement)
+    expect(changed).not.toBe(owners[key])
+    expect(() => directorViewportContract(source, { ...owners, [key]: changed })).toThrow()
+  }
+})
+
+it('the actual numeric pixel predicate rejects blank, undersized and boundary-equal samples', () => {
+  const { predicate } = directorViewportContract(read('smoke.e2e.mjs'))
+  const accept = new Function('viewportPixels', `return Boolean(${predicate})`)
+  expect(accept({ width: 301, height: 201, colors: 9 })).toBe(true)
+  for (const pixels of [
+    { width: 0, height: 0, colors: 0 },
+    { width: 300, height: 201, colors: 9 },
+    { width: 301, height: 200, colors: 9 },
+    { width: 301, height: 201, colors: 8 },
+  ]) expect(accept(pixels)).toBe(false)
+})
+
+it('same-class standalone Director viewport locators do not retain the retired V1 aria label', () => {
+  const files = readdirSync(new URL('.', import.meta.url))
+    .filter(name => name === 'smoke.e2e.mjs' || /^director-.*\.walk\.mjs$/.test(name))
+  expect(files.length).toBeGreaterThan(1)
+  for (const file of files) {
+    const tree = parse(read(file)), retired = []
+    const visit = node => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+        && ['locator', 'getByRole'].includes(node.expression.name.text)
+        && node.arguments.some(argument => ts.isStringLiteral(argument) && argument.text.includes('3D 场景编辑器'))) retired.push(node.getText(tree))
+      ts.forEachChild(node, visit)
+    }
+    visit(tree)
+    expect(retired, file).toEqual([])
+  }
 })
