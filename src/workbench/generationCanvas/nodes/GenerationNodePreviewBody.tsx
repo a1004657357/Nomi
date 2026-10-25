@@ -35,6 +35,7 @@ type GenerationNodePreviewBodyProps = {
   mediaPreviewPriority: boolean
   isRemoveBackgroundPending: boolean
   selected: boolean
+  videoPreviewRequested: boolean
   needsFirstFrame: boolean
   hasFrameSourceEdge: boolean
   shotIndex: number | null
@@ -56,6 +57,7 @@ export function GenerationNodePreviewBody({
   mediaPreviewPriority,
   isRemoveBackgroundPending,
   selected,
+  videoPreviewRequested,
   needsFirstFrame,
   hasFrameSourceEdge,
   localImagePreviewUrl,
@@ -131,7 +133,7 @@ export function GenerationNodePreviewBody({
     if (node.result.type === 'video') {
       return (
         <NodeVideoPlaybackGuard
-          node={node} previewRequested={selected} engaged={selected}
+          node={node} previewRequested={videoPreviewRequested} engaged={selected}
           data-node-preview-video="true"
           className={cn('w-full h-full min-h-0 object-contain pointer-events-auto', 'bg-nomi-ink-05 select-none')}
           priority={mediaPreviewPriority}

@@ -1,0 +1,146 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-ci-video-hover-wiring",
+  "problem_type": "An extracted preview boundary drops hover intent and substitutes selection for automatic-preview demand",
+  "symptom": "CI structural hover positive controls fail with 32 correct posters, zero mounted videos and no first/repeated playback. Source inspection proves an independent disconnected hover channel at e102.",
+  "direct_cause": "Base records videoPreview.requested and binds article pointer handlers but never passes requested into GenerationNodePreviewBody. That body passes selected as both NodeVideoPlaybackGuard.previewRequested and engaged.",
+  "class_root": "Distinct interaction intents must survive component extraction as explicit required props. Selection/engagement cannot silently substitute for pointer-hover preview intent at the mounting owner.",
+  "affected_population": [
+    "Unselected video-result cards with measured dimensions and a poster, across read-only/editable canvases",
+    "Selected video-result cards whose selected state should mount controls without pretending a hover",
+    "Initial hover, pointer leave and repeated hover through the same shell/body path"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+    "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+    "src/workbench/generationCanvas/nodes/videoPreviewIntentWiring.test.ts"
+  ],
+  "entry_points": [
+    "useNodeVideoPreviewIntent -> Base article pointer handlers -> GenerationNodePreviewBody -> NodeVideoPlaybackGuard"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is a directly observable internal React prop-wiring defect. Existing hook, callers, guard mount conditions and CI evidence establish the missing channel without assumptions about browser autoplay, permissions, media decoding or framework performance.",
+  "invariants": [
+    "Hover requested and selected/engaged stay distinct across the shell/body boundary",
+    "A required boolean prop connects the existing hover owner to the existing guard; no duplicated hover state or second player",
+    "Idle poster-only behavior, original structural counts and all four playback positive controls remain unchanged",
+    "Guard dwell/grace/drag/focus/user-playback policy, deferred/resident and one-video ownership are not altered",
+    "No mutation of node, result URL/poster/measurement metadata; no outbound/permission/Provider changes",
+    "Preserve renderKind and whiteboard/audio functional protections"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "GenerationNodePreviewBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "NodeVideoPlaybackGuard"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "useNodeVideoPreviewIntent"
+    }
+  ],
+  "door_reduction": {
+    "before": 3,
+    "after": 3,
+    "why_not": "The intent hook, shell, preview body and mount guard have separate existing responsibilities. Preserve those lifecycles and connect the missing typed prop rather than merge owners or add a second player."
+  },
+  "generality_proof": "Node-only regression directly executes the real GenerationNodePreviewBody for all four hover/selection combinations in read-only and editable modes, inspects the actual returned Guard element, checks node identity and existing metadata callback, and retains non-video behavior. A TypeScript AST test checks the actual shell hook, article pointer handlers and requested prop expression. These tests prove source intent delivery only; they do not synthesize or claim browser playing/decoding success.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "BaseGenerationNodeImpl",
+      "responsibility": "Pass the existing full-card pointer intent into the preview boundary"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "GenerationNodePreviewBody",
+      "responsibility": "Require and forward hover intent separately from selection to the existing mount guard"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "entry_point": "useNodeVideoPreviewIntent and article pointer handlers",
+      "disposition": "enforced",
+      "evidence": "The hook already records pointer enter/leave correctly but its requested value was dropped. The actual JSX call site is structurally tested."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "entry_point": "video-result body -> NodeVideoPlaybackGuard",
+      "disposition": "enforced",
+      "evidence": "The real formatter is executed with frozen synthetic nodes; the returned existing Guard gets independent previewRequested/engaged props."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeVideoPlaybackGuard.tsx",
+      "entry_point": "useSettledIntent / wantsPlayer",
+      "disposition": "not-affected",
+      "evidence": "Poster/measured unselected cards require a delivered intent to mount; pointerInside only controls native-control visibility. Guard timing, focus, active playback and drag behavior remain unchanged."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Every unselected measured/postered video card can lose hover mounting through this shared boundary, regardless of the media URL or provider. Repeated hover cannot repair a permanently disconnected prop.",
+    "same_class_scan": [
+      "Read the exact CI counters and unchanged structural hover/positive-control implementation",
+      "Generated direct hook/body/guard doors and followed the hook -> shell -> body -> guard -> deferred media chain",
+      "Checked both hover and selection inputs and read-only/editable modes",
+      "Read all production callers; one real shell call and one guard use cover the extracted boundary",
+      "Verified e102 retains functional whiteboard/audio resolver protection; no resolver edit in this patch"
+    ]
+  },
+  "prevention": {
+    "kind": "type-system",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+    "invariant": "The preview body must receive a required hover boolean distinct from selection and pass it to the sole mounting owner.",
+    "failure_mode": "A dropped prop becomes a type error; executable real-body and actual-callsite structural regressions reject substitution with selected.",
+    "exception_policy": "none",
+    "strategy": "Add one mandatory prop and connect two existing boundaries; remove the selected-for-hover substitution without changing mounting/playback policy.",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/videoPreviewIntentWiring.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/videoPreviewIntentWiring.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx"
+    ],
+    "rationale": "Remove the misleading selected-as-hover forwarding. Keep selection for engaged mount and every existing public media/control path."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse existing React, TypeScript AST and Vitest APIs. No browser runtime, media engine, dependency or policy change.",
+    "exit_criteria": []
+  },
+  "migration": "None. Only an in-memory interaction prop is added; persistent project/node/media data is unchanged.",
+  "residual_risks": [
+    "No App/browser/screenshot/Provider/full suite is run while coordination is performing 315 screenshot checks",
+    "Actual pointer hit/occlusion, lingering drag state, autoplay permissions, media/network health and all four original CI positive controls remain unverified until coordination runs the unchanged structural scenario serially",
+    "This source defect explains zero mount under a valid hover but does not prove it is the only runtime cause in the truncated CI log",
+    "Node tests inspect actual React elements and the real callsite AST only; they do not mount or decode media and never fabricate played/replayed counters"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/videoPreviewIntentWiring.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/videoPreviewIntentWiring.test.ts"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

@@ -409,6 +409,7 @@ function BaseGenerationNodeImpl({
           mediaPreviewPriority={mediaPreviewPriority}
           isRemoveBackgroundPending={isRemoveBackgroundPending(node)}
           selected={selected}
+          videoPreviewRequested={videoPreview.requested}
           needsFirstFrame={needsFirstFrame}
           hasFrameSourceEdge={hasFrameSourceEdge}
           shotIndex={shotIdentity.shotIndex ?? null}
