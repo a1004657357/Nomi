@@ -14,7 +14,6 @@ import {
 import { NomiSelect, WorkbenchIconButton } from '../../../../design'
 import { cn } from '../../../../utils/cn'
 import { toast } from '../../../../ui/toast'
-import { useWorkbenchStore } from '../../../workbenchStore'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import Model3DViewer, { type Model3DViewerHandle } from './Model3DViewer'
@@ -187,7 +186,6 @@ export default function Model3DCameraNodeBody({
         camera,
         capture: frame,
       })
-      useWorkbenchStore.getState().requestCanvasFit()
       toast(i18n.t("canvasComponents.createdACaptureImageUsingTheCameraFraming", { v0: ratio }), 'success')
     } catch (error) {
       toast(error instanceof Error ? error.message : i18n.t("canvasComponents.text3dCameraCaptureFailed"), 'error')
@@ -213,7 +211,6 @@ export default function Model3DCameraNodeBody({
         sourceNodeId: node.id,
         frames,
       })
-      useWorkbenchStore.getState().requestCanvasFit()
       toast(i18n.t("canvasComponents.createdANineCameraGeometryGuideCollection", { v0: ratio }), 'success')
     } catch (error) {
       toast(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToGenerateTheNineCameraGuide"), 'error')

@@ -25,6 +25,8 @@ const FOCUS_DISPATCHERS: Record<string, string> = {
   'workbench/generationCanvas/components/BatchPlanOverlay.tsx': '批量条上点被卡住的那一镜',
   'workbench/generationCanvas/nodes/completeNodeConnection.ts': 'toast 上的「定位」动作',
   'workbench/project/useProjectNotificationTarget.ts': '点系统通知 / 深链跳到节点',
+  'workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx': '用户在该行点抽出图片/视频节点或打开其能力设置，不由生成完成回调触发',
+  'workbench/generationCanvas/skills/canvasSkillModel.ts': '仅供用户点击产物的定位按钮；发送 Playbook 或生成完成不能调用',
 }
 
 function sourceFiles(dir: string): string[] {
@@ -66,5 +68,15 @@ describe('canvas viewport movers', () => {
     for (const gone of ['useCreatedNodeVisibilityPan.ts', 'viewportTargetTracker.ts']) {
       expect(fs.existsSync(path.join(__dirname, gone)), gone).toBe(false)
     }
+  })
+
+  it('launching a playbook never invokes the explicit result-focus helper', () => {
+    const callers = files
+      .filter((file) => /\bfocusCanvasSkillNode\(/.test(stripComments(fs.readFileSync(file, 'utf8'))))
+      .map(relative)
+      .filter((file) => file !== 'workbench/generationCanvas/skills/canvasSkillModel.ts')
+    expect(callers).toEqual(['workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx'])
+    const body = fs.readFileSync(path.join(SRC, callers[0]), 'utf8')
+    expect(body).toMatch(/onClick=\{\(event\) => \{\s*event\.stopPropagation\(\)\s*focusCanvasSkillNode\(output\.id\)/)
   })
 })

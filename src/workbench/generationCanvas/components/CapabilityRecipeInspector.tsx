@@ -363,7 +363,6 @@ export function CapabilityRecipeInspector({
         license: { source: '用户自有素材', commercialUse },
       })) as { nodeId: string }
       useWorkbenchStore.getState().setActiveCategoryId('scene')
-      useWorkbenchStore.getState().requestCanvasFit()
       toast(i18n.t("canvasComponents.savedCreativeResource", { v0: resourceLabel }), 'success')
       setOpen(false)
       useGenerationCanvasStore.getState().selectNode(result.nodeId)

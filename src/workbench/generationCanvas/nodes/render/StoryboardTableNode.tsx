@@ -117,7 +117,6 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
   const setStoryboardPlan = useWorkbenchStore((state) => state.setStoryboardPlan)
   const setWorkspaceMode = useWorkbenchStore((state) => state.setWorkspaceMode)
   const setActiveCategoryId = useWorkbenchStore((state) => state.setActiveCategoryId)
-  const requestCanvasFit = useWorkbenchStore((state) => state.requestCanvasFit)
   const nodes = useGenerationCanvasStore(
     useShallow((state) => {
       const shotNodeIds = new Set(state.nodes.filter(isShotNumberedNode).map((candidate) => candidate.id))
@@ -320,25 +319,22 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
         count += 1
       }
     }
-    requestCanvasFit()
     toast(count ? i18n.t("canvasComponents.containedStoryboardGenerationNodes", { v0: count }) : i18n.t("canvasComponents.noStoryboardGenerationNodesToContain"), count ? 'success' : 'info')
-  }, [containNodeForRow, requestCanvasFit, rows])
+  }, [containNodeForRow, rows])
 
   const fitStoryboardTable = React.useCallback(() => {
     const size = storyboardTableFitSize(rows.length, expandedShotIndex !== null)
     updateNode(node.id, storyboardTableSizePatch(node.meta, size))
     commitPersistedChange()
-    requestCanvasFit()
     toast(i18n.t("canvasComponents.storyboardTableFittedToItsCurrentRowsAndColumns"), 'success')
-  }, [commitPersistedChange, expandedShotIndex, node.id, node.meta, requestCanvasFit, rows.length, updateNode])
+  }, [commitPersistedChange, expandedShotIndex, node.id, node.meta, rows.length, updateNode])
 
   const compactStoryboardTable = React.useCallback(() => {
     const size = { ...STORYBOARD_TABLE_DEFAULT_SIZE }
     updateNode(node.id, storyboardTableSizePatch(node.meta, size))
     commitPersistedChange()
-    requestCanvasFit()
     toast(i18n.t("canvasComponents.storyboardTableRestoredToACompactWindow"), 'success')
-  }, [commitPersistedChange, node.id, node.meta, requestCanvasFit, updateNode])
+  }, [commitPersistedChange, node.id, node.meta, updateNode])
 
   const revealRowOutput = React.useCallback(
     async (row: StoryboardScriptRow, role: 'image' | 'video', openCapability = false) => {
@@ -388,7 +384,6 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
         setWorkspaceMode('generation')
         setActiveCategoryId(imageOutput.node.categoryId || 'shots')
         selectNodes(result.nodeIds)
-        requestCanvasFit()
         toast(
           result.createdCount
             ? i18n.t("canvasComponents.createdThe5SecondActionFrameAnd8SecondEnding", { v0: row.shot.index })
@@ -406,7 +401,6 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
       ensureImageNodeForRow,
       keyframeGeneratingShotIndex,
       node,
-      requestCanvasFit,
       selectNodes,
       setActiveCategoryId,
       setWorkspaceMode,

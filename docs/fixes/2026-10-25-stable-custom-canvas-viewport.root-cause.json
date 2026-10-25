@@ -1,0 +1,161 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-stable-custom-canvas-viewport",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "自定义生成和收纳动作绕过已有画布视口策略",
+  "symptom": "新建、收纳、返回3D预览和运行Playbook后额外适应/平移画布；全仓视口入口检查发现未登记的调用。",
+  "direct_cause": "自定义调用者把生成完成、表格缩放与整个画布视口移动绑定。",
+  "class_root": "生成/编辑节点与用户明确请求定位是不同意图，前者不应自动写视口信号。",
+  "affected_population": [
+    "分镜收纳、表格尺寸调整和关键帧创建",
+    "3D截图、九机位和Blender回传",
+    "创意资源交接和Playbook发送"
+  ],
+  "scope_paths": [
+    "src/workbench/creation/creationPlaybookLaunch.ts",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+    "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+    "src/workbench/generationCanvas/components/canvasViewportMovers.structure.test.ts"
+  ],
+  "entry_points": [
+    "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx::focusCanvasSkillNode",
+    "src/workbench/onboarding/journeyTourStore.ts::requestCanvasFit",
+    "src/workbench/production/useProductionStatus.ts::requestCanvasFit"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "沿用已有CanvasArrivalHint与显式定位策略；只删附加视口请求，不改渲染依赖或模型协议。",
+  "invariants": [
+    "节点创建、收纳、连接、保存、提示、用户模型参数与原素材仍由原函数执行。",
+    "创建和生成完成不自动适应画布；表格尺寸变化不等于缩放整个画布。",
+    "保留分镜行明确抽出/打开设置的定位与产物定位按钮；发送Playbook不能调用产物定位helper。",
+    "不改提交、付费确认、上传、取消、并发、超时、授权、冻结或PNG基线。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/workbenchStore.ts",
+    "tests": [
+      "src/workbench/generationCanvas/components/canvasViewportMovers.structure.test.ts",
+      "src/workbench/canvasFitSignal.test.ts",
+      "src/workbench/generationCanvas/components/canvasArrivalModel.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "symbol": "focusCanvasSkillNode"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/onboarding/journeyTourStore.ts",
+      "symbol": "requestCanvasFit"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/production/useProductionStatus.ts",
+      "symbol": "requestCanvasFit"
+    }
+  ],
+  "door_reduction": {
+    "before": 10,
+    "after": 3
+  },
+  "generality_proof": "同一2971生产源AST映射10→3；原两种显式fit入口和产物点击helper保留。全仓caller门岗与新增Playbook负例通过；含arrival owner与fit signal 16/16，skill模型+门岗10/10。7文件87项隔离浏览器回归通过，但不伪称所有这里的按钮均已逐个真App验收。",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/workbenchStore.ts",
+      "symbol": "requestCanvasFit",
+      "responsibility": "用户显式适应信号唯一owner；不把节点创建当适应请求"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/canvasArrivalModel.ts",
+      "symbol": "nextUnseenArrivals",
+      "responsibility": "全体新节点统一计算屏外到达提示，而不是各入口擅自移动视口"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/creation/creationPlaybookLaunch.ts",
+      "entry_point": "launchCreationPlaybook",
+      "disposition": "enforced",
+      "evidence": "修改前后AST映射及全仓扫描；原生成/保存/连接逻辑仍在，仅移除附加fit或自动focus。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "entry_point": "removed automatic viewport requests",
+      "disposition": "enforced",
+      "evidence": "修改前后AST映射及全仓扫描；原生成/保存/连接逻辑仍在，仅移除附加fit或自动focus。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "entry_point": "removed automatic viewport requests",
+      "disposition": "enforced",
+      "evidence": "修改前后AST映射及全仓扫描；原生成/保存/连接逻辑仍在，仅移除附加fit或自动focus。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "entry_point": "removed automatic viewport requests",
+      "disposition": "enforced",
+      "evidence": "修改前后AST映射及全仓扫描；原生成/保存/连接逻辑仍在，仅移除附加fit或自动focus。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "entry_point": "removed automatic viewport requests",
+      "disposition": "enforced",
+      "evidence": "修改前后AST映射及全仓扫描；原生成/保存/连接逻辑仍在，仅移除附加fit或自动focus。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "每增加一种派生输出都可能重新加入自动fit，破坏用户正在观察的局部。",
+    "same_class_scan": [
+      "全仓2971生产源逐个映射requestCanvasFit/focusCanvasSkillNode",
+      "独立核对CanvasArrivalHint状态owner与分镜明确点击的focus路径",
+      "Playbook调用不得复用定位产物helper"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/workbenchStore.ts",
+    "invariant": "视口写入只由既有显式入口发出，新增节点通过统一arrival owner露出。",
+    "failure_mode": "新自动fit或非按钮helper调用被全仓静态门岗拒绝。",
+    "exception_policy": "none",
+    "strategy": "删除五处调用者的附加移动，保留既有唯一信号owner和到达提示；门岗精确记载两项原有显式focus消费者。",
+    "artifacts": [
+      "src/workbench/creation/creationPlaybookLaunch.ts",
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/components/canvasViewportMovers.structure.test.ts",
+    "src/workbench/canvasFitSignal.test.ts",
+    "src/workbench/generationCanvas/components/canvasArrivalModel.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/components/canvasViewportMovers.structure.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "删除附加调用和失效subscription/import，所有节点编辑与生成路径保留。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "未改变React Flow、Vite或平台渲染实现；该不变量属于应用的视口意图。",
+    "exit_criteria": []
+  },
+  "migration": "不读写日常项目；保留原节点/边/素材及分类，无数据迁移。",
+  "residual_risks": [
+    "未对所有自定义按钮逐一真App操作；后续隔离App回归仍需执行。",
+    "PNG差异与工具冻结批准尚未完成；本补丁不代表main可合并。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/components/canvasViewportMovers.structure.test.ts"
+  }
+}

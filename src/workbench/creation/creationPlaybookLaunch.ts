@@ -3,7 +3,6 @@ import { listWorkbenchSkills } from '../api/skillApi'
 import {
   addCanvasSkillNode,
   beginCanvasSkillStage,
-  focusCanvasSkillNode,
   readCanvasSkillNodeState,
 } from '../generationCanvas/skills/canvasSkillModel'
 import { requestCanvasSkillAgent } from '../generationCanvas/skills/canvasSkillEvents'
@@ -48,7 +47,6 @@ export async function launchCreationPlaybook(input: LaunchCreationPlaybookInput)
   input.clearComposer()
   input.switchToGeneration()
   window.setTimeout(() => {
-    focusCanvasSkillNode(skillNode.id)
     requestCanvasSkillAgent({
       skill: { skillKey: playbook.name, label: playbook.label },
       skillNodeId: skillNode.id,

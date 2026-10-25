@@ -14,7 +14,6 @@ import { NomiLoadingMark } from '../../../design'
 import { toast } from '../../../ui/toast'
 import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
-import { useWorkbenchStore } from '../../workbenchStore'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { cloneScene3DState, normalizeScene3DState } from './scene3d/scene3dSerializer'
@@ -157,7 +156,6 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
   const connectNodes = useGenerationCanvasStore((state) => state.connectNodes)
   const canvasNodes = useGenerationCanvasStore((state) => state.nodes)
   const canvasEdges = useGenerationCanvasStore((state) => state.edges)
-  const requestCanvasFit = useWorkbenchStore((state) => state.requestCanvasFit)
   const sceneState = React.useMemo(() => readScene3DState(node), [node])
   const sceneStateKey = React.useMemo(() => scene3DStateKey(sceneState), [sceneState])
   const referenceTarget = React.useMemo(
@@ -211,8 +209,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     [node.id, updateNode],
   )
 
-  // 关编辑器后 fit + 高亮新节点（P3）：截图和录 take 都触发，不只录 take
-  // 原 bug：fitView 只在录 take 后触发，截图后关编辑器不 fit → 用户找不到截图节点
+  // Keep the viewport stable when returning; highlight the created result only.
   const pendingFitNodeIdRef = React.useRef<string | null>(null)
   const selectNode = useGenerationCanvasStore((state) => state.selectNode)
 
@@ -222,13 +219,11 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     const pendingId = pendingFitNodeIdRef.current
     if (pendingId) {
       pendingFitNodeIdRef.current = null
-      // 延迟一帧让画布渲染完再 fit + select
       requestAnimationFrame(() => {
-        requestCanvasFit()
         selectNode(pendingId)
       })
     }
-  }, [requestCanvasFit, selectNode])
+  }, [selectNode])
 
   // 录 take（S2）：把录制好的（含角色/机位轨迹的）场景另建一个 scene3d 节点 + 打 cameraMoveAutoCapture 标志，
   // 整条出 mp4 + 喂目标镜头 video_ref 复用 AI 运镜常驻 Host（CameraMoveCaptureHost），不另起接缝（P1）。
@@ -411,9 +406,8 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     })
     await persistActiveWorkbenchProjectNow()
     project.assertCurrent()
-    requestCanvasFit()
     toast(source === 'blender-director' ? i18n.t("canvasComponents.blenderDirectorPreviewReturnedToTheCanvas") : i18n.t("canvasComponents.blenderSceneReturnedToTheCanvas"), 'success')
-  }, [addNode, connectNodes, node.categoryId, node.id, node.meta, node.position, requestCanvasFit, updateNode, width])
+  }, [addNode, connectNodes, node.categoryId, node.id, node.meta, node.position, updateNode, width])
 
   const runBlenderJob = React.useCallback((
     source: BlenderOutputSource,
