@@ -4,7 +4,7 @@
 //
 // 用法：pnpm run build && pnpm run test:e2e
 import { launchNomiApp } from "./_launchApp.mjs";
-import { expect } from "./_assert.mjs";
+import { expect, screenshotSettled } from "./_assert.mjs";
 import { checkComposerFixedFooter } from "./_composerFixedFooter.mjs";
 import { addCanvasNodeFromRail } from "./_canvasRail.mjs";
 import { panCanvasUntilInside } from "./_canvasHit.mjs";
@@ -34,6 +34,7 @@ const { app, win } = await launchNomiApp({
   projectsDir: projectsDir,
   env: { NOMI_E2E_SMOKE: "1" },
 });
+const electronProcess = app.process();
 const rendererDiagnostics = [];
 win.on("console", (message) => {
   if (["error", "warning"].includes(message.type())) {
@@ -76,7 +77,7 @@ try {
   const primaryCard = win.locator('[data-variant="primary"]', { hasText: "新建空白项目" });
   await expect(primaryCard).toBeVisible();
   assert(await primaryCard.isVisible(), "项目库主入口动作卡片「新建空白项目」可见");
-  if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "library.png") });
+  if (evidenceDir) await screenshotSettled(win, { path: path.join(evidenceDir, "library.png") });
 
   // 3) 开项目 → 工作台画布（开项目 → readProject/资产 → 画布挂载）
   // 优先打开已有项目卡（不污染库）；空库时走「新建空白项目」。
@@ -158,7 +159,7 @@ try {
     : Array.from(el.children).map((paragraph) => paragraph.textContent || '').join('\n'));
   expect(savedPrompt, '富文本段落按换行还原后须保留完整提示词').toBe(longPrompt);
   assert(savedPrompt === longPrompt, "平移画布后长提示词完整保留");
-  if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "canvas.png") });
+  if (evidenceDir) await screenshotSettled(win, { path: path.join(evidenceDir, "canvas.png") });
 
   await checkComposerFixedFooter(win, { composer, promptInput, flowNode, longPrompt, evidenceDir });
 
@@ -198,7 +199,7 @@ try {
   }, viewportPng.toString('base64'));
   assert(viewportPixels.width > 300 && viewportPixels.height > 200 && viewportPixels.colors > 8,
     `3D 视口实际渲染而非空白占位（${viewportPixels.colors} 种采样色）`);
-  if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "director.png") });
+  if (evidenceDir) await screenshotSettled(win, { path: path.join(evidenceDir, "director.png") });
   console.log(`\nSMOKE PASS: ${passed} assertions`);
   process.exitCode = 0;
 } catch (error) {

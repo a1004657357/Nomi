@@ -1,13 +1,15 @@
 {
   "schema_version": 3,
   "id": "2026-10-25-smoke-expect-import",
-  "problem_type": "Standalone ESM entry uses test-runner-style assertions without an explicit canonical import",
-  "symptom": "CI e2e smoke starts Electron and passes four initial checks, then aborts at the first expect with ReferenceError: expect is not defined.",
-  "direct_cause": "smoke.e2e.mjs contains three active expect calls but imports neither expect nor the canonical assertion owner. Standalone Node execution does not supply a runner global.",
-  "class_root": "A standalone entry must explicitly bind assertion symbols to the canonical collecting owner rather than depend on globals or direct runner imports.",
+  "problem_type": "Standalone ESM runtime bindings and serialized browser scopes are incompletely connected",
+  "symptom": "CI first failed on missing expect (fixed in 6492); the authorized follow-up source audit finds eleven unresolved uses across screenshotDir, screenshotSettled and electronProcess that could fail later screenshot/close branches.",
+  "direct_cause": "A copied screenshot directory name never binds to the actual created evidenceDir; screenshotSettled lacks its canonical import; the close-timeout fallback refers to a child-process handle never obtained from the launched app. The first missing expect masked these later branches.",
+  "class_root": "Every standalone runtime symbol must bind to its real module/resource owner, and Node versus serialized renderer scopes must be checked independently rather than supplied ambient runner/browser globals.",
   "affected_population": [
     "smoke.e2e.mjs standalone execution",
-    "Other standalone journeys that use the same canonical expect"
+    "Other standalone journeys that use the same canonical expect",
+    "Success screenshot stages and the five-second shutdown failure fallback",
+    "Node standalone scope and serialized renderer callback scopes"
   ],
   "scope_paths": [
     "tests/ux/smoke.e2e.mjs",
@@ -18,13 +20,18 @@
     "core-smoke-spend-confirm.walk.mjs as a second actual standalone ownership control"
   ],
   "external_sources": [],
-  "internal_only_reason": "The failure is a missing local ESM binding, confirmed by the exact CI log and source. The existing ./_assert.mjs export is the internal canonical collecting owner; no external runtime/library change is required.",
+  "internal_only_reason": "Local module/resource ownership is established by actual ESM imports, the existing created evidence directory, launch return shape and screenshot helper source. ESLint supplies semantic scope analysis; no external App/runtime or media behavior is assumed.",
   "invariants": [
     "Explicitly import expect from ./_assert.mjs in smoke, without changing any assertion or pass count",
     "Do not declare a global expect, change ESLint globals or bypass the collecting owner with direct runner imports",
     "New structural tests read source only; do not import or execute Electron standalone modules",
     "Removing the actual canonical import must be rejected for both real standalone scripts",
-    "Preserve all three active smoke expect calls and reject vacuous/no-assertion inputs"
+    "Preserve all three active smoke expect calls and reject vacuous/no-assertion inputs",
+    "All screenshots retain the three existing filenames under the real evidenceDir created by mkdirSync; no dummy directory or placeholder global",
+    "screenshotSettled comes from ./_assert.mjs and electronProcess from the returned app.process(); preserve existing close race and kill behavior",
+    "No-config ESLint Linter checks the complete module with globals.node and isolated serialized renderer callbacks with globals.browser",
+    "Browser globals do not leak into Node; Node/captured outer bindings do not leak into renderer callbacks; expect is never added to globals",
+    "Do not suppress unresolved identifiers with inline global/disable directives; retain all prior canonical-owner negative controls"
   ],
   "doors": [
     {
@@ -33,6 +40,16 @@
       "symbol": "expect"
     },
     {
+      "kind": "read",
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "evidenceDir"
+    },
+    {
+      "kind": "read",
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "electronProcess"
+    },
+    {
       "kind": "write",
       "path": "tests/ux/core-smoke-spend-confirm.walk.mjs",
       "symbol": "expect"
@@ -40,40 +57,71 @@
     {
       "kind": "write",
       "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "launchNomiApp"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/smoke.e2e.mjs",
       "symbol": "expect"
+    },
+    {
+      "kind": "write",
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "screenshotSettled"
     }
   ],
   "door_reduction": {
-    "before": 3,
-    "after": 3,
-    "why_not": "These two actual standalone entries run distinct scenarios and must retain their own assertions. They share the existing canonical owner; adding the missing import does not remove legitimate calls. Generated with the existing mapDoors API over exactly the user-scoped smoke and actual second-standalone control, using Git base content for before and current files for after."
+    "before": 8,
+    "after": 7,
+    "why_not": "Original assertions, screenshot captures and process cleanup remain distinct legitimate consumers. The obsolete unbound screenshotDir reference is removed, while all captures reuse the already-existing evidenceDir owner. Before/after maps are generated by the unchanged mapDoors API over the same two real standalone files."
   },
-  "generality_proof": "The regression checks the actual smoke and a second real core-smoke standalone. It requires a named local expect binding from the canonical owner and nonempty actual calls; virtual removal of each real import is rejected. Separate negative fixtures reject globals, comments, local stubs, wrong runner owners and a mismatched alias; an empty assertion body cannot pass. The scripts themselves are never imported or run.",
+  "generality_proof": "Preserve both real standalone expect ownership controls and all wrong-owner/global/comment/alias negatives. New no-config ESLint no-undef checks cover the full real smoke and a second real standalone, including success/catch/finally branches and serialized browser callbacks. Virtual deletion of each real expect/screenshotSettled/evidenceDir/electronProcess binding must produce an unresolved identifier. Runtime-separation canaries reject browser globals outside callbacks, Node/captured globals inside callbacks, and inline bypass comments. AST ownership tests require the real created evidence directory, canonical screenshot import, all three original filenames, and app.process(). No standalone, App, screenshot or browser is executed.",
   "shared_boundaries": [
     {
       "path": "tests/ux/smoke.e2e.mjs",
       "symbol": "expect",
       "responsibility": "Bind the standalone module's existing assertion calls to ./_assert.mjs and its collecting wrapper"
+    },
+    {
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "evidenceDir",
+      "responsibility": "Use the existing created output directory for all three real screenshot paths"
+    },
+    {
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "screenshotSettled",
+      "responsibility": "Import the canonical screenshot helper rather than depend on a global"
+    },
+    {
+      "path": "tests/ux/smoke.e2e.mjs",
+      "symbol": "electronProcess",
+      "responsibility": "Bind the actual launched app child process before the cleanup lifecycle"
     }
   ],
   "same_class_entry_points": [
     {
       "path": "tests/ux/smoke.e2e.mjs",
-      "entry_point": "top-level expect calls",
+      "entry_point": "standalone assertion/screenshot/shutdown bindings",
       "disposition": "enforced",
-      "evidence": "Add the missing explicit canonical import; retain the three original locator/text assertions unchanged."
+      "evidence": "Keep the prior expect import and add canonical screenshot import, use the existing created evidenceDir and bind the actual app.process() handle before the try/finally lifecycle."
     },
     {
       "path": "tests/ux/core-smoke-spend-confirm.walk.mjs",
       "entry_point": "standalone canonical expect import and calls",
       "disposition": "not-affected",
-      "evidence": "Already imports expect from ./_assert.mjs. New structural regression checks its real source and removes its import only in an in-memory negative control."
+      "evidence": "Already imports canonical expect; both its actual owner and complete Node/renderer semantic scope are checked without launching it."
     },
     {
       "path": "tests/ux/_assert.mjs",
       "entry_point": "collectingExpect(nativeExpect) -> export expect",
       "disposition": "not-affected",
       "evidence": "Existing shared owner remains unchanged; smoke reuses it rather than a global or direct framework expect."
+    },
+    {
+      "path": "tests/ux/_launchApp.mjs",
+      "entry_point": "launchNomiApp -> returned app",
+      "disposition": "not-affected",
+      "evidence": "The existing launcher returns the real app object. Its process() supplies the child handle; no synthetic process or launcher API change is used."
     }
   ],
   "recurrence": {
@@ -84,16 +132,19 @@
       "Read the canonical expect export and collecting wrapper in _assert.mjs",
       "Read a second actual standalone core-smoke-spend-confirm and verified its canonical import",
       "Initial CLI default excludes tests; used the unchanged exported mapDoors API with the two explicit standalone source files and generated real before/after maps",
-      "Separately reported other unresolved smoke symbols; did not silently expand scope or claim an end-to-end pass"
+      "Separately reported other unresolved smoke symbols; did not silently expand scope or claim an end-to-end pass",
+      "Read actual launch return shape and existing goal-feature smoke app.process() convention",
+      "Verified real evidenceDir creation and all three dangling screenshot uses plus the finally process references",
+      "Used existing ESLint Linter and globals packages in isolated test configuration; no repo ESLint change"
     ]
   },
   "prevention": {
     "kind": "centralized-boundary",
     "enforcement_path": "tests/ux/smoke.e2e.mjs",
-    "invariant": "Standalone expect calls have a local canonical ESM import, not an ambient runner dependency.",
-    "failure_mode": "Source ownership regression rejects missing/misowned bindings before a browser/App run; the actual explicit import supplies the runtime binding.",
+    "invariant": "Every standalone lifecycle symbol is connected to its real owner and all ordinary/renderer lexical uses resolve in the proper runtime.",
+    "failure_mode": "Canonical owner and no-undef regressions reject missing imports, missing resource/process bindings and incorrect cross-runtime captures before an App is started.",
     "exception_policy": "none",
-    "strategy": "Add one import from the already-existing canonical wrapper and directly guard its ownership with source-only negative controls.",
+    "strategy": "Keep the prior expect repair, bind canonical screenshot helper and returned process, and replace the obsolete directory name with the existing created owner. Use existing ESLint semantic scope analysis rather than a handwritten identifier resolver.",
     "artifacts": [
       "tests/ux/smoke.e2e.mjs"
     ]
@@ -109,20 +160,20 @@
     "removed_paths": [
       "tests/ux/smoke.e2e.mjs"
     ],
-    "rationale": "Remove dependence on an undeclared ambient expect while retaining all original assertions and journey steps."
+    "rationale": "Remove undeclared ambient expect dependence (prior batch) and obsolete screenshotDir/missing screenshot/process bindings without dropping any capture, assertion, close timeout or forced-termination step."
   },
   "dependency_lifecycle": {
     "decision": "not-applicable",
     "rationale": "Reuse the existing assertion wrapper and existing TypeScript/Vitest structural-test pattern; no new dependency or API replacement.",
     "exit_criteria": []
   },
-  "migration": "None; only a local standalone module binding is added. No app/project/media data is changed.",
+  "migration": "No user-data migration. The existing outputs/canvas-smoke directory remains the artifact owner, now also used by its three success captures; the actual launched app supplies the existing termination fallback.",
   "residual_risks": [
     "No App, browser, screenshot, Provider, full suite or large typecheck run; actual e2e smoke success remains coordination acceptance",
-    "Other pre-existing unresolved smoke symbols screenshotDir/screenshotSettled/electronProcess are reported and deliberately not changed under the user-limited import-only scope",
     "The structural scope is the actual smoke plus a second real standalone control, not a claim that every unrelated journey was audited",
-    "The structural test targets canonical expect ownership, not a complete free-variable audit of every standalone symbol",
-    "The real-diff contract check retains one structural-prevention advisory because its path classifier treats executable tests/ux/smoke.e2e.mjs as test-only. The actual ESM import fixes runtime binding; no fake src artifact, scope change, checker exemption or one_off downgrade is added."
+    "The real-diff contract check retains one structural-prevention advisory because its path classifier treats executable tests/ux/smoke.e2e.mjs as test-only. The actual ESM import fixes runtime binding; no fake src artifact, scope change, checker exemption or one_off downgrade is added.",
+    "No actual screenshot write, directory permission check, app shutdown or forced-kill branch is executed in this Node-only task; the coordinator must run the real smoke",
+    "Renderer scope detection is bounded to inline evaluate/evaluateAll/waitForFunction callbacks used by the two checked entries; Electron app.evaluate remains Node. This is not a whole-repository audit of arbitrary serialization helpers."
   ],
   "invariant_owner_layer": {
     "layer": "tests/ux/smoke.e2e.mjs",

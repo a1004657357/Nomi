@@ -34,3 +34,26 @@
 - `check:root-cause-contracts` 单元 55/55；使用原 mapDoors 公开 API 得到 before=after=3 的真实门表；更新门表后的实际 diff/schema exit 0。仍有 **1 条未清零告警**：其路径分类把 tests/ 下的可执行 smoke 入口也当作纯测试，从而认为没有 changed structural prevention。真实修复是可执行入口的 ESM binding，不增加伪 src 文件、不改 scope/checker 或降为 one_off 来避告警。
 
 没有真实 E2E 重跑，也不据 Node 绿测推断其他 9 条 journeys、MCP 或后续 screenshot/close 分支全绿。范围外三个未绑定符号已单列交接，未改；无 App/浏览器/截图/Provider/全套/大类型检查，未改协调树。
+
+## 后续授权：完整运行时绑定
+
+本后续基于 6492f0fdc0039f5bef2b8e292231984525c2943f，新分支 codex/smoke-runtime-bindings-20261025。用户已扩大范围，以上“未改三个符号”只记录上批历史；本批统一收口，仍仅 smoke、本结构回归、设计/v3。
+
+根因关系：expect 和 screenshotSettled 都是复制进入独立 ESM 的调用而未接 canonical owner；screenshotDir 则引用了本脚本不存在的目录名，实际已创建的目录是 evidenceDir；electronProcess 是 finally 的五秒关闭失败兜底漏接 launch 返回 app 的真实子进程。后两阶段分别在首个截图分支及关闭超时分支才触发，容易被前面的 expect 错误遮住。它们不是三个不同产品功能缺陷，而是同一 standalone 模块接线/生命周期绑定遗漏。
+
+本批直接复用 path.resolve("outputs/canvas-smoke") + mkdirSync 的 evidenceDir，不新造 shotsDir/screenshotDir 别名或空目录；从 _assert 导入 screenshotSettled；从启动返回的 app.process() 取得真实 electronProcess，保留原 close race/kill 行为。
+
+作用域回归使用既有 ESLint Linter（不读全局配置）与 no-undef：模块仅有 globals.node；实际 evaluate/evaluateAll/waitForFunction 序列化回调用隔离函数表达式和 globals.browser 检查。Node 层不授予 browser globals，renderer 不授予 Node/外层闭包变量；Electron app.evaluate 不被误当 renderer。所有变量绑定/局部遮蔽判定由 ESLint 语义作用域负责，AST 只定位运行环境边界。关闭 inline config，不能靠 global 注释/disable 掩盖漏绑定；旧 expect 错 owner/全局伪装阴性仍保留。
+
+仍不启动 App/浏览器/截图，不宣称真实媒体/UI或强制关闭分支已执行。本轮日志 `.tmp/smoke-runtime-bindings/`，先 red 后 green，最终结果随后补齐。
+
+### 后续批次实际结果
+
+- `red-final.log`：生产未改前 4 失败/17 通过（21 用例）。完整 smoke 的语义检查同时报出三类共 11 个 no-undef 引用，截图/进程绑定的负例前提与真实 owner 检查也拒绝缺绑定现状。另一真实 standalone 的整体语义检查已通过。
+- `green.log`：补齐真实来源后 21/21。整份 smoke 和 core-smoke-spend-confirm 的 Node/renderer no-undef 均为零；旧 canonical expect/错误 owner/全局伪装对照全保留。
+- 逐一虚拟移除 expect、screenshotSettled、evidenceDir、electronProcess 的真实绑定都会触发对应 no-undef。renderer 内的 Node process、Node 外层捕获、即便在 Node 正确导入的 expect 也必须被拒绝；browser globals 在 Node 顶层、main app.evaluate 或拼错名称时不能放行。局部参数遮蔽/局部变量由 ESLint 作用域正确判定。
+- 结构 owner 检查确认 screenshotSettled 为 canonical 同名导入、electronProcess=app.process()、原 evidenceDir 的 path.resolve/mkdirSync，以及 library.png/canvas.png/director.png 三个原截图点全部保留。没有另造目录、假 process 或全局变量。
+- 两个 mjs 的 `node --check` 和 `git diff --check` 均通过。测试仅运行该文件，maxWorkers=1/no-file-parallelism/cache=false；新 Linter 不加载或修改仓库全局 ESLint 配置，仍由现有 Vitest 自动收集。
+- `contracts.log`：base=6492f0fdc0039f5bef2b8e292231984525c2943f，合同单元 55/55、真实 diff/schema exit 0。现有 mapDoors 的真实门表 8→7，仅移除 obsolete screenshotDir 入口；保留原 tests 路径归类造成的 1 条 structural-prevention 告警，不改 checker/豁免/recurrence 来抹掉它。
+
+本后续只写 smoke、本结构单测及本设计/v3 四文件。不启动 App/浏览器/截图/Provider，不跑真实 smoke、全仓或大类型检查；真实截图落盘权限及关闭超时/强杀分支仍由协调线实际 smoke 验收。
