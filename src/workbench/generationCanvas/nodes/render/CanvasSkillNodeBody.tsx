@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -167,7 +168,7 @@ export default function CanvasSkillNodeBody({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto py-2">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-y-auto py-2`}>
         {recipes.length ? (
           <div className="grid gap-1.5">
             {recipes.map((recipe) => {

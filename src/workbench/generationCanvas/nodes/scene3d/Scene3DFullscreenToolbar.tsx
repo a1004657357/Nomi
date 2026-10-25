@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -52,7 +53,7 @@ export function Scene3DFullscreenToolbar({
         <IconCube size={18} className="shrink-0 text-[var(--workbench-muted)]" />
         <div className="min-w-0 truncate text-body-sm font-medium text-[var(--workbench-ink)]">{nodeTitle}</div>
       </div>
-      <div className="flex min-w-0 max-w-[72vw] items-center gap-2 overflow-x-auto">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} flex min-w-0 max-w-[72vw] items-center gap-2 overflow-x-auto`}>
         <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
           <PanelButton title={i18n.t("canvasComponents.move")} active={transformMode === 'translate'} onClick={() => onTransformModeChange('translate')}>
             <IconArrowsMove size={15} />

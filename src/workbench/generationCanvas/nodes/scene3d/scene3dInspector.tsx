@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 // Scene3D 检视面板：左侧场景节点列表 + 右侧属性/姿势编辑。
@@ -209,7 +210,7 @@ export function SceneObjectList({
         <h3 className="m-0 text-caption font-medium text-[var(--nomi-ink)]">{t('scene3d.inspector.sceneNodes')}</h3>
         <span className="text-micro text-[var(--nomi-ink-60)]">{totalCount}</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-auto px-2 pb-2`}>
         {entries.map((entry) => {
           if (entry.kind === 'header') {
             const expanded = expandedGroups[entry.group] ?? false
@@ -516,7 +517,7 @@ export function PropertyPanel({
   }, [selectedObjectHasPose])
 
   return (
-    <section className="min-h-0 flex-1 overflow-auto bg-[var(--nomi-paper)] px-3 py-3">
+    <section className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-auto bg-[var(--nomi-paper)] px-3 py-3`}>
       <div className="mb-3 flex items-center gap-2 text-caption font-medium text-[var(--nomi-ink)]">
         <IconSettings size={15} />
         {t('scene3d.inspector.properties')}

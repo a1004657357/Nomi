@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -190,7 +191,7 @@ export default function VibingDirectorAssetLibrary({
       ) : null}
 
       {assetSource === 'kenney' && !readOnly ? (
-        <div className="min-h-0 flex-1 overflow-y-auto" data-director-asset-catalog="kenney">
+        <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-y-auto`} data-director-asset-catalog="kenney">
           {catalogLoading ? (
             <div className="flex items-center gap-2 px-3 py-5 text-caption text-[var(--workbench-muted)]">
               <NomiLoadingMark size={15} />{i18n.t("canvasComponents.readingCatalog")}</div>
@@ -226,7 +227,7 @@ export default function VibingDirectorAssetLibrary({
           )}
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-y-auto`}>
           {assets.length ? assets.map((asset) => (
             <div key={asset.id} className="border-b border-[var(--workbench-border)] px-3 py-2.5 last:border-b-0">
               <div className="truncate text-caption font-medium">{asset.name}</div>

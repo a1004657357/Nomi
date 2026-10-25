@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import { withProjectAction } from '../../../project/projectCanvasReadSurface'
@@ -501,7 +502,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
 
       <section
         ref={setMediaVisibilityRoot}
-        className="min-h-0 flex-1 overflow-auto"
+        className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-auto`}
         onPointerDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
         onKeyUp={(event) => event.stopPropagation()}

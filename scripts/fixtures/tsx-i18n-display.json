@@ -66,7 +66,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx": {
-      "classHash": "4be3f8313a723fd12a1d857f7fc1b5c28a6eff81df23f5527b3aded27b6bdc99",
+      "classHash": "f04f109320e115da3861acf45f0de6f0511907a29644289e9cf3e712b11ba2d3",
       "keys": [
         "generated",
         "generating",
@@ -154,7 +154,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx": {
-      "classHash": "b2720ac6c6fe32c6ea89cd5cb88a77772a242d9484a0424f6fd246e2156d1887",
+      "classHash": "2113d7bc699c81490bf539557fd9ad0e55ce37436fb2f63a83fb9d7fa142091e",
       "keys": [
         "blenderPreviewReceived",
         "waitingForTheFirstBlenderPlan",
@@ -181,7 +181,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx": {
-      "classHash": "0b3e00f6366cc5965262fec64ede33d508362ddc88b53b92bf1552c17eb3c6ea",
+      "classHash": "0394612667e4ac723a5e9f0a36d8975893194e972ff2460749d10944bfd88fce",
       "keys": [
         "setScene",
         "arrangeBlocking",
@@ -218,7 +218,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx": {
-      "classHash": "672e7491192cf13467b0104f379b9c32a068c65973c2409ba293c3e6edcd131e",
+      "classHash": "12ee218996a5054cb96882fa276b83d91c6e9d7b9867b8e2d44a2b089010caaf",
       "keys": [
         "theKeyframeInspectorRequiresTheNomiDesktopApp",
         "keyframeExtractionFailed",
@@ -243,7 +243,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx": {
-      "classHash": "f9a3c6cbb54e55fcbb11f6e4895a1ba2ebf487e601335b01925bfaf8be4463b9",
+      "classHash": "ae72fcfc75f9707680c7dc76e0b96004a3e4571a8ba196993ae5aa5ddd9cf542",
       "keys": [
         "authorizedLocalFiles",
         "kenneyOpenSourceCatalog",
@@ -347,7 +347,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx": {
-      "classHash": "f96fa58297eb49edcbfb30f1b9f3e0f245d8161e34ecfb04f74fe89814e0bc31",
+      "classHash": "de6292d1d02f2a976541dbf907e5da5db9ae40a0b546022c028d462a5551b26a",
       "keys": [
         "skillNodeDataIsCorruptedAddTheSkillAgainFrom",
         "input",
@@ -367,7 +367,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx": {
-      "classHash": "b7f8e9141a87dbcebdaa823a5015603e47bba77affcaa39dc8be01fcdb59b848",
+      "classHash": "64227df5926eb3c9a3a16c96070242eab8b7fef2a12d84a4ea8fb7a008468677",
       "keys": [
         "selectAtLeastOneOutputFirst",
         "localArchivingRequiresASavedProjectInTheNomiDesktop",
@@ -430,7 +430,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx": {
-      "classHash": "09bcd34e41607e657b25fa7e4b57e88a81997c3a0e737dc9aad82778c191a198",
+      "classHash": "2e2c9634a82d41649e75f5f7fdc947462855f33121d85519a4cdc1ebb1938c7c",
       "keys": [
         "currentResult",
         "portraitSourceComparison",
@@ -484,7 +484,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx": {
-      "classHash": "e8543a137c446690420d691fe03b8ed8a392e187d8ef3541dd698aa21c18d578",
+      "classHash": "51f6a4767bf5e376fa3e2755def3066aeef5d5d2c6946cfc126e949bf1aa7b76",
       "keys": [
         "text33Grid",
         "customCameraAngles",
@@ -516,7 +516,7 @@
       ]
     },
     "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx": {
-      "classHash": "0860ef77345fe1e07c49c6c7ed6f5fef69b63e3895dcdef78fe117cf9534c180",
+      "classHash": "280094729883092d42a6617d2aac56f3476d8cde0a4263c9d137b2894c66c581",
       "keys": [
         "move",
         "rotate",

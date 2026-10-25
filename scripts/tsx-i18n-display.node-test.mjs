@@ -81,6 +81,59 @@ const approvedClasses = [
   }
 ]
 
+const scrollMarkerClassChanges = [
+  {
+    "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+    "from": "4be3f8313a723fd12a1d857f7fc1b5c28a6eff81df23f5527b3aded27b6bdc99",
+    "to": "f04f109320e115da3861acf45f0de6f0511907a29644289e9cf3e712b11ba2d3"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+    "from": "b2720ac6c6fe32c6ea89cd5cb88a77772a242d9484a0424f6fd246e2156d1887",
+    "to": "2113d7bc699c81490bf539557fd9ad0e55ce37436fb2f63a83fb9d7fa142091e"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+    "from": "0b3e00f6366cc5965262fec64ede33d508362ddc88b53b92bf1552c17eb3c6ea",
+    "to": "0394612667e4ac723a5e9f0a36d8975893194e972ff2460749d10944bfd88fce"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+    "from": "672e7491192cf13467b0104f379b9c32a068c65973c2409ba293c3e6edcd131e",
+    "to": "12ee218996a5054cb96882fa276b83d91c6e9d7b9867b8e2d44a2b089010caaf"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+    "from": "f9a3c6cbb54e55fcbb11f6e4895a1ba2ebf487e601335b01925bfaf8be4463b9",
+    "to": "ae72fcfc75f9707680c7dc76e0b96004a3e4571a8ba196993ae5aa5ddd9cf542"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+    "from": "f96fa58297eb49edcbfb30f1b9f3e0f245d8161e34ecfb04f74fe89814e0bc31",
+    "to": "de6292d1d02f2a976541dbf907e5da5db9ae40a0b546022c028d462a5551b26a"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+    "from": "b7f8e9141a87dbcebdaa823a5015603e47bba77affcaa39dc8be01fcdb59b848",
+    "to": "64227df5926eb3c9a3a16c96070242eab8b7fef2a12d84a4ea8fb7a008468677"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx",
+    "from": "09bcd34e41607e657b25fa7e4b57e88a81997c3a0e737dc9aad82778c191a198",
+    "to": "2e2c9634a82d41649e75f5f7fdc947462855f33121d85519a4cdc1ebb1938c7c"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+    "from": "e8543a137c446690420d691fe03b8ed8a392e187d8ef3541dd698aa21c18d578",
+    "to": "51f6a4767bf5e376fa3e2755def3066aeef5d5d2c6946cfc126e949bf1aa7b76"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+    "from": "0860ef77345fe1e07c49c6c7ed6f5fef69b63e3895dcdef78fe117cf9534c180",
+    "to": "280094729883092d42a6617d2aac56f3476d8cde0a4263c9d137b2894c66c581"
+  }
+]
+
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/tsx-i18n-display.json', import.meta.url), 'utf8'))
 const localePath = new URL('../src/i18n/locales/canvasComponents.ts', import.meta.url)
 function readLocale() {
@@ -95,7 +148,7 @@ function sourceClassHash(file, text) {
   visit(source)
   return crypto.createHash('sha256').update(values.join('\n')).digest('hex')
 }
-test('only the approved copy and two class snapshots differ; all bindings stay exact', () => {
+test('only reviewed copy, preview and scroll-marker snapshots differ; all bindings stay exact', () => {
   const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
   assert.equal(Object.keys(fixture.zh).length, 475)
   assert.equal(Object.keys(fixture.files).length, 37)
@@ -108,6 +161,11 @@ test('only the approved copy and two class snapshots differ; all bindings stay e
   }
   assert.equal(digest(restoredCopy), 'df589ebafb9bbe5a5d7dd6f99edf46a1cda58fff599ed9b590726d8c536c9f55')
   const restoredFiles = structuredClone(fixture.files)
+  assert.equal(scrollMarkerClassChanges.length, 10)
+  for (const { file, from, to } of scrollMarkerClassChanges) {
+    assert.equal(restoredFiles[file].classHash, to, file)
+    restoredFiles[file].classHash = from
+  }
   for (const { file, from, to } of approvedClasses) {
     assert.equal(restoredFiles[file].classHash, to, file)
     restoredFiles[file].classHash = from

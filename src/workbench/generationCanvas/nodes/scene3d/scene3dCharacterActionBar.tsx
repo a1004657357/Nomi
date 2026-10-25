@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -196,7 +197,7 @@ export function CharacterActionBar({
     >
       <div
         className={cn(
-          'inline-flex max-w-full items-center gap-1 overflow-x-auto p-[6px]',
+          `${NODE_SCROLL_REGION_CLASS_NAME} inline-flex max-w-full items-center gap-1 overflow-x-auto p-[6px]`,
           'rounded-nomi border border-[var(--workbench-border)] bg-[var(--nomi-paper)] text-[var(--nomi-ink)] shadow-[var(--nomi-shadow-md)]',
         )}
         role="toolbar"
@@ -286,7 +287,7 @@ export function CameraPossessActionBar({
     >
       <div
         className={cn(
-          'inline-flex max-w-full items-center gap-1 overflow-x-auto p-[6px]',
+          `${NODE_SCROLL_REGION_CLASS_NAME} inline-flex max-w-full items-center gap-1 overflow-x-auto p-[6px]`,
           'rounded-nomi border border-[var(--workbench-border)] bg-[var(--nomi-paper)] text-[var(--nomi-ink)] shadow-[var(--nomi-shadow-md)]',
         )}
         role="toolbar"

@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -132,7 +133,7 @@ export const TrajectoryListPanel = React.memo(function TrajectoryListPanel({
         <h3 className="m-0 text-caption font-medium text-[var(--nomi-ink)]">{t('scene3d.trajectory.list.title')}</h3>
         <span className="text-micro text-[var(--nomi-ink-60)]">{trajectories.length}</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-auto px-2 pb-2`}>
         {trajectories.length === 0 ? (
           <div className="grid h-20 place-items-center rounded-nomi-sm border border-dashed border-[var(--nomi-line-soft)] text-micro text-[var(--nomi-ink-40)]">
             {t('scene3d.trajectory.list.empty')}

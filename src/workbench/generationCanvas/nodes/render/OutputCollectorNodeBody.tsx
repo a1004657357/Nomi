@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -143,7 +144,7 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
         </button>
       </div>
 
-      <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} mt-3 min-h-0 flex-1 overflow-y-auto`}>
         {!items.length ? (
           <div className="grid h-full min-h-48 place-items-center px-5 text-center text-body-sm leading-relaxed text-nomi-ink-60">{i18n.t("canvasComponents.connectImageOrVideoNodesThatAlreadyHaveResultsHere")}</div>
         ) : (

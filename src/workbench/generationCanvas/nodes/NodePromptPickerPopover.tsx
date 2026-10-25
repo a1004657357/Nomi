@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
@@ -90,7 +91,7 @@ export function BrowserPromptPickerPopover({
       onMouseLeave={() => setHoveredPromptId(null)}
     >
       <div className="max-h-[310px] overflow-hidden rounded-nomi bg-nomi-paper shadow-nomi-lg">
-        <div className="min-w-0 overflow-y-auto py-1">
+        <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-w-0 overflow-y-auto py-1`}>
           {items.length === 0 ? (
             <div className="grid min-h-24 place-items-center px-4 text-center text-caption text-nomi-ink-40">
               {t('generationCommon.composer.emptyPromptLibrary')}

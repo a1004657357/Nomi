@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -110,7 +111,7 @@ export function Scene3DRightPanelBody({
     : undefined
   return (
     <>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-y-auto`}>
         <PropertyPanel
           state={state}
           selection={selection}

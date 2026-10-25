@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
 import type { JSX } from 'react'
@@ -150,7 +151,7 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
           <span className="min-w-0 max-w-full text-body-sm text-nomi-ink-60 [overflow-wrap:anywhere]">{i18n.t("canvasComponents.selected", { v0: selected.size, v1: frames.length })}</span>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-y-auto p-5`}>
           {!duration ? (
             <div className="grid min-h-64 place-items-center text-body text-nomi-ink-60">{i18n.t("canvasComponents.playTheVideoOnceSoNomiCanReadItsActual")}</div>
           ) : busy && !frames.length ? (

@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -327,7 +328,7 @@ export function TrajectoryTimeline({
               <IconFolderPlus size={14} stroke={1.9} />
             </button>
           </div>
-          <div className="mt-2 grid max-h-[calc(34vh-54px)] gap-1 overflow-auto pr-1">
+          <div className={`${NODE_SCROLL_REGION_CLASS_NAME} mt-2 grid max-h-[calc(34vh-54px)] gap-1 overflow-auto pr-1`}>
             {rows.length === 0 ? (
               <div className="grid h-12 place-items-center rounded-nomi-sm border border-dashed border-[var(--nomi-line-soft)] px-2 text-center text-micro leading-relaxed text-[var(--nomi-ink-40)]">
                 {t('scene3d.trajectory.emptyHint')}
@@ -424,7 +425,7 @@ export function TrajectoryTimeline({
           <div
             ref={laneRef}
             data-coach="timeline-lane"
-            className="relative mt-2 grid max-h-[calc(34vh-54px)] min-w-0 cursor-pointer gap-1 overflow-auto pr-1"
+            className={`${NODE_SCROLL_REGION_CLASS_NAME} relative mt-2 grid max-h-[calc(34vh-54px)] min-w-0 cursor-pointer gap-1 overflow-auto pr-1`}
             onPointerDown={(event) => {
               scrubbingRef.current = true
               seekFromClientX(event.clientX)

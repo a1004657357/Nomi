@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -248,7 +249,7 @@ export default function VibingDirectorFullscreen({
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 overflow-auto xl:grid-cols-[minmax(280px,0.76fr)_minmax(0,1.5fr)_minmax(280px,0.76fr)] xl:overflow-hidden">
+      <main className={`${NODE_SCROLL_REGION_CLASS_NAME} grid min-h-0 flex-1 grid-cols-1 overflow-auto xl:grid-cols-[minmax(280px,0.76fr)_minmax(0,1.5fr)_minmax(280px,0.76fr)] xl:overflow-hidden`}>
         <aside className="min-h-[360px] border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] xl:min-h-0 xl:border-b-0 xl:border-r">
           <VibingDirectorAssistantPanel
             directorNodeId={directorNodeId}
@@ -305,7 +306,7 @@ export default function VibingDirectorFullscreen({
 
           <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
             <div className="flex items-center gap-2 px-4 py-2.5"><IconMovie size={15} className="text-[var(--workbench-muted)]" /><span className="text-caption font-medium">{i18n.t("canvasComponents.shotBeats")}</span></div>
-            <div className="max-h-48 overflow-y-auto border-t border-[var(--workbench-border)]">
+            <div className={`${NODE_SCROLL_REGION_CLASS_NAME} max-h-48 overflow-y-auto border-t border-[var(--workbench-border)]`}>
               {state.beats.length ? state.beats.map((beat, index) => (
                 <div key={beat.id} className="grid grid-cols-[32px_minmax(0,1fr)_72px] items-center gap-2 border-b border-[var(--workbench-border)] px-4 py-2.5 last:border-b-0">
                   <span className="text-micro text-[var(--workbench-muted)]">{String(index + 1).padStart(2, '0')}</span>

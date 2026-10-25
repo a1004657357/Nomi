@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 import { directorProtocolSource } from '../../../../../electron/shared/blenderDirectorProtocolText'
 import { useTranslation } from 'react-i18next'
@@ -343,7 +344,7 @@ export default function VibingDirectorAssistantPanel({
         <AssistantModelPicker className="h-7 max-w-[150px]" />
       </header>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 space-y-2 overflow-y-auto p-3`}>
         {messages.length === 0 ? (
           <div className="text-caption leading-5 text-[var(--workbench-muted)]">{i18n.t("canvasComponents.describeTheSceneCharacterBlockingOrCameraSetupToBuild")}</div>
         ) : messages.map((message) => (

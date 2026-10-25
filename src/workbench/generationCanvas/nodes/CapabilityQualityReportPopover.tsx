@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
 import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
@@ -83,7 +84,7 @@ export function CapabilityQualityReportPopover({
       {open ? (
         <section
           data-capability-quality-report={report.kind}
-          className="mt-1.5 max-h-[360px] w-[300px] overflow-auto rounded-nomi border border-nomi-line bg-nomi-paper p-2.5 shadow-nomi-md"
+          className={`${NODE_SCROLL_REGION_CLASS_NAME} mt-1.5 max-h-[360px] w-[300px] overflow-auto rounded-nomi border border-nomi-line bg-nomi-paper p-2.5 shadow-nomi-md`}
           aria-label={i18n.t("canvasComponents.qualityReport446", { v0: kindLabel })}
         >
           <header className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 border-b border-nomi-line pb-2 [overflow-wrap:anywhere]">

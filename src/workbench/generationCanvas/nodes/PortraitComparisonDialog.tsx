@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
 import type { JSX } from 'react'
@@ -130,7 +131,7 @@ export function PortraitComparisonControl({
               { id: 'source', label: collection.source?.label || i18n.t("canvasComponents.originalPortrait"), url: source },
               { id: 'result', label: outputLabel, url: outputUrl },
             ].map((panel) => (
-              <section key={panel.id} className="relative min-h-0 overflow-auto bg-black">
+              <section key={panel.id} className={`${NODE_SCROLL_REGION_CLASS_NAME} relative min-h-0 overflow-auto bg-black`}>
                 <div className="sticky left-0 top-0 z-[1] inline-flex h-7 items-center bg-black/70 px-2 text-caption text-white/80">
                   {panel.label}
                 </div>

@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 // 整运镜三合一（IA 重排一期，docs/plan/2026-07-20-scene3d-ia-redesign.md §4/§6）：
 // 预设 / 轨迹 / 录 take 三条运镜路收进右栏常驻分区——用户的问题是「想动镜头，从哪动」，
@@ -92,7 +93,7 @@ export function Scene3DMoveHub({
           <span>{t('scene3d.moveHub.take')}</span>
         </PanelButton>
       </div>
-      <div className="min-h-0 overflow-y-auto">
+      <div className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 overflow-y-auto`}>
         {tab === 'preset' ? (
           selectedCamera ? (
             <CameraMovePanel

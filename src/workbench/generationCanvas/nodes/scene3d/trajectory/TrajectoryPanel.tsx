@@ -1,3 +1,4 @@
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../../nodeScrollRegionClassName'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -321,7 +322,7 @@ export function TrajectoryPanel({
   ], [allBoundObjectIds, state.cameras, state.objects])
 
   return (
-    <section className="min-h-0 flex-1 overflow-auto bg-[var(--nomi-paper)] px-3 py-3">
+    <section className={`${NODE_SCROLL_REGION_CLASS_NAME} min-h-0 flex-1 overflow-auto bg-[var(--nomi-paper)] px-3 py-3`}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="text-caption font-medium text-[var(--nomi-ink)]">{t('scene3d.trajectory.properties')}</div>
         <button
