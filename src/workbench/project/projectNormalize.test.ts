@@ -82,8 +82,7 @@ describe('normalizePayload — storyboard design owner', () => {
     const legacyKey = ['storyboard', 'Plans'].join('')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const out = normalizePayload({ ...base, [legacyKey]: { [documentId]: { plan: { title: 'broken', anchors: [], shots: [{ index: 1 }] }, committed: true } } })
-      expect(out.storyboardDesignsByDocumentId).toBeUndefined()
+      expect(() => normalizePayload({ ...base, [legacyKey]: { [documentId]: { plan: { title: 'broken', anchors: [], shots: [{ index: 1 }] }, committed: true } } })).toThrow()
       expect(warn).toHaveBeenCalledTimes(1)
       expect(String(JSON.stringify(warn.mock.calls[0]))).toContain(documentId)
       expect(String(JSON.stringify(warn.mock.calls[0]))).toContain('shots')

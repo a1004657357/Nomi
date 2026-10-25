@@ -37,7 +37,8 @@ function planFor(documentId: string): StoryboardPlan {
   }
 }
 
-function fixture(shape: 'single' | 'map' | 'canonical') {
+function fixture(shape: 'single' | 'map' | 'canonical' | 'mixed-empty' | 'mixed-partial' | 'mixed-map-wins' | 'canonical-mixed') {
+  const isCanonical = shape === 'canonical' || shape === 'canonical-mixed'
   const documents = ['doc-a', 'doc-b'].map((id, index) => ({
     ...createDefaultWorkbenchDocument(), id, title: `User document ${id}`, updatedAt: 40 + index,
     contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: `Original script ${id}` }] }] },
@@ -48,10 +49,16 @@ function fixture(shape: 'single' | 'map' | 'canonical') {
     sourceDocumentUpdatedAt: 40, createdAt: 10, updatedAt: 20,
   })
   const canonical = { 'doc-a': [design('doc-a', 'main', true), { ...design('doc-a', 'alternate', false), status: 'stale' as const }], 'doc-b': [design('doc-b', 'main', false)] }
-  const expectedDocuments = shape === 'single' ? ['doc-b'] : ['doc-a', 'doc-b']
+  const expectedDocuments = shape === 'single' || shape === 'mixed-empty' ? ['doc-b'] : ['doc-a', 'doc-b']
+  const mappedPlan = { ...planFor('doc-b'), title: 'Existing mapped design', shots: [{ ...planFor('doc-b').shots[0], prompt: 'Keep the existing mapped prompt' }] }
+  const expectedPlans = Object.fromEntries(expectedDocuments.map((id) => [id, shape === 'mixed-map-wins' && id === 'doc-b' ? mappedPlan : planFor(id)]))
+  const legacyMap = {
+    ...(shape !== 'mixed-empty' ? { 'doc-a': { plan: planFor('doc-a'), committed: true } } : {}),
+    ...(shape === 'map' || shape === 'mixed-map-wins' ? { 'doc-b': { plan: shape === 'mixed-map-wins' ? mappedPlan : planFor('doc-b'), committed: false } } : {}),
+  }
   const tables = expectedDocuments.map((documentId) => ({
     id: `table-${documentId}`, kind: 'shot_table', title: `User table ${documentId}`, categoryId: 'shots', position: { x: 30, y: 70 },
-    meta: { shotTable: createStoryboardShotTable(documentId, shape === 'canonical' ? `design-${documentId}-main` : `migrated-${documentId}`, '2026-10-25T00:00:00.000Z'),
+    meta: { shotTable: createStoryboardShotTable(documentId, isCanonical ? `design-${documentId}-main` : `migrated-${documentId}`, '2026-10-25T00:00:00.000Z'),
       userSettings: { note: 'Keep node meta', zero: 0, flag: false } },
   }))
   const payload = {
@@ -60,14 +67,18 @@ function fixture(shape: 'single' | 'map' | 'canonical') {
     categories: [{ id: 'user-category', name: 'User category', icon: '', iconName: 'IconTag', defaultNodeRenderKind: 'shot-frame', order: 20, isBuiltin: false }],
     generationCanvas: { nodes: [
       ...tables,
-      { id: 'asset-node', kind: 'image', title: 'User asset', categoryId: 'shots', position: { x: 0, y: 0 }, meta: { userField: 'Preserve', zero: 0, flag: false } },
+      { id: 'asset-node', kind: 'image', title: 'User asset', categoryId: 'shots', position: { x: 0, y: 0 }, meta: { userField: 'Preserve', zero: 0, flag: false }, result: { id: 'image-result', type: 'image', url: 'https://example.invalid/reference.png', width: 640, height: 480, createdAt: 5 } },
+      { id: 'video-node', kind: 'video', title: 'User video', categoryId: 'shots', position: { x: 20, y: 40 }, meta: { userField: 'Preserve video' }, result: { id: 'video-result', type: 'video', url: 'https://example.invalid/clip.mp4', thumbnailUrl: 'https://example.invalid/clip.jpg', createdAt: 5 } },
       { id: 'text-node', kind: 'text', title: 'User text', categoryId: 'shots', position: { x: 10, y: 20 }, contentJson: documents[0].contentJson, meta: { userField: 'Keep text node' } },
     ], edges: [{ id: 'user-edge', source: 'asset-node', target: 'text-node' }], groups: [], selectedNodeIds: [] },
-    ...(shape === 'canonical' ? { storyboardDesignsByDocumentId: canonical } : shape === 'map'
-      ? { [legacyMapKey]: { 'doc-a': { plan: planFor('doc-a'), committed: true }, 'doc-b': { plan: planFor('doc-b'), committed: false } } }
-      : { [legacyPlanKey]: planFor('doc-b'), [legacyCommittedKey]: true }),
+    ...(isCanonical ? { storyboardDesignsByDocumentId: canonical,
+      ...(shape === 'canonical-mixed' ? { [legacyMapKey]: legacyMap, [legacyPlanKey]: mappedPlan, [legacyCommittedKey]: true } : {}),
+    } : shape === 'map' ? { [legacyMapKey]: legacyMap }
+      : { [legacyPlanKey]: planFor('doc-b'), [legacyCommittedKey]: true,
+        ...(shape.startsWith('mixed-') ? { [legacyMapKey]: legacyMap } : {}),
+      }),
   }
-  return { record: { ...summary, version: 1, payload }, documents, canonical, tables, expectedDocuments }
+  return { record: { ...summary, version: 1, payload }, documents, canonical, tables, expectedDocuments, expectedPlans }
 }
 
 function expectOwnerOnly(payload: object) {
@@ -96,7 +107,7 @@ afterEach(() => {
 })
 
 describe('canonical storyboard storage uses the real reader, owners, session writer and repository', () => {
-  it.each(['single', 'map', 'canonical', 'flat', 'v2'] as const)('round trips %s input without losing documents, designs, node links or user content', async (shape) => {
+  it.each(['single', 'map', 'canonical', 'flat', 'v2', 'mixed-empty', 'mixed-partial', 'mixed-map-wins', 'canonical-mixed'] as const)('round trips %s input without losing documents, designs, node links or user content', async (shape) => {
     const input = fixture(shape === 'flat' || shape === 'v2' ? 'single' : shape)
     const originalFixture = JSON.stringify(input.record)
     const raw = JSON.stringify(shape === 'flat' ? { ...summary, ...input.record.payload } : shape === 'v2' ? { ...input.record, version: 2 } : input.record)
@@ -105,12 +116,7 @@ describe('canonical storyboard storage uses the real reader, owners, session wri
     const loaded = readLocalProject(summary.id)!
     expect(window.localStorage.getItem(projectRecordKey(summary.id))).toBe(raw)
     expect(loaded.payload.workbenchDocuments).toEqual(input.documents)
-    const owner = loaded.payload.storyboardDesignsByDocumentId!
-    expect(Object.keys(owner)).toEqual(input.expectedDocuments)
-    for (const documentId of input.expectedDocuments) expect(owner[documentId][0].plan).toEqual(planFor(documentId))
-    if (shape === 'canonical') expect(owner).toEqual(input.canonical)
-    if (shape === 'single') expect(owner['doc-b'][0].committed).toBe(true)
-    if (shape === 'map') expect(owner['doc-a'][0].committed).toBe(true)
+    const owner = loaded.payload.storyboardDesignsByDocumentId ?? {}
 
     restoreWorkbenchProjectPayload(loaded.payload)
     await replayCanvasEventTailAndSealGenesis(summary.id, loaded.payload, { signal: new AbortController().signal, assertCurrent: () => {} })
@@ -125,6 +131,14 @@ describe('canonical storyboard storage uses the real reader, owners, session wri
       expect(stored.payload.storyboardDesignsByDocumentId).toEqual(owner)
       const reloaded = readLocalProject(summary.id)!
       expect(reloaded.payload.storyboardDesignsByDocumentId).toEqual(owner)
+      const restoredOwner = reloaded.payload.storyboardDesignsByDocumentId ?? {}
+      expect(Object.keys(restoredOwner)).toEqual(input.expectedDocuments)
+      for (const documentId of input.expectedDocuments) expect(restoredOwner[documentId][0].plan).toEqual(input.expectedPlans[documentId])
+      if (shape === 'canonical' || shape === 'canonical-mixed') expect(restoredOwner).toEqual(input.canonical)
+      if (shape === 'single') expect(restoredOwner['doc-b'][0].committed).toBe(true)
+      if (shape === 'map') expect(restoredOwner['doc-a'][0].committed).toBe(true)
+      if (shape === 'mixed-empty' || shape === 'mixed-partial') expect(restoredOwner['doc-b'][0].committed).toBe(true)
+      if (shape === 'mixed-map-wins') expect(restoredOwner['doc-b'][0].committed).toBe(false)
       expect(reloaded.payload.workbenchDocuments).toEqual(input.documents)
       expect(reloaded.payload.activeDocumentId).toBe('doc-b')
       expect(reloaded.payload.filmBible).toEqual(input.record.payload.filmBible)
@@ -178,10 +192,16 @@ describe('canonical storyboard storage uses the real reader, owners, session wri
     expectOwnerOnly(normalized.payload)
   })
 
-  it.each(['plan', 'committed'])('still rejects an invalid legacy single %s without an authoritative canonical owner', async (field) => {
+  it.each(['plan', 'committed', 'empty-map-plan', 'empty-map-committed', 'partial-map-plan', 'partial-map-committed', 'map-plan', 'map-committed', 'map-entry', 'map-shape'])('still rejects invalid legacy %s without an authoritative canonical owner', async (field) => {
     const raw = { ...createDefaultWorkbenchProjectPayload(),
-      [legacyPlanKey]: field === 'plan' ? { title: 'Broken user plan', anchors: [], shots: [{ index: 1 }] } : planFor('doc-a'),
-      ...(field === 'committed' ? { [legacyCommittedKey]: 'true' } : {}),
+      [legacyPlanKey]: ['plan', 'empty-map-plan', 'partial-map-plan'].includes(field) ? { title: 'Broken user plan', anchors: [], shots: [{ index: 1 }] } : planFor('doc-a'),
+      ...(['committed', 'empty-map-committed', 'partial-map-committed'].includes(field) ? { [legacyCommittedKey]: 'true' } : {}),
+      ...(field.startsWith('empty-map') ? { [legacyMapKey]: {} } : {}),
+      ...(field.startsWith('partial-map') ? { [legacyMapKey]: { 'other-document': { plan: planFor('other-document'), committed: true } } } : {}),
+      ...(field === 'map-plan' ? { [legacyMapKey]: { 'other-document': { plan: { title: 'Unreadable map plan' }, committed: true } } } : {}),
+      ...(field === 'map-committed' ? { [legacyMapKey]: { 'other-document': { plan: planFor('other-document'), committed: 'true' } } } : {}),
+      ...(field === 'map-entry' ? { [legacyMapKey]: { 'other-document': null } } : {}),
+      ...(field === 'map-shape' ? { [legacyMapKey]: 'invalid map' } : {}),
     }
     const before = JSON.stringify(raw)
     const stored = JSON.stringify(fixture('single').record)

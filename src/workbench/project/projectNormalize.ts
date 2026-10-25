@@ -102,33 +102,40 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     ? payload.storyboardDesignsByDocumentId
     : (() => {
         const migrated: Record<string, StoryboardDesign[]> = {}
-        // 迁移读不动一份旧方案时，用户失去的是整份分镜——那件事不许静默发生。schema 这一侧
-        // 已经回到「剥离未知键」（见 storyboardPlanSchema 头注释），所以走到这里只剩真正残缺的
-        // 记录；至少把是谁、缺哪个字段留在控制台，别让它变成「打开项目分镜就没了」的谜。
+        // Canonical-only output requires accounting for every legacy document.
+        // Reject unreadable input instead of successfully saving a truncated owner.
         const reportUnreadablePlan = (documentId: string, issues: readonly { path: PropertyKey[]; message: string }[]): void => {
           logRendererWarn('storyboard-plan-migration-skipped',
             { documentId, issues: issues.slice(0, 8).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ') })
         }
+        if (raw[legacyMapKey] != null && (!legacyMap || Array.isArray(legacyMap))) throw new Error(i18n.t('runtime.project.corruptPayload'))
         const legacyEntries = legacyMap
-          ? Object.entries(legacyMap).flatMap(([documentId, value]) => {
-              if (!value || typeof value !== 'object') return []
+          ? Object.entries(legacyMap).map(([documentId, value]) => {
+              if (!documentId || !value || typeof value !== 'object' || Array.isArray(value)) throw new Error(i18n.t('runtime.project.corruptPayload'))
               const entry = value as Record<string, unknown>
               const plan = storyboardPlanSchema.safeParse(entry.plan)
-              if (!plan.success) { reportUnreadablePlan(documentId, plan.error.issues); return [] }
-              return [[documentId, { plan: plan.data, committed: entry.committed === true }] as const]
-            })
-          : (() => {
-              const committed = raw[legacyCommittedKey]
-              // Keep the old single-plan schema's rejection semantics before removing its projection.
-              if (committed !== undefined && typeof committed !== 'boolean') throw new Error(i18n.t('runtime.project.corruptPayload'))
-              if (raw[legacyPlanKey] == null) return []
-              const plan = storyboardPlanSchema.safeParse(raw[legacyPlanKey])
               if (!plan.success) {
-                reportUnreadablePlan(activeDocumentId, plan.error.issues)
+                reportUnreadablePlan(documentId, plan.error.issues)
                 throw new Error(i18n.t('runtime.project.corruptPayload'))
               }
-              return [[activeDocumentId, { plan: plan.data, committed: committed === true }] as const]
-            })()
+              if (entry.committed !== undefined && typeof entry.committed !== 'boolean') throw new Error(i18n.t('runtime.project.corruptPayload'))
+              return [documentId, { plan: plan.data, committed: entry.committed === true }] as const
+            })
+          : []
+        const committed = raw[legacyCommittedKey]
+        if (committed !== undefined && typeof committed !== 'boolean') throw new Error(i18n.t('runtime.project.corruptPayload'))
+        if (raw[legacyPlanKey] != null) {
+          const plan = storyboardPlanSchema.safeParse(raw[legacyPlanKey])
+          if (!plan.success) {
+            reportUnreadablePlan(activeDocumentId, plan.error.issues)
+            throw new Error(i18n.t('runtime.project.corruptPayload'))
+          }
+          // A retired map can exist without covering the active document. Fill
+          // that gap only; an existing mapped design remains authoritative.
+          if (!legacyEntries.some(([documentId]) => documentId === activeDocumentId)) {
+            legacyEntries.push([activeDocumentId, { plan: plan.data, committed: committed === true }])
+          }
+        }
         for (const [documentId, entry] of legacyEntries) {
           const document = normalizedDocuments.find((item) => item.id === documentId)
           const now = Date.now()
