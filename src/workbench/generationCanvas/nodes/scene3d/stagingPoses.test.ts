@@ -1,11 +1,12 @@
-// 站位姿势预设的静态不变量守卫（配多视角渲染回归 tests/ux/staging-pose-shots.walk.mjs）。
-// 渲染层证「姿势长得对/落地」；这里证「预设结构没漂移、骨骼名没拼错、工具枚举与预设单源一致」——
-// 这些单测能在 push 前秒级抓住，不必等渲染。
+// Legacy pose compatibility: structural, tool-enum and real builder/serialization invariants.
+// This does not replace visual acceptance of the retired pose-lab.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { MANNEQUIN_POSE_PRESETS, MANNEQUIN_POSE_SECTIONS, MANNEQUIN_DEFAULT_POSE } from './scene3dConstants'
 import { STAGING_POSE_IDS } from './stagingVocab'
+import { buildStagingScene } from './stagingBuilder'
+import { normalizeScene3DState } from './scene3dSerializer'
 
 // 编辑器 section + 默认姿势里出现过的骨骼 = 已知合法骨骼集合。预设里的骨骼必须在此集合内，
 // 否则 = 拼错的死骨骼名（applyMannequinSkeletonPose 静默忽略 → 姿势缺一块且无报错）。
@@ -65,13 +66,12 @@ describe('staging pose presets', () => {
     expect(new Set(enumIds)).toEqual(new Set(STAGING_POSE_IDS))
   })
 
-  it('pose-lab 全量截图脚本按预设数量自动分批（防新增姿势漏截图）', () => {
-    const shotScriptPath = fileURLToPath(new URL('../../../../../scripts/pose-lab-shot-all.mjs', import.meta.url))
-    const source = readFileSync(shotScriptPath, 'utf8')
-    expect(source).toContain('MANNEQUIN_POSE_PRESETS')
-    expect(source).toContain('presetIds.length')
-    expect(source).toContain('from += batchSize')
-    expect(source).not.toMatch(/全部\s+(12|13)\s+个预设/)
-    expect(source).not.toMatch(/shoot\(view,\s*(0|4|8|12),/)
+  it.each(MANNEQUIN_POSE_PRESETS)('preserves $id through the actual staging builder and JSON round trip', (preset) => {
+    const scene = buildStagingScene({ characters: [{ name: 'Actor', pose: preset.id }] })
+    expect(scene.objects).toHaveLength(1)
+    expect(scene.objects[0].pose).toEqual(preset.pose)
+    const normalized = normalizeScene3DState(JSON.parse(JSON.stringify(scene)))
+    expect(normalized.objects).toHaveLength(1)
+    expect(normalized.objects[0].pose).toEqual(preset.pose)
   })
 })

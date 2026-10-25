@@ -297,7 +297,7 @@ describe("runTask · Codex Img2 本地入口", () => {
     );
     const outputTempDir = makeTempDir("nomi-codex-img2-output-");
     const outputPath = path.join(outputTempDir, "result.png");
-    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const pngBytes = fs.readFileSync(new URL("./providerAdapter/__fixtures__/certification-media/valid.png", import.meta.url));
     fs.writeFileSync(outputPath, pngBytes);
     codexImagegenRunnerMock.runCodexImageGeneration.mockResolvedValue({
       outputPath,

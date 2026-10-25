@@ -2,10 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { desktopT } from './desktopStrings'
 import { enCustomIntegrations, zhCustomIntegrations } from './locales/customIntegrations'
 
+const WORKFLOW_KEYS = [
+  'custom.workflow.blockingUrl', 'custom.workflow.blockingCall', 'custom.workflow.blockingAbsolutePath',
+  'custom.workflow.browserHostDenied', 'custom.workflow.browserMatched', 'custom.workflow.browserProtocol',
+  'custom.workflow.browserInvalidUrl', 'custom.workflow.gate8PlanReview', 'custom.workflow.gate8Fullscreen',
+  'custom.workflow.gate8BlenderPreview', 'custom.workflow.gate8Export', 'custom.workflow.gate8Import',
+  'custom.workflow.gate8Image', 'custom.workflow.gate8Video', 'custom.workflow.gate8Assets',
+  'custom.workflow.timelineImageTrack', 'custom.workflow.timelineVideoTrack', 'custom.workflow.timelineShot',
+  'custom.workflow.timelineAudioTrack',
+] as const
+
 describe('custom desktop integration translations', () => {
   it('keeps every existing Chinese message and its English counterpart', () => {
     const keys = Object.keys(zhCustomIntegrations) as (keyof typeof zhCustomIntegrations)[]
-    expect(keys).toHaveLength(202)
+    expect(keys).toHaveLength(202 + WORKFLOW_KEYS.length)
+    expect(keys.filter(key => key.startsWith('custom.workflow.')).sort()).toEqual([...WORKFLOW_KEYS].sort())
     expect(Object.keys(enCustomIntegrations).sort()).toEqual([...keys].sort())
     const placeholders = (text: string) => [...text.matchAll(/\{\{[^}]+\}\}/g)].map(match => match[0]).sort()
     for (const key of keys) {

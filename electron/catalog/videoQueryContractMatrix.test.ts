@@ -58,8 +58,8 @@ const FIXTURES: Record<string, ShapeFixture> = {
     success: { code: 200, data: { id: "task_01", status: "completed", progress: 100, actual_time: 128, result: { videos: [{ url: [MP4], expires_at: 1787722735 }] } } },
     running: { code: 200, data: { id: "task_01", status: "processing", progress: 40 } },
   },
-  [`agnes|Q={"task_id":"video_id","status":"status","video_url":["url","metadata.url"],"error_message":"error"}|R=null`]: {
-    source: "Agnes /agnesapi?video_id=：2026-08-26 实查，真实响应顶层 url，文档写 metadata.url（agnesVendor.ts 注释）",
+  [`agnes|Q={"task_id":"video_id","status":"status","video_url":["metadata.url","url","remixed_from_video_id"],"error_message":["error.message","error"]}|R=null`]: {
+    source: "复用 Agnes /agnesapi 历史形状：2026-08-26 顶层 url 实查；2.5 metadata.url 和旧 live 回退见 agnes.test.ts QUERY_OFFICIAL_OK/QUERY_25_OK/QUERY_LEGACY_OK。本轮无新增 Provider 调用。",
     success: { video_id: "v-1", status: "completed", url: MP4, remixed_from_video_id: null },
     running: { video_id: "v-1", status: "in_progress" },
   },
@@ -82,6 +82,11 @@ const FIXTURES: Record<string, ShapeFixture> = {
     source: "MiniMax 官方 GET /v2/query/video_generation/{task_id}（minimaxOfficial.ts）",
     success: { task: { id: "mm-1", status: "succeeded", content: { url: MP4 } } },
     running: { task: { id: "mm-1", status: "running" } },
+  },
+  [`pixstag|Q={"task_id":"task.id","status":"task.status","video_url":"task.content.url","error_message":"task.error.message"}|R=null`]: {
+    source: "Pixstag 官方查询示例的仓内存档：docs/plan/2026-09-12-pixstag-minimax-h3.md；复用 pixstag.test.ts 的 task.content.url 形状，不声称本轮真实生成。",
+    success: { task: { id: "t1", status: "succeeded", content: { url: MP4, last_frame_url: "https://cdn.pixstag.com/f.png" } } },
+    running: { task: { id: "t1", status: "running" } },
   },
   [`fal|Q={"task_id":"request_id","status":"status"}|R={"assets":"video.url"}`]: {
     source: "fal 队列 API：GET .../requests/{id}/status 只给状态，GET .../requests/{id} 给 {video:{url}}（docs.fal.ai/model-endpoints/queue）",

@@ -29,14 +29,16 @@ describe('merged gate command ownership', () => {
     }, 'gates').has('check:sitemap')).toBe(false)
   })
 
-  test('keeps custom live checks reachable while removing deleted upstream targets', () => {
+  test('keeps live checks reachable and preserves the upstream generated-defaults autosync owner', () => {
     const { scripts } = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'))
-    for (const obsolete of ['check:archetype-sources', 'check:handbook', 'check:audit']) {
+    for (const obsolete of ['check:archetype-sources', 'check:handbook', 'check:audit', 'check:archetype-defaults']) {
       expect(scripts[obsolete], obsolete).toBeUndefined()
     }
     expect(scripts['build:handbook']).toBeUndefined()
     const reachable = resolveReachable(scripts, 'gates')
-    expect(reachable.has('check:third-party')).toBe(true)
-    expect(reachable.has('check:archetype-defaults')).toBe(true)
+    for (const check of ['check:third-party', 'check:tool-face', 'check:agent-tool-face-usecases']) {
+      expect(reachable.has(check), check).toBe(true)
+    }
+    expect(scripts['gen:archetype-defaults']).toBe('tsx scripts/gen-archetype-wire-defaults.ts')
   })
 })

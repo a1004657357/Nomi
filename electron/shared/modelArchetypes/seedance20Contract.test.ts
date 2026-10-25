@@ -1,23 +1,8 @@
-// 契约钉子：Seedance 2.0 的参考槽上限、跨槽依赖，以及**「没有跨模态合计上限」这条否定结论**。
-//
-// 2026-08-20 的核实起因：有人照 fal 的模型页
-//   https://fal.ai/models/bytedance/seedance-2.0/reference-to-video
-//   "Total files across all modalities must not exceed 12."
-// 提出「我们的档案漏了合计 ≤12」。按 seedance25Contract.test.ts 头部定下的判据（三家一致才算模型级、
-// 才该钉在共享档案上）逐项核实我们真正在用的三条渠道，结论是**证伪**：
-//
-//   火山方舟（字节自家，模型的一手出处）  https://docs.volcengine.com/docs/82379/2607688?lang=zh
-//     「参考素材数量上限 | Seedance 2.0 | 15（9张图+3个视频+3个音频）」  ← 15，不是 12
-//   APIMart   https://docs.apimart.ai/en/api-reference/videos/seedance-2-0/generation.md
-//     全文只分别写 9/3/3，无任何跨模态合计条款
-//   即梦 Dreamina  无公开 API 文档
-//
-// 两点：① 字节自己写的 15 恰好等于 9+3+3，即合计上限与各槽上限之和相等 —— 这条约束**永不咬合**；
-//       2.5 同理（方舟 50 = 30+10+10）。② electron/catalog 的 vendor 只有 agnes/apimart/dreamina/
-//       modelscope/volcengine，**没有 fal**，那个 12 打不到任何一个 Nomi 用户身上。
-// 照 12 钉下去就是重演 2026-08-12 那次「能力是模型有的、被我们的档案掐窄」：用户放满 9 图 + 3 视频后，
-// 方舟文档白纸黑字说还能加 3 段音频，我们却在第 12 个拦死。所以本文件也把这条**否定结论**钉住，
-// 免得下一个人看到 fal 页面又来加一遍。
+// Model-wide slot limits remain 9/3/3; never impose one vendor's aggregate on all channels.
+// The 2026-08-20 generic-contract finding still holds for the API channels below.
+// Superseding local primary evidence, checked 2026-10-25: official dreamina v1.4.21
+// multimodal2video --help explicitly states total inputs<=12 for its 2.0 family.
+// This is a CLI-specific restriction, not a shared Seedance model restriction.
 import { describe, expect, it } from 'vitest'
 import {
   DREAMINA_SEEDANCE_ARCHETYPE,
@@ -28,6 +13,7 @@ import {
   SEEDANCE_VOLCENGINE_ARCHETYPE,
 } from '../videoCapabilities'
 import type { ModelArchetype } from './types'
+import { remainingReferenceCapacity, validateModeConstraints } from '../videoCapabilities/crossFieldConstraints'
 
 /**
  * 逐项抄自官方文档（2026-08-20 核实）：
@@ -106,12 +92,7 @@ describe('Seedance 2.0 archetype vs official docs', () => {
     expect(audio?.requiresAnyOf, '2.5 支持纯音频参考，不该有伴随要求').toBeUndefined()
   })
 
-  /**
-   * 负向钉子（本轮证伪的结论）：**两代都不该有「跨模态合计上限」**。
-   * fal 写 2.0=12 / 2.5=50，但字节自家写 2.0=15（=9+3+3）、2.5=50（=30+10+10）——合计恒等于各槽之和，
-   * 永不咬合；且我们没有 fal 渠道。任何形如 maxTotalReferences 的字段出现 = 有人又照 fal 抄了一遍。
-   */
-  it('carries no cross-modality total cap — fal-only, and non-binding even there', () => {
+  it('keeps the CLI-only aggregate out of the other model channels', () => {
     const suspects = ['maxTotalReferences', 'maxTotalFiles', 'totalMax', 'maxCombined']
     const all: Array<[string, ModelArchetype, string]> = [
       ...CHANNELS_2_0,
@@ -121,11 +102,29 @@ describe('Seedance 2.0 archetype vs official docs', () => {
       const omni = omniOf(archetype, modeId)
       for (const key of suspects) {
         expect(omni, `${vendor} 缺少全能参考模式`).toBeDefined()
-        expect(Object.hasOwn(omni as object, key), `${vendor} 出现了 ${key}：合计上限已于 2026-08-20 证伪`).toBe(false)
+        if (vendor === 'dreamina' && key === 'maxTotalReferences') {
+          expect(omni?.maxTotalReferences).toBe(12)
+        } else {
+          expect(Object.hasOwn(omni as object, key), `${vendor} must not inherit the CLI-only aggregate ${key}`).toBe(false)
+        }
       }
       // 各槽上限之和就是文档写的「参考素材数量上限」（2.0=15、2.5=50），不存在更紧的合计约束。
       const sum = (omni?.slots ?? []).reduce((total, slot) => total + (slot.max ?? 0), 0)
       expect(sum, `${vendor} 各槽上限之和应等于文档的参考素材数量上限`).toBe(vendor.startsWith('2.5') ? 50 : 15)
+    }
+  })
+
+  it('enforces the documented CLI aggregate while API channels retain their complete slots', () => {
+    const cli = omniOf(DREAMINA_SEEDANCE_ARCHETYPE, 'multimodal')!
+    expect(remainingReferenceCapacity(cli, { image_ref: 9, video_ref: 3 })).toBe(0)
+    expect(validateModeConstraints(cli, { mm_images: Array(9).fill('i'), mm_videos: Array(3).fill('v') })).toBeNull()
+    expect(validateModeConstraints(cli, { mm_images: Array(9).fill('i'), mm_videos: Array(3).fill('v'), mm_audios: ['a'] })).toEqual({ kind: 'references', max: 12 })
+    for (const [vendor, archetype, modeId] of CHANNELS_2_0) {
+      if (vendor === 'dreamina') continue
+      const mode = omniOf(archetype, modeId)!
+      const full = Object.fromEntries(mode.slots.map(slot => [slot.inputKey, Array(DOC_LIMITS[slot.kind as keyof typeof DOC_LIMITS]).fill(slot.kind)]))
+      expect(remainingReferenceCapacity(mode, { image_ref: 9, video_ref: 3, audio_ref: 3 }), vendor).toBe(Infinity)
+      expect(validateModeConstraints(mode, full), vendor).toBeNull()
     }
   })
 })

@@ -21,16 +21,18 @@ describe('VIBING Director agent protocol preference', () => {
     vi.unstubAllGlobals()
   })
 
-  it('remembers structured text for only the provider/model that rejected native tools', () => {
+  it('uses structured planning for every provider, while compatibility notes stay provider/model scoped', () => {
     store.set('nomi.assistantModel', JSON.stringify({ vendorKey: 'zai-relay', modelKey: 'glm-5.2' }))
 
-    expect(preferredVibingDirectorAgentProtocol()).toBe('tools')
+    expect(preferredVibingDirectorAgentProtocol()).toBe('structured-text')
 
     rememberVibingDirectorStructuredProtocol()
 
     expect(preferredVibingDirectorAgentProtocol()).toBe('structured-text')
+    expect(store.get('nomi.vibingDirector.structuredProtocol:zai-relay:glm-5.2')).toBe('structured-text')
 
     store.set('nomi.assistantModel', JSON.stringify({ vendorKey: 'another-relay', modelKey: 'glm-5.2' }))
-    expect(preferredVibingDirectorAgentProtocol()).toBe('tools')
+    expect(preferredVibingDirectorAgentProtocol()).toBe('structured-text')
+    expect(store.has('nomi.vibingDirector.structuredProtocol:another-relay:glm-5.2')).toBe(false)
   })
 })

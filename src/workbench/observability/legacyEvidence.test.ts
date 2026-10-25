@@ -160,7 +160,8 @@ describe('来源不明的老串（老项目持久化的 node.error / 非 vendor 
   it('URL 之外的文字照读：带 URL 的老串，原话里的真因仍然认', () => {
     expect(classifyGenerationError('POST https://api.example.com/v1/x failed: Unauthorized').kind).toBe('auth')
     expect(classifyGenerationError('POST http://127.0.0.1:59401/v1/x failed: insufficient balance').kind).toBe('balance')
-    expect(classifyGenerationError('POST http://127.0.0.1:59401/v1/x failed: fetch failed').kind).toBe('network')
+    expect(classifyGenerationError('POST http://127.0.0.1:59401/v1/x failed: fetch failed').kind).toBe('submission-unknown')
+    expect(classifyGenerationError('POST http://127.0.0.1:59401/v1/x failed: connect ECONNREFUSED').kind).toBe('network')
   })
 
   it('只有 {code, reason} 的载荷（主进程给带 code + reason 的错误加的标记，没有原话字段）也是来源不明：整句读，认得出的词照认', () => {
