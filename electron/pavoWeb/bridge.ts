@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import { appFetch } from "../appFetch";
 import path from "node:path";
 import { parseDataUrl } from "../assets/assetBytes";
 import { extensionFromMime } from "../assets/assetPaths";
@@ -313,7 +314,7 @@ export async function buildPavoWebTaskPayload(request: TaskRequest): Promise<Pav
   };
 }
 
-export async function probePavoWebServer(baseUrlInput?: unknown, fetchImpl: FetchLike = fetch): Promise<PavoWebStatus> {
+export async function probePavoWebServer(baseUrlInput?: unknown, fetchImpl: FetchLike = appFetch): Promise<PavoWebStatus> {
   const serverUrl = resolvePavoWebBaseUrl(baseUrlInput);
   try {
     const raw = await fetchJson(fetchImpl, serverUrl, "/", { method: "GET" });
@@ -345,7 +346,7 @@ export async function submitPavoWebTask(input: {
   vendorBaseUrl?: unknown;
   fetchImpl?: FetchLike;
 }): Promise<{ taskCode: string; serverUrl: string; payload: PavoWebTaskPayload; raw: unknown }> {
-  const fetchImpl = input.fetchImpl || fetch;
+  const fetchImpl = input.fetchImpl || appFetch;
   const serverUrl = resolvePavoWebBaseUrl(firstString(extras(input.request).pavoWebApiBaseUrl, input.vendorBaseUrl));
   const status = await probePavoWebServer(serverUrl, fetchImpl);
   if (!status.ok) throw new Error(desktopT("custom.pavoWeb.bridge.text18", { value0: `${status.error || "本地服务未就绪"}` }));
@@ -420,7 +421,7 @@ export async function queryPavoWebTask(input: {
   writeAsset: WriteAsset;
   fetchImpl?: FetchLike;
 }): Promise<TaskResult> {
-  const fetchImpl = input.fetchImpl || fetch;
+  const fetchImpl = input.fetchImpl || appFetch;
   const mediaType = pavoWebMediaTypeFromRequest(input.request);
   const serverUrl = resolvePavoWebBaseUrl(firstString(input.serverUrl, extras(input.request).pavoWebApiBaseUrl));
   const tasksRaw = await fetchJson(fetchImpl, serverUrl, `/api/tasks/${encodeURIComponent(input.taskCode)}`, { method: "GET" });

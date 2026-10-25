@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import { appFetch } from "../appFetch";
 import type { ProfileKind } from "./types";
 import { isVendorOfBuiltin, type VendorIdentityEntry } from '../shared/builtinVendorIdentity';
 
@@ -67,7 +68,7 @@ export async function assertAgnesPublicImageReachable(
   const startedAt = Date.now();
   let response: Response;
   try {
-    response = await (options.fetchImpl ?? fetch)(imageUrl, {
+    response = await (options.fetchImpl ?? appFetch)(imageUrl, {
       method: "GET",
       headers: { Range: "bytes=0-0" },
       redirect: "follow",

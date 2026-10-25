@@ -1,0 +1,299 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-web-bridge-network-owner",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "自定义网页桥的默认请求绕开应用网络真源",
+  "symptom": "公共参考图探测与两个网页桥的七处默认传输仍取全局 fetch，网络入口守护失败。",
+  "direct_cause": "自定义桥新增时提供了测试注入，却未把生产默认值接到既有 appFetch。",
+  "class_root": "默认生产传输与应用共有代理/凭据重定向规则分叉。",
+  "affected_population": [
+    "AGNES 公共图片可达性探测",
+    "即梦网页桥探测、提交和结果查询",
+    "Pavo 网页桥探测、提交和结果查询"
+  ],
+  "scope_paths": [
+    "electron/catalog/agnesPublicAssetProbe.ts",
+    "electron/jimengWeb/seedanceBridge.ts",
+    "electron/pavoWeb/bridge.ts",
+    "electron/catalog/webBridgeTransportBoundary.test.ts"
+  ],
+  "entry_points": [
+    "electron/jimengWeb/ipc.ts::probeJimengWebServer",
+    "electron/jimengWeb/runner.ts::probeJimengWebServer",
+    "electron/jimengWeb/seedanceBridge.ts::probeJimengWebServer",
+    "electron/pavoWeb/bridge.ts::probePavoWebServer",
+    "electron/pavoWeb/ipc.ts::probePavoWebServer",
+    "electron/pavoWeb/runner.ts::probePavoWebServer",
+    "electron/tasks/profileTaskExecution.ts::assertAgnesPublicImageReachable",
+    "electron/webBridge/registry.ts::queryJimengWebTask",
+    "electron/webBridge/registry.ts::queryPavoWebTask",
+    "electron/webBridge/taskDispatch.ts::submitJimengWebTask",
+    "electron/webBridge/taskDispatch.ts::submitPavoWebTask"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "只接入已有 appFetch/systemProxy/credentialRedirectPolicy；API 请求、测试注入和重试边界均为既有实现。",
+  "invariants": [
+    "七处默认传输走 appFetch；显式 fetchImpl 仍由调用方控制。",
+    "不改请求 URL、method、body、headers、idempotencyKey、所有者、超时或素材回收。",
+    "appFetch 不添加重试；查询队列只有 GET，不创建任务或写素材；不确定提交只 POST 一次。",
+    "本机桥仍由已有 loopback 地址和代理 bypass 规则控制；不读取/打印用户密钥、Cookie。",
+    "不修改网络检查器、忽略清单、模型档案、并发/重试上限、截图或冻结基线。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/appFetch.ts",
+    "tests": [
+      "electron/catalog/webBridgeTransportBoundary.test.ts",
+      "electron/appFetch.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/ipc.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/runner.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/pavoWeb/ipc.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/pavoWeb/runner.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "assertAgnesPublicImageReachable"
+    },
+    {
+      "kind": "write",
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "queryJimengWebTask"
+    },
+    {
+      "kind": "write",
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "queryPavoWebTask"
+    },
+    {
+      "kind": "write",
+      "path": "electron/webBridge/taskDispatch.ts",
+      "symbol": "submitJimengWebTask"
+    },
+    {
+      "kind": "write",
+      "path": "electron/webBridge/taskDispatch.ts",
+      "symbol": "submitPavoWebTask"
+    }
+  ],
+  "door_reduction": {
+    "before": 11,
+    "after": 11,
+    "why_not": "2971 个生产源的同一 AST 映射，七个现有业务函数引用 11→11。保留独立健康检查、一次提交和查询回收，只收敛底层传输，不合并或增加生成入口。"
+  },
+  "generality_proof": "新增默认入口测试先 9 失败/2 通过；生产默认值接线后连同原公共图/两网页桥和静态网络入口，5 文件 62 通过。另 24 项 Pavo 真实本地 HTTP fixture 先被 listen EPERM 阻断，再仅以本机端口权限重跑 24/24。全程不访问官网或 Provider。",
+  "shared_boundaries": [
+    {
+      "path": "electron/appFetch.ts",
+      "symbol": "appFetch",
+      "responsibility": "原有共享 Node HTTP 入口，保留原生 fetch、动态 dispatcher 和凭据重定向策略"
+    },
+    {
+      "path": "electron/jimengWeb/ipc.ts",
+      "symbol": "probeJimengWebServer",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/jimengWeb/runner.ts",
+      "symbol": "probeJimengWebServer",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "probeJimengWebServer",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "probePavoWebServer",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/pavoWeb/ipc.ts",
+      "symbol": "probePavoWebServer",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/pavoWeb/runner.ts",
+      "symbol": "probePavoWebServer",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "assertAgnesPublicImageReachable",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "queryJimengWebTask",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "queryPavoWebTask",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/webBridge/taskDispatch.ts",
+      "symbol": "submitJimengWebTask",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    },
+    {
+      "path": "electron/webBridge/taskDispatch.ts",
+      "symbol": "submitPavoWebTask",
+      "responsibility": "经现有业务入口调用共享传输，原提交/查询参数与边界不变"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/jimengWeb/ipc.ts",
+      "entry_point": "probeJimengWebServer",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/jimengWeb/runner.ts",
+      "entry_point": "probeJimengWebServer",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "entry_point": "probeJimengWebServer",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "entry_point": "probePavoWebServer",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/pavoWeb/ipc.ts",
+      "entry_point": "probePavoWebServer",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/pavoWeb/runner.ts",
+      "entry_point": "probePavoWebServer",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "entry_point": "assertAgnesPublicImageReachable",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/webBridge/registry.ts",
+      "entry_point": "queryJimengWebTask",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/webBridge/registry.ts",
+      "entry_point": "queryPavoWebTask",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/webBridge/taskDispatch.ts",
+      "entry_point": "submitJimengWebTask",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    },
+    {
+      "path": "electron/webBridge/taskDispatch.ts",
+      "entry_point": "submitPavoWebTask",
+      "disposition": "enforced",
+      "evidence": "全仓实际前后 AST 门表；默认传输与显式注入、队列只读、一次提交和网络异常无重发有真实函数回归。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "扩展适配器新增请求时若选 ambient fetch，会再度漂离应用代理和凭据规则。",
+    "same_class_scan": [
+      "原 check-network-entry 找到七处违规并在修复后通过",
+      "实际两网页桥健康/提交/查询及公共图默认入口，global fetch tripwire",
+      "Pavo 真实本地 HTTP：批量所有者、重启、额度/鉴权/审核/未知失败不自动重试的既有 fixture"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/appFetch.ts",
+    "invariant": "默认传输只有 appFetch，原业务函数不靠 ambient global fetch。",
+    "failure_mode": "新增旁路由既有全仓检查拒绝；共享入口断开、重发 POST 或队列写素材由新真实函数测试失败。",
+    "exception_policy": "none",
+    "strategy": "改变生产默认传输，保留测试注入；不修改网络守护或隐藏失败。",
+    "artifacts": [
+      "electron/appFetch.ts",
+      "electron/catalog/agnesPublicAssetProbe.ts",
+      "electron/jimengWeb/seedanceBridge.ts",
+      "electron/pavoWeb/bridge.ts",
+      "electron/catalog/webBridgeTransportBoundary.test.ts",
+      "scripts/check-network-entry.test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "electron/catalog/webBridgeTransportBoundary.test.ts",
+    "electron/catalog/agnesPublicAssetProbe.test.ts",
+    "electron/jimengWeb/seedanceBridge.test.ts",
+    "electron/pavoWeb/bridge.test.ts",
+    "electron/pavoWeb/taskBridgeBatch.test.ts",
+    "scripts/check-network-entry.test.mjs"
+  ],
+  "class_regression_tests": [
+    "electron/catalog/webBridgeTransportBoundary.test.ts",
+    "scripts/check-network-entry.test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "保留所有业务函数和注入接口，仅更换生产默认实现引用。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "没有新增依赖。",
+    "exit_criteria": []
+  },
+  "migration": "无数据、账号或服务部署迁移，无真实生成；不改共享 CLIProxy 内核。",
+  "residual_risks": [
+    "隔离回归不能证明实际用户代理或每家 Provider 实时连通；本轮未追加真实生成。",
+    "全仓其他失败与冻结/视觉审批尚未收口，不代表最终 main 验收。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "electron/catalog/webBridgeTransportBoundary.test.ts"
+  }
+}

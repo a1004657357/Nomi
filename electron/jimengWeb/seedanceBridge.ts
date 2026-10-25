@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import { appFetch } from "../appFetch";
 import path from "node:path";
 import { parseDataUrl } from "../assets/assetBytes";
 import { extensionFromMime } from "../assets/assetPaths";
@@ -418,7 +419,7 @@ export async function buildJimengWebTaskPayload(request: TaskRequest): Promise<J
 
 export async function probeJimengWebServer(
   baseUrlInput?: unknown,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = appFetch,
 ): Promise<JimengWebStatus> {
   const serverUrl = resolveJimengWebBaseUrl(baseUrlInput);
   try {
@@ -455,7 +456,7 @@ export async function submitJimengWebTask(input: {
   vendorBaseUrl?: unknown;
   fetchImpl?: FetchLike;
 }): Promise<JimengWebSubmitResult> {
-  const fetchImpl = input.fetchImpl || fetch;
+  const fetchImpl = input.fetchImpl || appFetch;
   const serverUrl = resolveJimengWebBaseUrl(
     firstString(requestExtras(input.request).jimengWebApiBaseUrl, input.vendorBaseUrl),
   );
@@ -618,7 +619,7 @@ export async function queryJimengWebTask(input: {
   fileReadyRetryAttempts?: number;
   fileReadyRetryDelayMs?: number;
 }): Promise<TaskResult> {
-  const fetchImpl = input.fetchImpl || fetch;
+  const fetchImpl = input.fetchImpl || appFetch;
   const mediaType = mediaTypeFromRequest(input.request);
   const serverUrl = resolveJimengWebBaseUrl(
     firstString(input.serverUrl, requestExtras(input.request).jimengWebApiBaseUrl),
