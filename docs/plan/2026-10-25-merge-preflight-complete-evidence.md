@@ -29,3 +29,33 @@
 - 新回归加入既有 merge-preflight.node-test.mjs，已由现有 test:eng-system 调用，不新增平行门岗或修改 package.json。
 - 单份 v3 合同通过既有 validateRootCauseChange 校验；未运行全仓合同门。
 - Git 对象不可用时返回失败并要求调用者准备准确对象；不添加 REST 猜测回退、自动 fetch 或工作区 HEAD 回退。
+
+## 第二批：Tree 完整性与 Rename 展示计数
+
+23d 的跨表示强等式过强。用户实测同一 SHA：M50=6797(67R)、M100=6853(11R)、raw=6864，GitHub=6807；不能猜阈值或假称 raw 与 API 相等。
+
+- 完整性 owner 改为 native Git：验证 base/head/唯一 merge-base 的完整树及本地 blob 对象；完整 no-renames diff 清单必须与两棵树的变化路径精确相等、唯一、状态一致。patch 必须成功且非空（存在变化时）。
+- 保留所有 A/D 路径送入原分类，允许保守命中，不改四类/设计卡/独立验收规则。
+- 设 raw=A+D+其他，r 个 rename 只能一对一折叠 A/D，故 0<=r<=min(A,D)，只接受 API count 属于 [raw-min(A,D),raw]。这是表示可行性检查，不代替上面的逐路径完整性证明。
+- 双端 repo 的 owner/name/full_name 必须自洽，base repo 必须等于请求目标；head 可以是合法 fork，但不能缺失或身份冲突。报告保留两端 repo+SHA、merge-base、raw 和 API 范围。
+- 322 路径真 Git 夹具含一个纯 rename 与两个带编辑 rename，M50=319、M100=321、模拟 API=320；接受合法区间，拒绝上下界之外的计数。
+- 负对照覆盖缺未变化 blob、缺 patch、Git 失败、漏路径、相同总数替换路径、重复路径，以及双端 repo 错配。Node-only，禁止重型门岗/网络/App/Provider。
+- D 约束：所有 Git 子进程（包括 gitPaths helper）局部设置 GIT_ALLOW_PROTOCOL=''，不依赖旧 Apple Git 忽略的 GIT_NO_LAZY_FETCH；partial-clone 夹具用本地 transport canary 先证明阳性，再断言预检零调用，不访问真实网络。
+- 完整 patch 强制 --text/--no-textconv/--no-ext-diff/--no-color，保持 64MiB 输出上限；binary 属性和任意后缀不得隐藏新增取消文本，不缩减分类范围。
+- 原生 --output-indicator-new=> 区分新增数据与 +++ 文件头，再还原原 addedLines 形状；源行以 ++ 开头仍完整保留，不另造 patch parser。
+
+### 第二批补充设计格
+
+| 格 | 结论与边界 |
+| --- | --- |
+| 5 中途表 | 只读扫描，无付费或后台任务；中断不能产生完整通过收据；不自动 fetch，不重试网络。 |
+| 6 外部数据与失败 | PR 双端身份、对象、tree、patch、计数可行范围逐项失败封闭；API 不可用不能触发 legacy 豁免。 |
+| 7 性能预算 | 三棵快照只读遍历与 blob metadata batch-check；patch 保持 64MiB 原上限，超限拒绝，不调预算。 |
+| 8 真实条件 | 实际 Apple Git 2.39.3；真临时 Git/partial-clone canary/CLI 已验，真实 PR 网络、Windows 和 App 均 unverified。 |
+
+### 第二批验证
+
+- 修改前：43 项回归中 12 项失败；合法 rename 表示计数被强等式拒绝；缺未变化 blob 实际返回 clean。D 的 binary/旧 Git 两项另行先红；++ 源行/文件头消歧也先红。
+- 修改后最终定向 Node 与原 gitPaths 回归 50/50 通过，0 skipped/cancelled；binary 与旧 Git 独立回归 2/2 通过。单份 v3 validateRootCauseChange 校验通过，git diff --check 通过；不运行全仓门岗。
+- 本地 transport canary 允许协议时真实触发，禁止协议时预检及共享 NUL helper 均零调用；不访问真实网络，不修改用户 Git 全局配置。
+- 用户真实数字有 6864-6807=57 且 M50 已证明可形成67组，故 57<=67<=min(A,D)，该展示计数在数学可行范围内；不推断 GitHub 算法。真实 PR 完整扫描仍待协调者/D 验收。

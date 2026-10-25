@@ -10,9 +10,14 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { gitNameStatus } from './lib/gitPaths.mjs'
+import { gitNameStatus, splitNulPaths } from './lib/gitPaths.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const GIT_MAX_BUFFER = 64 * 1024 * 1024
+const gitEnvironment = () => ({
+  ...process.env, GIT_ALLOW_PROTOCOL: '', GIT_NO_LAZY_FETCH: '1',
+  GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1',
+})
 
 export const STAR_CELLS = [1, 2, 3, 4, 9]
 export const ALL_CELLS = [1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -168,12 +173,48 @@ function gh(args) {
   return execFileSync('gh', args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 }
 
-function git(args, cwd) {
+function git(args, cwd, input) {
   return execFileSync('git', args, {
-    cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, GIT_NO_LAZY_FETCH: '1' },
+    cwd, input, encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER,
+    env: gitEnvironment(),
     stdio: ['pipe', 'pipe', 'pipe'],
   })
+}
+
+function repositorySlug(repo) {
+  const fullName = repo?.full_name
+  if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)
+    || typeof repo.name !== 'string' || typeof repo.owner?.login !== 'string'
+    || `${repo.owner.login}/${repo.name}`.toLowerCase() !== fullName.toLowerCase()) {
+    throw new Error('缺少或不匹配的 PR 双端 repo 身份元数据')
+  }
+  return fullName
+}
+
+function readCompleteTrees(commits, cwd) {
+  const trees = new Map()
+  const blobs = new Set()
+  for (const commit of new Set(commits)) {
+    const tree = new Map()
+    for (const record of splitNulPaths(git(['ls-tree', '-r', '-z', '--full-tree', commit], cwd))) {
+      const match = /^(\d{6}) (blob|commit) ([a-f0-9]{40})\t([\s\S]+)$/.exec(record)
+      if (!match || tree.has(match[4]) || (match[2] === 'commit' && match[1] !== '160000')) {
+        throw new Error('无法解析完整 Git tree 或路径重复')
+      }
+      tree.set(match[4], `${match[1]} ${match[2]} ${match[3]}`)
+      // Gitlinks name another repository's commit, not a required local blob.
+      if (match[2] === 'blob') blobs.add(match[3])
+    }
+    trees.set(commit, tree)
+  }
+  if (blobs.size) {
+    const ids = [...blobs]
+    const checked = git(['cat-file', '--batch-check=%(objectname) %(objecttype)'], cwd, `${ids.join('\n')}\n`).trimEnd().split('\n')
+    if (checked.length !== ids.length || checked.some((line, i) => line !== `${ids[i]} blob`)) {
+      throw new Error('缺少或无效的 Git blob 对象，无法证明完整树')
+    }
+  }
+  return trees
 }
 
 /** Exact immutable PR comparison; a missing local object is not an empty diff. */
@@ -190,17 +231,32 @@ export function readPullRequestChanges(view, { cwd = repoRoot } = {}) {
   git(['cat-file', '-e', `${head}^{commit}`], cwd)
   const ancestors = git(['merge-base', '--all', base, head], cwd).trim().split(/\s+/).filter(Boolean)
   if (ancestors.length !== 1) throw new Error('无法证明唯一 PR 共同祖先，不能完整检查')
-  // Materialize the full patch first, with lazy fetching and external diff/textconv
-  // disabled. The canonical NUL path reader then uses the same immutable range.
+  const mergeBase = ancestors[0]
+  const trees = readCompleteTrees([base, head, mergeBase], cwd)
+  const before = trees.get(mergeBase)
+  const after = trees.get(head)
+  const changedPaths = new Set([...before.keys(), ...after.keys()].filter(file => before.get(file) !== after.get(file)))
   const range = `${base}...${head}`
-  const options = ['--no-ext-diff', '--no-textconv', '--find-renames']
-  const diff = git(['diff', ...options, '--unified=0', range, '--'], cwd)
-  const files = gitNameStatus(['diff', ...options, '--name-status', range, '--'], { cwd })
-  if (files.length !== view.changed_files || new Set(files.map(file => file.path)).size !== files.length) {
-    throw new Error(`PR 文件清单不完整或不匹配：Git=${files.length}，PR=${view.changed_files}`)
+  const options = ['--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--text', '--submodule=short']
+  const files = gitNameStatus(['diff', ...options, '--name-status', range, '--'], {
+    cwd, env: gitEnvironment(), maxBuffer: GIT_MAX_BUFFER,
+  })
+  if (files.length !== changedPaths.size || new Set(files.map(file => file.path)).size !== files.length
+    || files.some(file => !changedPaths.has(file.path) || (!before.has(file.path) ? file.status !== 'A'
+      : !after.has(file.path) ? file.status !== 'D' : !['M', 'T'].includes(file.status)))) {
+    throw new Error('PR 原始 diff 与完整 tree 变化路径不匹配、缺项或重复')
   }
-  const addedLines = diff.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++')).join('\n')
-  return { files, addedLines }
+  const added = files.filter(file => file.status === 'A').length
+  const deleted = files.filter(file => file.status === 'D').length
+  // Each rename can fold exactly one A/D pair; no similarity threshold is assumed.
+  const counts = { rawTotal: files.length, added, deleted, min: files.length - Math.min(added, deleted), max: files.length, reported: view.changed_files }
+  if (counts.reported < counts.min || counts.reported > counts.max) {
+    throw new Error(`PR 展示计数超出可证 rename 分组范围：${counts.reported} 不在 [${counts.min},${counts.max}]`)
+  }
+  const diff = git(['diff', ...options, '--output-indicator-new=>', '--unified=0', range, '--'], cwd)
+  if ((files.length > 0) !== (diff.length > 0)) throw new Error('缺少或不匹配的完整 Git patch')
+  const addedLines = diff.split('\n').filter(line => line.startsWith('>')).map(line => `+${line.slice(1)}`).join('\n')
+  return { files, addedLines, counts, mergeBase }
 }
 
 export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh, log = console.log, error = console.error } = {}) {
@@ -215,10 +271,12 @@ export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh,
     const slug = repoIndex >= 0 ? repo : runGh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner']).trim()
     if (typeof slug !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(slug)) throw new Error('缺少或无效的目标仓库 owner/name')
     const view = JSON.parse(runGh(['api', `repos/${slug}/pulls/${prArg}`]))
-    if (view.number !== Number(prArg) || view.base?.repo?.full_name?.toLowerCase() !== slug.toLowerCase()) {
+    const baseRepo = repositorySlug(view.base?.repo)
+    const headRepo = repositorySlug(view.head?.repo)
+    if (view.number !== Number(prArg) || baseRepo.toLowerCase() !== slug.toLowerCase()) {
       throw new Error('PR 元数据与目标仓库或 PR 编号不匹配')
     }
-    const { files, addedLines } = readPullRequestChanges(view, { cwd })
+    const { files, addedLines, counts, mergeBase } = readPullRequestChanges(view, { cwd })
     const classification = classifyChange(files, addedLines)
     const body = view.body ?? ''
     const contracts = []
@@ -238,7 +296,8 @@ export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh,
     } catch {
       // Unknown policy history never grants a historical exemption.
     }
-    log(`· PR 绑定：${slug} #${prArg} base=${view.base.sha} head=${view.head.sha}；完整文件 ${files.length}`)
+    log(`· PR 绑定：${slug} #${prArg} base=${baseRepo}@${view.base.sha} head=${headRepo}@${view.head.sha} merge-base=${mergeBase}`)
+    log(`· 完整 tree/diff 原始路径 ${counts.rawTotal}（A=${counts.added},D=${counts.deleted}）；GitHub=${counts.reported}，rename 分组范围 [${counts.min},${counts.max}]`)
     if (typeof effectiveAt !== 'string' || !Number.isFinite(Date.parse(effectiveAt))) {
       log(`⚠ 无法取得有效 #${RULES_INTRODUCED_BY_PR} 生效时间，按严格规则检查，不适用历史豁免`)
     }

@@ -8,6 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as preflight from './merge-preflight.mjs'
+import { gitNameStatus } from './lib/gitPaths.mjs'
 import {
   checkDesignCard,
   checkEscapeContract,
@@ -152,6 +153,10 @@ test.before(() => {
   write('src/workbench/Existing.tsx', 'export const existing = 1\n')
   write('src/workbench/OldPanel.tsx', 'export const renamedPanel = "preserve the entire original source"\n')
   write('src/utils/removed.ts', 'export const removed = 1\n')
+  const editedRenames = ['Alpha', 'Beta']
+  for (const name of editedRenames) {
+    write(`src/utils/Old${name}.ts`, Array.from({ length: 80 }, (_, i) => `export const ${name}${i} = ${i}\n`).join(''))
+  }
   git('add', '--all')
   git('commit', '-m', 'shared ancestor')
   const ancestor = git('rev-parse', 'HEAD')
@@ -163,8 +168,13 @@ test.before(() => {
   write('src/workbench/Existing.tsx', 'export const existing = 1\nexport const appended = 2\n')
   fs.renameSync(path.join(cwd, 'src/workbench/OldPanel.tsx'), path.join(cwd, 'src/workbench/Renamed\nPanel.tsx'))
   fs.unlinkSync(path.join(cwd, 'src/utils/removed.ts'))
+  for (const name of editedRenames) {
+    const old = path.join(cwd, `src/utils/Old${name}.ts`)
+    write(`src/utils/New${name}.ts`, fs.readFileSync(old, 'utf8').replace('= 79', '= 999'))
+    fs.unlinkSync(old)
+  }
   git('add', '--all')
-  git('commit', '-m', '317 changed files including unusual paths')
+  git('commit', '-m', '322 raw paths with exact and edited renames')
   const head = git('rev-parse', 'HEAD')
   git('checkout', 'main')
   write('src/base-only.ts', 'export const baseOnly = true\n')
@@ -174,12 +184,26 @@ test.before(() => {
   // The checkout intentionally stays on base, not the PR head.
   const view = {
     number: 2, body: FULL_CARD, created_at: '2026-10-25T00:00:00Z',
-    base: { sha: base, repo: { full_name: TARGET_REPO } },
-    head: { sha: head, repo: { full_name: 'contributor/Nomi' } },
-    changed_files: addedPaths.length + 4,
+    base: { sha: base, repo: { full_name: TARGET_REPO, name: 'Nomi', owner: { login: 'a1004657357' } } },
+    head: { sha: head, repo: { full_name: 'contributor/Nomi', name: 'Nomi', owner: { login: 'contributor' } } },
+    // Neither -M50% (319) nor -M100% (321), but a valid grouping of raw 322.
+    changed_files: 320,
   }
   const emptyTree = execFileSync('git', ['mktree'], { cwd, input: '', encoding: 'utf8' }).trim()
   const unrelated = git('commit-tree', emptyTree, '-m', 'unrelated root')
+  const blob = text => execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd, input: text, encoding: 'utf8' }).trim()
+  const tree = text => execFileSync('git', ['mktree'], { cwd, input: text, encoding: 'utf8' }).trim()
+  const missingBlob = blob('unavailable unchanged blob in both trees')
+  const brokenBaseTree = tree(`100644 blob ${missingBlob}\tunchanged.bin\n100644 blob ${blob('before')}\tchanged.ts\n`)
+  const brokenHeadTree = tree(`100644 blob ${missingBlob}\tunchanged.bin\n100644 blob ${blob('after')}\tchanged.ts\n`)
+  const brokenBase = git('commit-tree', brokenBaseTree, '-p', ancestor, '-m', 'base with missing unchanged object')
+  const brokenHead = git('commit-tree', brokenHeadTree, '-p', brokenBase, '-m', 'head with missing unchanged object')
+  fs.unlinkSync(path.join(cwd, '.git/objects', missingBlob.slice(0, 2), missingBlob.slice(2)))
+  const opaqueTree = tree(`100644 blob ${blob('\0const signal = AbortSignal.any([])\n++AbortSignal\n')}\topaque.data\n`)
+  const opaqueHead = git('commit-tree', opaqueTree, '-p', ancestor, '-m', 'binary non-source-extension content')
+  const absentTree = tree(`100644 blob ${blob('unique missing tree content')}\tabsent-tree.txt\n`)
+  const absentTreeHead = git('commit-tree', absentTree, '-p', ancestor, '-m', 'missing tree object')
+  fs.unlinkSync(path.join(cwd, '.git/objects', absentTree.slice(0, 2), absentTree.slice(2)))
   const ghFiles = addedPaths.map(file => ({ path: file, additions: 1, deletions: 0 }))
   ghFiles.push(
     { path: 'src/utils/existing.ts', additions: 1, deletions: 0 },
@@ -187,17 +211,41 @@ test.before(() => {
     { path: 'src/workbench/Renamed\nPanel.tsx', additions: 0, deletions: 0 },
     { path: 'src/utils/removed.ts', additions: 0, deletions: 1 },
   )
-  fixture = { cwd, view, ancestor, unrelated, ghFiles }
+  fixture = { cwd, view, ancestor, unrelated, ghFiles, brokenBase, brokenHead, missingBlob, opaqueHead, absentTreeHead }
 })
 test.after(() => { if (fixture) fs.rmSync(fixture.cwd, { recursive: true, force: true }) })
 
-test('真实 CLI：HTTP406 清空 diff + missing #961，保留 files 仍必须阻断', () => {
+function runCliFixture({ view = fixture.view, gitFault, extraEnv = {} } = {}) {
   const sourceRoot = path.dirname(fileURLToPath(import.meta.url))
   fs.mkdirSync(path.join(fixture.cwd, 'scripts/lib'), { recursive: true })
   fs.copyFileSync(path.join(sourceRoot, 'merge-preflight.mjs'), path.join(fixture.cwd, 'scripts/merge-preflight.mjs'))
   fs.copyFileSync(path.join(sourceRoot, 'lib/gitPaths.mjs'), path.join(fixture.cwd, 'scripts/lib/gitPaths.mjs'))
   const bin = path.join(fixture.cwd, 'fake-bin')
   fs.mkdirSync(bin, { recursive: true })
+  fs.rmSync(path.join(bin, 'git'), { force: true })
+  const nativeGit = process.env.PATH.split(path.delimiter).map(dir => path.join(dir, 'git')).find(file => fs.existsSync(file))
+  if (gitFault) fs.writeFileSync(path.join(bin, 'git'), `#!/usr/bin/env node
+const {spawnSync} = require('node:child_process')
+const fs = require('node:fs')
+const args = process.argv.slice(2)
+if (process.env.PREFLIGHT_GIT_FAULT === 'old-git-transport') delete process.env.GIT_NO_LAZY_FETCH
+const result = spawnSync(process.env.PREFLIGHT_NATIVE_GIT, args, {input: fs.readFileSync(0)})
+let out = result.stdout || Buffer.alloc(0)
+if (args[0] === 'diff' && args.includes('--unified=0')) {
+  if (process.env.PREFLIGHT_GIT_FAULT === 'patch-empty') out = Buffer.alloc(0)
+  if (process.env.PREFLIGHT_GIT_FAULT === 'patch-error') process.exit(1)
+}
+if (args[0] === 'diff' && args.includes('--name-status')) {
+  const parts = out.toString('utf8').split('\\0')
+  if (process.env.PREFLIGHT_GIT_FAULT === 'path-replaced') parts[1] = 'invented/not-in-tree.ts'
+  if (process.env.PREFLIGHT_GIT_FAULT === 'path-dropped') parts.splice(0, 2)
+  if (process.env.PREFLIGHT_GIT_FAULT === 'path-duplicate') parts[3] = parts[1]
+  out = Buffer.from(parts.join('\\0'))
+}
+process.stdout.write(out)
+process.stderr.write(result.stderr || '')
+process.exit(result.status ?? 1)
+`, { mode: 0o755 })
   fs.writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env node
 const args = process.argv.slice(2)
 if (args.includes('961') || args.some(arg => arg.endsWith('/pulls/961'))) {
@@ -213,11 +261,17 @@ process.exit(2)
 `, { mode: 0o755 })
   const result = spawnSync(process.execPath, ['scripts/merge-preflight.mjs', '2', '--repo', TARGET_REPO], {
     cwd: fixture.cwd, encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, PREFLIGHT_PR_JSON: JSON.stringify({
-      ...fixture.view, body: '旧实现会因未知规则时间放过这份空卡', files: fixture.ghFiles,
-      headRefOid: fixture.view.head.sha, createdAt: fixture.view.created_at,
+    env: { ...process.env, ...extraEnv, PATH: `${bin}${path.delimiter}${extraEnv.PATH || process.env.PATH}`, PREFLIGHT_NATIVE_GIT: nativeGit,
+      PREFLIGHT_GIT_FAULT: gitFault || '', PREFLIGHT_PR_JSON: JSON.stringify({
+      ...view, files: fixture.ghFiles,
+      headRefOid: view.head.sha, createdAt: view.created_at,
     }) },
   })
+  return result
+}
+
+test('真实 CLI：HTTP406 清空 diff + missing #961，保留 files 仍必须阻断', () => {
+  const result = runCliFixture({ view: { ...fixture.view, body: '旧实现会因未知规则时间放过这份空卡' } })
   assert.equal(result.status, 1, result.stdout + result.stderr)
   assert.match(result.stdout, /四类：命中/)
   assert.match(result.stdout, /可打断/)
@@ -249,12 +303,13 @@ function runPreflight({ view = fixture.view, policy = '2026-10-04T00:00:00Z', me
   return { code, text: logs.join('\n'), errors: errors.join('\n'), calls }
 }
 
-test('真实 317 文件 Git 三点 diff：NUL 路径、重命名、准确状态，绑定 PR SHA 而非 HEAD', () => {
+test('真实 322 路径完整 Git 三点 diff：NUL 路径、保留 rename 双端 A/D，绑定 SHA 而非 HEAD', () => {
   assert.equal(typeof preflight.readPullRequestChanges, 'function')
   const result = preflight.readPullRequestChanges(fixture.view, { cwd: fixture.cwd })
-  assert.equal(result.files.length, 317)
+  assert.equal(result.files.length, 322)
   assert.equal(result.files.find(x => x.path === 'src/workbench/New\nPanel.tsx').status, 'A')
-  assert.match(result.files.find(x => x.path === 'src/workbench/Renamed\nPanel.tsx').status, /^R/)
+  assert.equal(result.files.find(x => x.path === 'src/workbench/Renamed\nPanel.tsx').status, 'A')
+  assert.equal(result.files.find(x => x.path === 'src/workbench/OldPanel.tsx').status, 'D')
   assert.equal(result.files.find(x => x.path === 'src/workbench/Existing.tsx').status, 'M')
   assert.equal(result.files.find(x => x.path === 'src/utils/removed.ts').status, 'D')
   assert.ok(result.files.some(x => x.path === 'src/中文 file.ts'))
@@ -305,8 +360,11 @@ test('元数据异常、缺/无效 SHA、缺对象、无共同祖先及文件数
     { head: { ...fixture.view.head, sha: 'HEAD' } },
     { head: { ...fixture.view.head, sha: 'f'.repeat(40) } },
     { head: { ...fixture.view.head, sha: fixture.unrelated }, changed_files: 0 },
-    { changed_files: fixture.view.changed_files + 1 }, { changed_files: undefined },
+    { changed_files: 323 }, { changed_files: 317 }, { changed_files: undefined },
     { number: 3 }, { base: { ...fixture.view.base, repo: { full_name: 'wrong/repo' } } },
+    { head: { ...fixture.view.head, repo: undefined } },
+    { head: { ...fixture.view.head, repo: { ...fixture.view.head.repo, full_name: 'other/Nomi' } } },
+    { base: { ...fixture.view.base, repo: { ...fixture.view.base.repo, owner: { login: 'other' } } } },
   ]
   for (const [i, mutation] of mutations.entries()) {
     await t.test(`invalid metadata ${i + 1}`, () => {
@@ -319,6 +377,101 @@ test('元数据异常、缺/无效 SHA、缺对象、无共同祖先及文件数
   const error = runPreflight({ metadataError: new Error('HTTP 503: unavailable') })
   assert.notEqual(error.code, 0)
   assert.doesNotMatch(error.text, /扫描干净|四类/)
+})
+
+test('不同合法 rename 分组计数接受；两套 native 算法不决定 GitHub 阈值', () => {
+  const options = { cwd: fixture.cwd, encoding: 'utf8' }
+  const range = `${fixture.view.base.sha}...${fixture.view.head.sha}`
+  for (const [mode, expected] of [['-M50%', 319], ['-M100%', 321], ['--no-renames', 322]]) {
+    const records = execFileSync('git', ['diff', '--name-status', '-z', mode, range], options).split('\0').filter(Boolean)
+    let count = 0
+    for (let i = 0; i < records.length;) { const status = records[i]; i += /^R/.test(status) ? 3 : 2; count += 1 }
+    assert.equal(count, expected)
+  }
+  // A=316, D=4, M=2 => complete raw=322, valid grouping interval=[318,322].
+  for (const changed_files of [318, 319, 320, 321, 322]) {
+    const result = preflight.readPullRequestChanges({ ...fixture.view, changed_files }, { cwd: fixture.cwd })
+    assert.equal(result.files.length, 322)
+    assert.deepEqual(result.counts, { rawTotal: 322, added: 316, deleted: 4, min: 318, max: 322, reported: changed_files })
+  }
+})
+
+test('缺少未变化 blob 也不能仅凭成功 patch 放行', () => {
+  const result = runPreflight({ view: { ...fixture.view,
+    base: { ...fixture.view.base, sha: fixture.brokenBase },
+    head: { ...fixture.view.head, sha: fixture.brokenHead }, changed_files: 1,
+  } })
+  assert.notEqual(result.code, 0)
+  assert.match(result.errors, /对象|完整/)
+  assert.doesNotMatch(result.text, /扫描干净/)
+})
+
+test('丢 patch/原生命令失败/漏路径/相同条数替换路径/重复路径全部拒绝', async t => {
+  for (const gitFault of ['patch-empty', 'patch-error', 'path-dropped', 'path-replaced', 'path-duplicate']) {
+    await t.test(gitFault, () => {
+      const result = runCliFixture({ gitFault })
+      assert.equal(result.status, 2, result.stdout + result.stderr)
+      assert.match(result.stderr, /无法|完整|失败/)
+      assert.doesNotMatch(result.stdout, /扫描干净/)
+    })
+  }
+})
+
+test('gitattributes binary 标记及任意后缀 binary blob 都不能隐藏新增取消文本', t => {
+  const attrs = path.join(fixture.cwd, '.gitattributes')
+  fs.writeFileSync(attrs, 'src/utils/existing.ts -diff\n')
+  t.after(() => fs.rmSync(attrs, { force: true }))
+  const marked = preflight.readPullRequestChanges({ ...fixture.view, changed_files: 319 }, { cwd: fixture.cwd })
+  assert.match(marked.addedLines, /new AbortController/)
+  const opaque = preflight.readPullRequestChanges({ ...fixture.view,
+    base: { ...fixture.view.base, sha: fixture.ancestor },
+    head: { ...fixture.view.head, sha: fixture.opaqueHead }, changed_files: 7,
+  }, { cwd: fixture.cwd })
+  assert.match(opaque.addedLines, /AbortSignal/)
+  assert.ok(opaque.addedLines.split('\n').includes('+++AbortSignal'), 'source starting ++ is not a +++ file header')
+  assert.deepEqual(classifyChange(opaque.files, opaque.addedLines).classes, ['可打断'])
+})
+
+test('旧 Git 忽略 NO_LAZY_FETCH 时，缺对象仍零 transport；canonical helper 同样阻断', t => {
+  const cwd = fixture.cwd
+  const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+  const bin = path.join(cwd, 'transport-bin')
+  const marker = path.join(cwd, 'transport-invocations')
+  fs.mkdirSync(bin, { recursive: true })
+  fs.writeFileSync(path.join(bin, 'git-remote-canary'), `#!/usr/bin/env node
+require('node:fs').appendFileSync(process.env.PREFLIGHT_TRANSPORT_MARKER, 'invoked\\n')
+process.exit(1)
+`, { mode: 0o755 })
+  const config = {
+    'core.repositoryformatversion': '1', 'extensions.partialclone': 'fixture-promisor',
+    'remote.fixture-promisor.url': 'canary::no-network',
+    'remote.fixture-promisor.promisor': 'true', 'remote.fixture-promisor.partialclonefilter': 'blob:none',
+    'protocol.canary.allow': 'always',
+  }
+  for (const [key, value] of Object.entries(config)) git('config', key, value)
+  t.after(() => {
+    for (const key of Object.keys(config)) spawnSync('git', ['config', '--unset-all', key], { cwd })
+    git('config', 'core.repositoryformatversion', '0')
+  })
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    PREFLIGHT_TRANSPORT_MARKER: marker, GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: undefined,
+  }
+  // Positive control uses only a local fake transport, never a network endpoint.
+  const positive = spawnSync('git', ['cat-file', '-e', fixture.missingBlob], {
+    cwd, env: { ...env, GIT_ALLOW_PROTOCOL: 'canary' }, encoding: 'utf8',
+  })
+  assert.notEqual(positive.status, 0)
+  assert.ok(fs.existsSync(marker), 'the fake transport must detect an allowed implicit fetch')
+  fs.unlinkSync(marker)
+  const result = runCliFixture({ gitFault: 'old-git-transport', extraEnv: env, view: { ...fixture.view,
+    base: { ...fixture.view.base, sha: fixture.brokenBase },
+    head: { ...fixture.view.head, sha: fixture.brokenHead }, changed_files: 1,
+  } })
+  assert.equal(result.status, 2, result.stdout + result.stderr)
+  assert.equal(fs.existsSync(marker), false, 'preflight must never invoke the promisor transport')
+  assert.throws(() => gitNameStatus(['diff', '--name-status', '--no-renames',
+    `${fixture.ancestor}...${fixture.absentTreeHead}`], { cwd, env: { ...env, GIT_ALLOW_PROTOCOL: '' } }))
+  assert.equal(fs.existsSync(marker), false, 'the shared NUL reader must also inherit the protocol block')
 })
 
 test('legacy 时间证据必须都有效且严格早于生效时间', () => {

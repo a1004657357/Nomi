@@ -29,11 +29,12 @@ export function splitNulPaths(stdout) {
  * 跑一条列路径的 git 命令，返回未转义的路径数组。
  * 用法与原来一致，只是别自己写 `-z`：`gitPaths(['diff', '--name-only', base, head])`。
  */
-export function gitPaths(args, { cwd = process.cwd(), maxBuffer } = {}) {
+export function gitPaths(args, { cwd = process.cwd(), maxBuffer, env } = {}) {
   const stdout = execFileSync('git', withNulTermination(args), {
     cwd,
     encoding: 'utf8',
     ...(maxBuffer ? { maxBuffer } : {}),
+    ...(env ? { env } : {}),
   })
   return splitNulPaths(stdout)
 }
@@ -47,6 +48,8 @@ export function gitNameStatus(args, options = {}) {
   const records = splitNulPaths(execFileSync('git', withNulTermination(args), {
     cwd: options.cwd ?? process.cwd(),
     encoding: 'utf8',
+    ...(options.maxBuffer ? { maxBuffer: options.maxBuffer } : {}),
+    ...(options.env ? { env: options.env } : {}),
   }))
   const entries = []
   for (let i = 0; i < records.length; i += 1) {
