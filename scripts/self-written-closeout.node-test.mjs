@@ -45,6 +45,17 @@ test('every reviewed source has an explicit owner, hash and source locator', () 
   }
 })
 
+test('Director source review follows the registered neutral strict-schema owner', () => {
+  const file = 'electron/shared/vibingDirectorPlan.ts'
+  const row = rows().find(item => item[1] === file)
+  assert.ok(row)
+  assert.equal(row[3], 'lane-tool-surface')
+  assert.equal(row[4], createHash('sha256').update(read(file)).digest('hex'))
+  assert.match(row[2], /vibingDirectorPlan\.ts#L176/)
+  assert.match(read('electron/ai/vibingDirectorTools.ts'), /from "\.\.\/shared\/vibingDirectorPlan"/)
+  assert.ok(!rows().some(item => item[1] === 'electron/ai/vibingDirectorTools.ts'))
+})
+
 test('handwritten generic mechanisms remain explicit replacement work, not domain exemptions', () => {
   for (const id of ['director-catalog-archive', 'snapshot-structural-sharing', 'renderer-external-stores', 'desktop-string-interpolation', 'web-bridge-png-fixture']) {
     const entry = owners().get(id)

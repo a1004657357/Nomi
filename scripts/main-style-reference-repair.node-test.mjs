@@ -93,6 +93,7 @@ test('fullscreen toolbar keeps its flexible title and removes only redundant aut
   const toolbar = read(canvas + 'nodes/scene3d/Scene3DFullscreenToolbar.tsx')
   assert.match(toolbar, /className="flex min-w-0 flex-1 items-center gap-2"/)
   assert.doesNotMatch(toolbar, /\bml-auto\b/)
-  assert.match(toolbar, /className="flex min-w-0 max-w-\[72vw\] items-center gap-2 overflow-x-auto"/)
+  assert.match(toolbar, /import \{ NODE_SCROLL_REGION_CLASS_NAME \} from '\.\.\/nodeScrollRegionClassName'/)
+  assert.match(toolbar, /className=\{`\$\{NODE_SCROLL_REGION_CLASS_NAME\} flex min-w-0 max-w-\[72vw\] items-center gap-2 overflow-x-auto`\}/)
   assert.match(toolbar, /onClick=\{onClose\}/)
 })

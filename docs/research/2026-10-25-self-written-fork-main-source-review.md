@@ -106,6 +106,8 @@
 
 下表前 182 项 SHA256 是上述同一主线已提交 HEAD 的真实文本字节；最后一项明确为协调线工作树补充。定位到可核对的声明/机制。`domain:` 只指具体已登记领域项，其他值是确切 entry ID。
 
+后续共享归属迁移：Director strict schema现由electron/shared/vibingDirectorPlan.ts统一拥有，原native入口仅重导出。对应一行已按实际新owner、176行声明和源码字节更新；其余历史审阅行保留原语境，不扩大任何登记范围。
+
 | 路径 | 源码入口 | owner | SHA256 | 判断 |
 | --- | --- | --- | --- | --- |
 | `electron/agentLane/laneCreativeTools.ts` | [createCreativeLaneTools](../../electron/agentLane/laneCreativeTools.ts#L13) | `lane-tool-surface` | `da22b6cc60c9405d17d088fc6b7b148fc76e1add138facb36655449741760082` | bindLaneTool + Zod：项目 session/审批摘要/一次性 creative write 合同 |
@@ -114,7 +116,7 @@
 | `electron/ai/codexImagegenPolicy.ts` | [planCodexAspectRatioCrop](../../electron/ai/codexImagegenPolicy.ts#L85) | `creative-process-adapters` | `8f9d33a7732246a4df96b24bb59dfc73aa028634ab8dae3e6090a13143f9bb09` | Codex 单次图像调用的画幅/取回验收，FFmpeg 与技术检查已有 owner |
 | `electron/ai/codexImagegenRecovery.ts` | [recoverGeneratedImageFromCodexHome](../../electron/ai/codexImagegenRecovery.ts#L8) | `creative-process-adapters` | `6be3021175bcd8939bc5336a2c835c2731a87e3ef58e4f39643d446e1409e45b` | 仅隔离 Codex HOME 产物候选；fs 枚举后经既有媒体 probe |
 | `electron/ai/codexImagegenRunner.ts` | [terminateAllCodexImagegenProcesses](../../electron/ai/codexImagegenRunner.ts#L152) | `creative-process-adapters` | `78c223c73b2213e8e9e5bcee1528d22a9ea69df9adcce870691fe67c1923f17f` | Node spawn/fs：隔离 HOME、单并发、取消与单次收费调用验收胶合 |
-| `electron/ai/vibingDirectorTools.ts` | [parseVibingDirectorPlanRequest](../../electron/ai/vibingDirectorTools.ts#L174) | `lane-tool-surface` | `2ee719b0aa0e202ade03a0b26508a2adcf89ee94fe7a8a57e0944f12b28313ac` | Zod discriminatedUnion：导演动作与场景关系约束 |
+| `electron/shared/vibingDirectorPlan.ts` | [parseVibingDirectorPlanRequest](../../electron/shared/vibingDirectorPlan.ts#L176) | `lane-tool-surface` | `aea5a1a9c5934de086c1ec815a3df2cbbf8a5ef311df45b208e313e54c6be439` | Zod discriminatedUnion：导演动作与场景关系约束；native入口重导出此唯一strict owner |
 | `electron/assets/scratchCleanup.ts` | [removeScratchAfterUseSync](../../electron/assets/scratchCleanup.ts#L31) | `node-asset-filesystem-adapters` | `c908e8536a2e2dd71054de99a9dc5b948f4532708e52a5d0ac6e2e4aaa4407f8` | fs.rm 自带重试 + 既有 sharing-violation owner；限定上传 staging |
 | `electron/assets/storageCapacity.ts` | [readStorageCapacity](../../electron/assets/storageCapacity.ts#L31) | `node-asset-filesystem-adapters` | `b9fca18371d663a8554e96dc9f915a066f440b7221fdba7f8d45f337af14a42a` | Node statfsSync：项目可用磁盘与 5 秒短缓存，不是容量探测引擎 |
 | `electron/backgroundIdleExit.ts` | [createBackgroundIdleExit](../../electron/backgroundIdleExit.ts#L10) | `nomi-quit-teardown-boundary` | `de7d6e47a169faac7962d128362db015e866e56bb7d5999b6670204fc01e670a` | Node timers：后台未展示且无生产任务才退出 |
