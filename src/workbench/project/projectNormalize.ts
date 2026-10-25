@@ -118,10 +118,16 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
               return [[documentId, { plan: plan.data, committed: entry.committed === true }] as const]
             })
           : (() => {
-              if (raw[legacyPlanKey] === undefined) return []
+              const committed = raw[legacyCommittedKey]
+              // Keep the old single-plan schema's rejection semantics before removing its projection.
+              if (committed !== undefined && typeof committed !== 'boolean') throw new Error(i18n.t('runtime.project.corruptPayload'))
+              if (raw[legacyPlanKey] == null) return []
               const plan = storyboardPlanSchema.safeParse(raw[legacyPlanKey])
-              if (!plan.success) { reportUnreadablePlan(activeDocumentId, plan.error.issues); return [] }
-              return [[activeDocumentId, { plan: plan.data, committed: raw[legacyCommittedKey] === true }] as const]
+              if (!plan.success) {
+                reportUnreadablePlan(activeDocumentId, plan.error.issues)
+                throw new Error(i18n.t('runtime.project.corruptPayload'))
+              }
+              return [[activeDocumentId, { plan: plan.data, committed: committed === true }] as const]
             })()
         for (const [documentId, entry] of legacyEntries) {
           const document = normalizedDocuments.find((item) => item.id === documentId)
@@ -147,14 +153,10 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     generationCanvas: payload.generationCanvas,
     categories: normalizeCategories(payload.categories),
     generationCanvasLastSeq: payload.generationCanvasLastSeq,
-    // P0-6:分镜方案随项目持久化(normalizePayload 是字段重建式,不透传 → 必须显式带上,否则切项目/重载丢)。
-    storyboardPlan: payload.storyboardPlan ?? null,
-    // 卡片回看:落画布状态随项目持久化(老项目无字段 → false 当草稿)。
-    storyboardPlanCommitted: payload.storyboardPlanCommitted ?? false,
     // Gate 1:Film Bible 是项目级唯一真相源；字段重建式 normalizer 必须显式透传。
     filmBible: payload.filmBible ?? null,
     ...(payload.editingPanelLayout ? { editingPanelLayout: payload.editingPanelLayout } : {}),
-    ...(Object.values(owner).some((designs) => designs.length > 0) ? { storyboardDesignsByDocumentId: owner } : {}),
+    ...(payload.storyboardDesignsByDocumentId || Object.keys(owner).length ? { storyboardDesignsByDocumentId: owner } : {}),
   }
 }
 
@@ -213,7 +215,9 @@ export function normalizeRecord(summary: WorkbenchProjectSummary, raw: unknown):
   if (!legacy) {
     throw new Error(i18n.t('runtime.project.corruptRecord', { id: summary.id }))
   }
-  const payload = normalizePayload(legacy)
+  // Flat legacy records also need the original source: the narrow legacy record
+  // projection omits storyboard migration keys, Film Bible and multi-document state.
+  const payload = normalizePayload(raw)
   return {
     ...summary,
     version: 1,

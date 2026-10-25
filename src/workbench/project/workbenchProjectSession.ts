@@ -1,4 +1,3 @@
-import { selectActiveStoryboardDesign } from '../workbenchDocumentSlice'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
 import { useShotVerifyStore } from '../generationCanvas/agent/shotVerifyStore'
 import { useWorkbenchStore } from '../workbenchStore'
@@ -19,11 +18,8 @@ export function readCurrentWorkbenchProjectPayload(): WorkbenchProjectPayload {
     categories: workbench.categories,
     // S5-b-1:尾部重放游标(append 回执维护;回执延迟导致略旧也安全——reducer 幂等)
     generationCanvasLastSeq: getCanvasEventLastSeq(),
-    // P0-6:分镜方案随项目落盘(此前纯内存→切项目/重载蒸发)。
-    storyboardPlan: selectActiveStoryboardDesign(workbench)?.plan ?? null,
-    // 卡片回看:落画布状态随项目落盘(草稿/已落画布),否则重开项目分不清卡片该显哪态。
-    storyboardPlanCommitted: selectActiveStoryboardDesign(workbench)?.committed ?? false,
     filmBible: workbench.filmBible,
+    // Persist every document/design, never a second copy of the selected view.
     storyboardDesignsByDocumentId: workbench.storyboardDesignsByDocumentId,
     editingPanelLayout: workbench.editingPanelLayout,
   }

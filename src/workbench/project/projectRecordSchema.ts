@@ -66,13 +66,8 @@ export const workbenchProjectPayloadSchema = z.object({
   categories: z.array(projectCategorySchema).optional(),
   /** S5-b-1:快照覆盖到事件日志的哪个 seq——hydrate 时重放其后的尾巴(崩溃恢复)。可选,老项目无。 */
   generationCanvasLastSeq: z.number().optional(),
-  /**
-   * P0-6:创作区分镜方案(用户手改过锚/镜序的结构化产物)。此前是纯内存态,切项目/重载即蒸发。
-   * 可选 + nullable 让老项目向后兼容(无此字段即无方案)。
-   */
-  storyboardPlan: storyboardPlanSchema.nullable().optional(),
-  /** 方案落画布状态(草稿/已落画布)。老项目无字段 → 归一化为 false(当草稿)。 */
-  storyboardPlanCommitted: z.boolean().optional(),
+  // Retired storyboard projections are read from raw input by normalizePayload;
+  // this schema describes canonical storage, not a second active-view owner.
   /** 项目级跨镜头事实。老项目无字段时由当前分镜按需派生，首次应用补丁后持久化。 */
   filmBible: filmBibleSchema.nullable().optional(),
   /** 每篇原稿的分镜设计（唯一持久化 owner）。 */
@@ -150,9 +145,9 @@ export type WorkbenchProjectPayload = {
   categories?: ProjectCategory[]
   /** S5-b-1:快照覆盖到日志的 seq(尾部重放游标);老项目无此字段则跳过重放。 */
   generationCanvasLastSeq?: number
-  /** P0-6:创作分镜方案(per-project 工作产物);无则 null/缺省。 */
+  /** @deprecated Legacy input only; normalizePayload migrates it into the canonical map. Writers must not emit it. */
   storyboardPlan?: StoryboardPlan | null
-  /** 方案落画布状态(草稿/已落画布);无则 false。 */
+  /** @deprecated Legacy input only; committed state belongs to each canonical design. */
   storyboardPlanCommitted?: boolean
   /** 电影项目级事实；禁止放入 API Key、Cookie 或 Provider 私有配置。 */
   filmBible?: FilmBibleV1 | null
