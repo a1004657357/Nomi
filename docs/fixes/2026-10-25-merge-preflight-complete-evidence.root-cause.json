@@ -1,0 +1,52 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-merge-preflight-complete-evidence",
+  "problem_type": "Merge admission turns missing inspection evidence into an empty change or a legacy exemption",
+  "symptom": "PR #2 exceeds the hosted diff limit; missing policy PR #961 then makes an incompletely inspected PR print clean and exit zero.",
+  "direct_cause": "view.files remains available, but the hosted diff error is swallowed into an empty diff string, losing AbortController/AbortSignal classification. Missing effectiveAt then defaults isGrandfathered to true. File statuses are also guessed from addition counts instead of actual Git status.",
+  "class_root": "Admission must bind a complete immutable change set to the requested PR and require positive evidence before applying a historical exemption.",
+  "affected_population": ["Large PRs", "Fork repositories without the policy anchor", "Missing or malformed PR metadata", "Paths containing whitespace, newlines or non-ASCII characters"],
+  "scope_paths": ["scripts/merge-preflight.mjs"],
+  "entry_points": ["merge:preflight CLI", "Imported main entry", "isGrandfathered historical policy decision"],
+  "external_sources": [],
+  "internal_only_reason": "The defect is internal error-to-success conversion. Reuse the repository's existing Git path decoder and actual local Git executable; regression uses real commit objects and isolated gh transport fixtures, without asserting hosted network behavior.",
+  "invariants": [
+    "Resolve complete PR metadata from the requested target repository and PR number, with explicit base/head commit SHAs and changed_files",
+    "Read paths and added lines from the same SHA-bound three-point Git diff, never the current checkout or an unbound hosted diff",
+    "Validate file count before classification; missing objects, missing ancestry and incomplete data fail closed without automatic fetch",
+    "Historical exemption requires two valid timestamps and a strictly earlier createdAt; unknown policy time enforces current rules",
+    "Keep four-class, design-card and independent-acceptance rules unchanged; the existing src/**/*.tsx path wildcard must include legal newline filenames"
+  ],
+  "doors": [
+    {"kind": "read", "path": "scripts/merge-preflight.mjs", "symbol": "readPullRequestChanges"},
+    {"kind": "read", "path": "scripts/merge-preflight.mjs", "symbol": "classifyChange"},
+    {"kind": "read", "path": "scripts/merge-preflight.mjs", "symbol": "isGrandfathered"},
+    {"kind": "read", "path": "scripts/merge-preflight.node-test.mjs", "symbol": "classifyChange"},
+    {"kind": "read", "path": "scripts/merge-preflight.node-test.mjs", "symbol": "isGrandfathered"},
+    {"kind": "read", "path": "scripts/merge-preflight.node-test.mjs", "symbol": "readPullRequestChanges"}
+  ],
+  "door_reduction": {"before": 4, "after": 6, "why_not": "Before map covers classifyChange/isGrandfathered; after map adds the new explicit readPullRequestChanges boundary, generated with door-map --read=isGrandfathered,classifyChange,readPullRequestChanges --roots=scripts --include-tests. Each boundary has the required main consumer and independent regression consumer. This adds one tested acquisition boundary, not an alternate admission path."},
+  "generality_proof": "The common CLI/imported main path obtains one complete change set before classification. Real Git fixtures cover large diffs, divergent bases and unusual paths; an actual CLI subprocess retains nonempty view.files and proves that lost diff text and policy lookup errors no longer compose into clean exit zero. The existing added-src-TSX wildcard covers newline filenames without changing categories or directory/extension rules. Valid legacy and strict compliant PRs remain accepted.",
+  "shared_boundaries": [
+    {"path": "scripts/merge-preflight.mjs", "symbol": "main", "responsibility": "Bind target repository/PR metadata and fail before classification when complete evidence is unavailable"},
+    {"path": "scripts/merge-preflight.mjs", "symbol": "readPullRequestChanges", "responsibility": "Resolve exact immutable Git change set and verify changed-file completeness"},
+    {"path": "scripts/merge-preflight.mjs", "symbol": "isGrandfathered", "responsibility": "Require positive chronological evidence for historical exemption"}
+  ],
+  "same_class_entry_points": [
+    {"path": "scripts/merge-preflight.mjs", "entry_point": "CLI main", "disposition": "enforced", "evidence": "Actual standalone subprocess uses real local Git and isolated failing hosted-diff/policy transport"},
+    {"path": "scripts/merge-preflight.mjs", "entry_point": "Imported main with explicit repo", "disposition": "enforced", "evidence": "The same main body is exercised with malformed metadata, missing objects and valid legacy evidence"},
+    {"path": "scripts/lib/gitPaths.mjs", "entry_point": "gitNameStatus", "disposition": "not-affected", "evidence": "Existing canonical NUL decoder is reused unchanged for newline and renamed paths"}
+  ],
+  "recurrence": {"classification": "recurring", "reason": "Any future large diff, unavailable API or fork missing the anchor can reach the same false-success conversions.", "same_class_scan": ["Read the entire merge-preflight acquisition and report tail", "Read gitPaths NUL and rename parsing", "Read existing policy and classification tests", "Generated bounded scripts door map, avoiding unrelated generic main symbols"]},
+  "prevention": {"kind": "centralized-boundary", "enforcement_path": "scripts/merge-preflight.mjs", "invariant": "Only a complete PR-bound change set may enter classification; only proven legacy dates may soften failures", "failure_mode": "Incomplete change evidence returns nonzero; unknown policy time prints strict-mode diagnostic and cannot soften required checks", "exception_policy": "none", "strategy": "Replace lossy hosted-diff acquisition with checked local Git three-point diff and positive timestamp validation", "artifacts": ["scripts/merge-preflight.mjs"]},
+  "regression_tests": ["scripts/merge-preflight.node-test.mjs"],
+  "class_regression_tests": ["scripts/merge-preflight.node-test.mjs"],
+  "legacy_paths": {"status": "removed", "removed_paths": ["scripts/merge-preflight.mjs"], "rationale": "Remove diff-error-to-empty and unknown-time-to-legacy behavior; retain date-proven legacy compatibility and all original admission rules."},
+  "dependency_lifecycle": {"decision": "not-applicable", "rationale": "No dependency or API replacement. Use installed Git and the existing canonical path helper; no fetch or new package.", "exit_criteria": []},
+  "migration": "No project data migration. Callers need the PR's exact base/head Git objects locally; missing objects fail explicitly rather than fetching or scanning another revision.",
+  "residual_risks": ["Real hosted PR #2 re-execution is reserved to the coordinator; network behavior is not exercised here", "No App, browser, benchmark, workflow or heavy gate run", "Exact changed-file count mismatch fails conservatively rather than attempting an unproven alternate file listing"],
+  "invariant_owner_layer": {"layer": "scripts/merge-preflight.mjs", "tests": ["scripts/merge-preflight.node-test.mjs"]},
+  "rewrite_decision": {"decision": "patch", "characterization_test": "scripts/merge-preflight.node-test.mjs"},
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-24"
+}

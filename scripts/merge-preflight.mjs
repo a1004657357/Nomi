@@ -10,6 +10,7 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { gitNameStatus } from './lib/gitPaths.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -34,7 +35,7 @@ export function classifyChange(files, addedLines = '') {
       if (rule.scope.test(p) && rule.pattern.test(p)) hits.push({ cls: rule.name, path: p })
     }
     if (/^src\/design\//.test(p)) hits.push({ cls: '新界面', path: p })
-    if (/^src\/.*\.tsx$/.test(p) && file.status === 'A') hits.push({ cls: '新界面', path: p })
+    if (/^src\/.*\.tsx$/s.test(p) && file.status === 'A') hits.push({ cls: '新界面', path: p })
   }
   if (/\bnew\s+AbortController\b|\bAbortSignal\b/.test(addedLines)) hits.push({ cls: '可打断', path: '(diff 新增 AbortController)' })
   const classes = [...new Set(hits.map((hit) => hit.cls))]
@@ -138,13 +139,14 @@ export function checkEscapeContract(body, contracts) {
 
 /**
  * 规则生效时刻 = 引入本套规则的 PR（#961）的合并时间。比它更早开的 PR（#947、#962 等）没有机会照新模板写，
- * 只给警告、不判红。参考 PR 还没合并 = 规则尚未生效，所有开着的 PR 都只警告。
+ * 只给警告、不判红。参考 PR 不存在、未合并或时间无效时不能证明历史豁免，按严格规则检查。
  */
 export const RULES_INTRODUCED_BY_PR = 961
 export function isGrandfathered({ createdAt, effectiveAt }) {
-  if (!effectiveAt) return true
-  if (!createdAt) return false
-  return new Date(createdAt) < new Date(effectiveAt)
+  if (typeof createdAt !== 'string' || typeof effectiveAt !== 'string') return false
+  const created = Date.parse(createdAt)
+  const effective = Date.parse(effectiveAt)
+  return Number.isFinite(created) && Number.isFinite(effective) && created < effective
 }
 
 export function renderReport({ pr, classification, design, acceptance, escape, grandfathered = false }) {
@@ -162,67 +164,98 @@ export function renderReport({ pr, classification, design, acceptance, escape, g
   return { text: lines.join('\n'), blocked }
 }
 
-function gh(args, { repo } = {}) {
-  const full = repo ? [...args, '--repo', repo] : args
-  return execFileSync('gh', full, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+function gh(args) {
+  return execFileSync('gh', args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 }
 
-function ghApiFile(repoSlug, filePath, ref) {
-  try {
-    const raw = execFileSync('gh', ['api', `repos/${repoSlug}/contents/${filePath}?ref=${ref}`, '--jq', '.content'], { cwd: repoRoot, encoding: 'utf8' })
-    return Buffer.from(raw.replace(/\s/g, ''), 'base64').toString('utf8')
-  } catch {
-    return null
+function git(args, cwd) {
+  return execFileSync('git', args, {
+    cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, GIT_NO_LAZY_FETCH: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+}
+
+/** Exact immutable PR comparison; a missing local object is not an empty diff. */
+export function readPullRequestChanges(view, { cwd = repoRoot } = {}) {
+  const base = view.base?.sha
+  const head = view.head?.sha
+  if (![base, head].every(sha => typeof sha === 'string' && /^[a-f0-9]{40}$/.test(sha))) {
+    throw new Error('缺少或无效的 PR base/head SHA，无法完整检查')
   }
+  if (!Number.isSafeInteger(view.changed_files) || view.changed_files < 0) {
+    throw new Error('缺少或无效的 PR changed_files，无法核对完整性')
+  }
+  git(['cat-file', '-e', `${base}^{commit}`], cwd)
+  git(['cat-file', '-e', `${head}^{commit}`], cwd)
+  const ancestors = git(['merge-base', '--all', base, head], cwd).trim().split(/\s+/).filter(Boolean)
+  if (ancestors.length !== 1) throw new Error('无法证明唯一 PR 共同祖先，不能完整检查')
+  // Materialize the full patch first, with lazy fetching and external diff/textconv
+  // disabled. The canonical NUL path reader then uses the same immutable range.
+  const range = `${base}...${head}`
+  const options = ['--no-ext-diff', '--no-textconv', '--find-renames']
+  const diff = git(['diff', ...options, '--unified=0', range, '--'], cwd)
+  const files = gitNameStatus(['diff', ...options, '--name-status', range, '--'], { cwd })
+  if (files.length !== view.changed_files || new Set(files.map(file => file.path)).size !== files.length) {
+    throw new Error(`PR 文件清单不完整或不匹配：Git=${files.length}，PR=${view.changed_files}`)
+  }
+  const addedLines = diff.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++')).join('\n')
+  return { files, addedLines }
 }
 
-export function main(argv = process.argv.slice(2)) {
+export function main(argv = process.argv.slice(2), { cwd = repoRoot, runGh = gh, log = console.log, error = console.error } = {}) {
   const prArg = argv.find((arg) => /^\d+$/.test(arg))
   const repoIndex = argv.indexOf('--repo')
   const repo = repoIndex >= 0 ? argv[repoIndex + 1] : undefined
   if (!prArg) {
-    console.error('用法：node scripts/merge-preflight.mjs <PR 号> [--repo owner/name]')
+    error('用法：node scripts/merge-preflight.mjs <PR 号> [--repo owner/name]')
     return 2
   }
-  const view = JSON.parse(gh(['pr', 'view', prArg, '--json', 'body,files,headRefOid,headRepository,headRepositoryOwner,createdAt'], { repo }))
-  const files = (view.files ?? []).map((file) => ({ path: file.path, status: file.additions > 0 && file.deletions === 0 ? 'A' : 'M' }))
-  let diff = ''
   try {
-    diff = gh(['pr', 'diff', prArg], { repo })
-  } catch {
-    diff = ''
-  }
-  const addedLines = diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++')).join('\n')
-  const classification = classifyChange(files, addedLines)
-  const body = view.body ?? ''
-
-  const slug = repo ?? (view.headRepositoryOwner?.login && view.headRepository?.name ? `${view.headRepositoryOwner.login}/${view.headRepository.name}` : null)
-  const contracts = []
-  for (const file of files.filter((entry) => /^docs\/fixes\/.+\.root-cause\.json$/.test(entry.path))) {
-    const text = slug ? ghApiFile(slug, file.path, view.headRefOid) : null
-    try {
-      contracts.push({ file: file.path, detected_by: text ? JSON.parse(text).detected_by : undefined })
-    } catch {
-      contracts.push({ file: file.path, detected_by: undefined })
+    const slug = repoIndex >= 0 ? repo : runGh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner']).trim()
+    if (typeof slug !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(slug)) throw new Error('缺少或无效的目标仓库 owner/name')
+    const view = JSON.parse(runGh(['api', `repos/${slug}/pulls/${prArg}`]))
+    if (view.number !== Number(prArg) || view.base?.repo?.full_name?.toLowerCase() !== slug.toLowerCase()) {
+      throw new Error('PR 元数据与目标仓库或 PR 编号不匹配')
     }
-  }
+    const { files, addedLines } = readPullRequestChanges(view, { cwd })
+    const classification = classifyChange(files, addedLines)
+    const body = view.body ?? ''
+    const contracts = []
+    for (const file of files.filter(entry => entry.status !== 'D' && /^docs\/fixes\/.+\.root-cause\.json$/.test(entry.path))) {
+      try {
+        const text = git(['show', `${view.head.sha}:${file.path}`], cwd)
+        contracts.push({ file: file.path, detected_by: JSON.parse(text).detected_by })
+      } catch {
+        contracts.push({ file: file.path, detected_by: undefined })
+      }
+    }
 
-  let effectiveAt = null
-  try {
-    effectiveAt = JSON.parse(gh(['pr', 'view', String(RULES_INTRODUCED_BY_PR), '--json', 'mergedAt'], { repo })).mergedAt || null
-  } catch {
-    effectiveAt = null
+    let effectiveAt = null
+    try {
+      const policy = JSON.parse(runGh(['api', `repos/${slug}/pulls/${RULES_INTRODUCED_BY_PR}`]))
+      if (policy.number === RULES_INTRODUCED_BY_PR) effectiveAt = policy.merged_at
+    } catch {
+      // Unknown policy history never grants a historical exemption.
+    }
+    log(`· PR 绑定：${slug} #${prArg} base=${view.base.sha} head=${view.head.sha}；完整文件 ${files.length}`)
+    if (typeof effectiveAt !== 'string' || !Number.isFinite(Date.parse(effectiveAt))) {
+      log(`⚠ 无法取得有效 #${RULES_INTRODUCED_BY_PR} 生效时间，按严格规则检查，不适用历史豁免`)
+    }
+    const report = renderReport({
+      pr: prArg,
+      grandfathered: Number(prArg) !== RULES_INTRODUCED_BY_PR && isGrandfathered({ createdAt: view.created_at, effectiveAt }),
+      classification,
+      design: checkDesignCard(body, classification),
+      acceptance: checkIndependentAcceptance(body),
+      escape: checkEscapeContract(body, contracts),
+    })
+    log(report.text)
+    return report.blocked ? 1 : 0
+  } catch (failure) {
+    error(`✖ 合并前扫描失败，无法完成完整检查：${failure.message}`)
+    return 2
   }
-  const report = renderReport({
-    pr: prArg,
-    grandfathered: Number(prArg) !== RULES_INTRODUCED_BY_PR && isGrandfathered({ createdAt: view.createdAt, effectiveAt }),
-    classification,
-    design: checkDesignCard(body, classification),
-    acceptance: checkIndependentAcceptance(body),
-    escape: checkEscapeContract(body, contracts),
-  })
-  console.log(report.text)
-  return report.blocked ? 1 : 0
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main()
