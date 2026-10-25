@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { MODEL_ACCESS_CAPABILITIES, MODEL_ACCESS_REQUIRED_PROFILES } from '../../../electron/shared/contracts/modelAccessCapabilities.ts'
 import { MODEL_ACCESS_JOURNEYS, STABLE_ROUNDTRIP_JOURNEYS } from './manifest.mjs'
+import { JOURNEY_ENTRY_COMPONENTS, IGNORED_DRAWER_COMPONENTS } from './harnessContract.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
@@ -17,6 +18,19 @@ function expectCovered(dimension, required = MODEL_ACCESS_CAPABILITIES[dimension
 }
 
 describe('model access journey manifest', () => {
+  it('owns the WebBridge card with an executable component journey, not a claimed generation roundtrip', () => {
+    const journey = MODEL_ACCESS_JOURNEYS.find(item => item.id === 'J17')
+    expect(journey).toMatchObject({ mode: 'stable', level: 'component', profiles: [], covers: {} })
+    expect(journey.profiles).toEqual([])
+    expect(journey.covers).toEqual({})
+    expect(JOURNEY_ENTRY_COMPONENTS.J17).toEqual(['WebBridgeConnectionCard'])
+    expect(IGNORED_DRAWER_COMPONENTS).not.toHaveProperty('WebBridgeConnectionCard')
+    expect(STABLE_ROUNDTRIP_JOURNEYS).not.toContain(journey)
+    const script = path.join(repoRoot, journey.script)
+    expect(fs.existsSync(script)).toBe(true)
+    expect(fs.readFileSync(script, 'utf8')).not.toMatch(/launchNomiApp|_launchApp/)
+  })
+
   it('uses unique journey ids and only known dimension values', () => {
     expect(new Set(MODEL_ACCESS_JOURNEYS.map((journey) => journey.id)).size).toBe(MODEL_ACCESS_JOURNEYS.length)
     for (const journey of MODEL_ACCESS_JOURNEYS) {

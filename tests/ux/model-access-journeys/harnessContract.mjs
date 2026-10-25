@@ -29,6 +29,8 @@ export const JOURNEY_ENTRY_COMPONENTS = Object.freeze({
   J10: ['CodexLocalImageCard'],
   // Local OpenAI-compatible text runtime discovery + one-click connect card.
   J16: ['LocalModelCard'],
+  // Real-component connection controls only, not an Electron/generation roundtrip.
+  J17: ['WebBridgeConnectionCard'],
 })
 
 export const IGNORED_DRAWER_COMPONENTS = Object.freeze({
