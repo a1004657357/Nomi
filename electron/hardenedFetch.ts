@@ -23,6 +23,7 @@ import {
   type OutboundAuthorization,
   type OutboundEnvironment,
   type OutboundRouteKind,
+  type OutboundStage,
 } from "./networkOutboundPolicy";
 import { describeOutboundRefusal } from "./networkOutboundMessage";
 import { appFetch } from "./appFetch";
@@ -30,6 +31,10 @@ import { getAppDispatcher, isApplicationProxyActive } from "./systemProxy";
 export { isPrivateHost } from "./networkHostPolicy";
 
 export type HardenedFetchOptions = {
+  /** Metadata probe only: authorize normally, then cancel the body and return zero bytes. */
+  headersOnly?: boolean;
+  /** Refusal semantics belong to the caller; ordinary result downloads remain retrieval. */
+  outboundStage?: OutboundStage;
   /** 总时限（毫秒，从发请求算起）。默认 20 秒。给了 `timeoutForDeclaredSize` 时，它只管到响应头到达为止。 */
   timeoutMs?: number;
   /**
@@ -117,7 +122,7 @@ function assertSafeUrl(targetUrl: string): URL {
  * 拒绝时抛结构化错误而不是裸字符串：渲染层要分得清「我们自己的安全策略拒了」与「供应商挂了」，
  * 只有前者意味着这次的钱还在（取回侧）或根本没花（提交侧）。
  */
-function refuse(authorization: Extract<OutboundAuthorization, { allowed: false }>): never {
+function refuse(authorization: Extract<OutboundAuthorization, { allowed: false }>, stage: OutboundStage): never {
   throw new OutboundDestinationRefusedError({
     reason: authorization.reason,
     hostname: authorization.hostname,
@@ -128,7 +133,7 @@ function refuse(authorization: Extract<OutboundAuthorization, { allowed: false }
       hostname: authorization.hostname,
       observedAddress: authorization.observedAddress,
       syntheticResolver: authorization.syntheticResolver,
-      stage: "retrieval",
+      stage,
     }),
   });
 }
@@ -414,7 +419,7 @@ export async function hardenedFetch(
         resolve: resolveHost,
         declaredOrigins: allowedPrivateOrigins,
       });
-      if (!authorization.allowed) refuse(authorization);
+      if (!authorization.allowed) refuse(authorization, options.outboundStage ?? "retrieval");
       if (!dispatcher && authorization.pinnedAddresses) {
         dispatcher = makeDispatcher(connectionHostname(currentUrl.hostname), [...authorization.pinnedAddresses]);
         dispatchers.push(dispatcher);
@@ -458,6 +463,12 @@ export async function hardenedFetch(
       throw new Error(
         `Unsupported content type: ${contentType || "<empty>"} (expected one of ${options.allowContentTypes.join(", ")})`,
       );
+    }
+
+    if (options.headersOnly) {
+      abandonResponse(response);
+      return { bytes: Buffer.alloc(0), contentType: reportedContentType(contentType),
+        status: response.status, finalUrl: currentUrl.toString(), truncated: false };
     }
 
     // Content-Length 提前拦

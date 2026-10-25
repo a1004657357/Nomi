@@ -139,6 +139,7 @@ async function fetchJson(
     ...options,
     headers: jimengWebAuthHeaders(options.headers),
     signal: options.signal || withTimeout(DEFAULT_TIMEOUT_MS),
+    redirect: 'error',
   });
   const text = await response.text();
   let json: unknown;
@@ -599,6 +600,7 @@ async function downloadLocalServerFile(
     method: "GET",
     headers: jimengWebAuthHeaders(),
     signal: withTimeout(120_000),
+    redirect: 'error',
   });
   if (!response.ok) throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text12", { value0: `${response.status}` }));
   const arrayBuffer = await response.arrayBuffer();

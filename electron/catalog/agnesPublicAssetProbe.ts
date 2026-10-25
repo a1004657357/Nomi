@@ -1,5 +1,5 @@
 import { desktopT } from "../desktopStrings";
-import { appFetch } from "../appFetch";
+import { hardenedFetch } from "../hardenedFetch";
 import type { ProfileKind } from "./types";
 import { isVendorOfBuiltin, type VendorIdentityEntry } from '../shared/builtinVendorIdentity';
 
@@ -68,12 +68,20 @@ export async function assertAgnesPublicImageReachable(
   const startedAt = Date.now();
   let response: Response;
   try {
-    response = await (options.fetchImpl ?? appFetch)(imageUrl, {
+    const init: RequestInit = {
       method: "GET",
       headers: { Range: "bytes=0-0" },
       redirect: "follow",
       signal: controller.signal,
-    });
+    };
+    if (options.fetchImpl) response = await options.fetchImpl(imageUrl, init);
+    else {
+      const metadata = await hardenedFetch(imageUrl, {
+        method: 'GET', headers: { Range: 'bytes=0-0' }, signal: controller.signal,
+        timeoutMs, headersOnly: true, outboundStage: 'submit', throwOnNon2xx: false,
+      });
+      response = new Response(null, { status: metadata.status, headers: { 'Content-Type': metadata.contentType } });
+    }
   } catch (error) {
     const detail = error instanceof Error && error.name === "AbortError"
       ? `${Math.round(timeoutMs / 1000)} 秒内无响应`

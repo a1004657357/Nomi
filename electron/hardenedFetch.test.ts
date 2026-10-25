@@ -12,7 +12,7 @@ import {
   type ResolvedHostAddress,
 } from "./hardenedFetch";
 import { OutboundDestinationRefusedError, type OutboundEnvironment } from "./networkOutboundPolicy";
-import { matchNomiErrorCode } from "./shared/nomiErrorCodes";
+import { isRetrievalStageCode, matchNomiErrorCode } from "./shared/nomiErrorCodes";
 
 const NO_LOCAL_PROXY: OutboundEnvironment = { syntheticResolver: false, syntheticSample: "" };
 const FAKE_IP_PROXY: OutboundEnvironment = { syntheticResolver: true, syntheticSample: "198.18.0.7" };
@@ -60,6 +60,51 @@ beforeAll(async () => {
 });
 
 afterAll(() => server?.close());
+
+describe('hardenedFetch headers-only policy boundary', () => {
+  function dependencies(send: HardenedFetchDependencies['fetch']): HardenedFetchDependencies {
+    return { fetch: send, resolveHost: async () => [{ address: '93.184.216.34', family: 4 }],
+      createPinnedDispatcher: () => fakePinnedDispatcher() as never,
+      isApplicationProxyActive: () => false, readOutboundEnvironment: async () => NO_LOCAL_PROXY }
+  }
+  it('returns zero bytes and cancels an authorized metadata response without pulling its body', async () => {
+    const pull = vi.fn((controller: ReadableStreamDefaultController<Uint8Array>) => { controller.enqueue(new Uint8Array([137])); controller.close() })
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 })
+    const send = vi.fn(async () => new Response(body, { status: 206, headers: { 'Content-Type': 'image/png' } }))
+    const result = await hardenedFetch('https://cdn.example.test/frame.png', { headersOnly: true }, dependencies(send))
+    expect(result).toMatchObject({ status: 206, contentType: 'image/png', truncated: false })
+    expect(result.bytes).toHaveLength(0)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(pull).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledOnce()
+  })
+  it('keeps the original full-body behavior as a positive control', async () => {
+    const send = vi.fn(async () => new Response(new Uint8Array([137]), { headers: { 'Content-Type': 'image/png' } }))
+    const result = await hardenedFetch('https://cdn.example.test/frame.png', {}, dependencies(send))
+    expect([...result.bytes]).toEqual([137])
+  })
+  it('still rejects a public-to-private redirect before the second request in metadata mode', async () => {
+    const send = vi.fn(async () => new Response(null, { status: 302, headers: { Location: 'http://127.0.0.1/secret' } }))
+    await expectOutboundRefusal(hardenedFetch('https://cdn.example.test/frame.png', { headersOnly: true }, dependencies(send)), 'private-host')
+    expect(send).toHaveBeenCalledOnce()
+  })
+  it.each(['submit', 'retrieval'] as const)('keeps refused metadata requests in the caller-owned %s stage with zero transport calls', async stage => {
+    const send = vi.fn()
+    const run = hardenedFetch('https://cdn.example.test/frame.png', { headersOnly: true, outboundStage: stage }, {
+      ...dependencies(send), resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
+    })
+    await expect(run).rejects.toBeInstanceOf(OutboundDestinationRefusedError)
+    await run.catch((error: unknown) => {
+      const refusal = error as OutboundDestinationRefusedError
+      const code = matchNomiErrorCode(refusal.message)
+      expect(refusal.reason).toBe('private-address')
+      expect(code).toBe(stage === 'submit' ? 'outbound-blocked-submit' : 'outbound-blocked')
+      expect(isRetrievalStageCode(code)).toBe(stage === 'retrieval')
+    })
+    expect(send).not.toHaveBeenCalled()
+  })
+})
 
 describe("hardenedFetch 私网边界", () => {
   it("默认继续拒绝 loopback", async () => {

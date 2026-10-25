@@ -1,0 +1,58 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-ci-owned-fixture-inputs",
+  "change_kind": "structural",
+  "problem_type": "真实加载清单与非确定性时钟的夹具输入漂移",
+  "symptom": "Node技能测试仍断言88而现有树包含97；315只读截图唯一差异为反馈卡打开时间10:20/11:05。",
+  "direct_cause": "上游精确清单未同步既有9技能；截图没有固定真实组件自动生成的打开时刻。",
+  "class_root": "期望必须登记真实已存在的能力集合，时间类展示必须有确定的隔离输入，不能通过删功能/忽略时间/放宽容差过关。",
+  "scope_paths": [
+    "tests/agent-runtime/skill-catalog-migration.test.mts",
+    "tests/ux/design-lab/design-lab.visual.spec.mjs"
+  ],
+  "affected_population": [
+    "pi内置技能真实加载集合",
+    "反馈卡日期展示"
+  ],
+  "entry_points": [
+    "S3/S6技能加载",
+    "v4-feedback-report-idle原视觉断言"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "仅对账仓内技能路径和原组件时钟；不更改生产能力、预算、依赖或外部服务。",
+  "invariants": [
+    "97个技能精确名称集合与原零诊断/origin/name/body校验均保留，不过滤加载结果。",
+    "原88+9个已存在定制技能保留；精确SHA阻止同数替换，未来增加需显式对账。",
+    "只用原Playwright Date-only固定时钟，保留原批准PNG、内容文字、完整卡和40像素容差。",
+    "不启动Provider、不发送反馈、不读取日常项目或账号。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "tests/agent-runtime/skill-catalog-migration.test.mts",
+      "tests/ux/design-lab/design-lab.visual.spec.mjs"
+    ],
+    "preserved_exports": [],
+    "behavior_preservation": "Git登记实际97个SKILL.md，相对fork/main新增7个creative与2个director；名称摘要363387aafabbf30ac2e20b7cb89360bac61a971fcc0d4ab9c4ecebef12fc5673。314/315原只读通过且295PNG SHA不变；固定打开时间后同状态两次原只读通过，不重录图片。",
+    "verification_limits": "技能及两条guidelines夹具经原Node编译后46/46通过；完整最终Node/CI/视觉仍需实际完成。"
+  },
+  "regression_tests": [
+    "tests/agent-runtime/skill-catalog-migration.test.mts",
+    "tests/ux/design-lab/design-lab.visual.spec.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "不删除技能、状态或断言，仅改精确期待与测试时钟。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "继续使用已锁定pi与Playwright。",
+    "exit_criteria": []
+  },
+  "migration": "只改测试输入，不迁移用户数据。",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "技能能加载不等于实际Provider能力验收；只头/视觉均不证明真实生成。"
+  ]
+}

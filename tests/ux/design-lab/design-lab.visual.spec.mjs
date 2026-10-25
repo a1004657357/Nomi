@@ -39,6 +39,10 @@ for (const screen of LAB_SCREEN_IDS) {
           // Fix only Date: real animation/timers still run, while elapsed narration is deterministic.
           await page.clock.setFixedTime(new Date('2026-09-10T00:00:00Z'))
         }
+        if (screen === 'agent-panel-v4' && state.id === 'v4-feedback-report-idle') {
+          // The approved card shows its opening time; keep Date fixed, not timers or the content.
+          await page.clock.setFixedTime(new Date('2026-10-25T02:20:00Z'))
+        }
         const errors = []
         page.on('pageerror', (error) => errors.push(String(error)))
         if (screen === 'process-feedback') {

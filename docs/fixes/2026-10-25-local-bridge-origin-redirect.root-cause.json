@@ -1,0 +1,211 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-local-bridge-origin-redirect",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "现有本机桥传输未精确登记且允许缺凭据请求自动跳转",
+  "symptom": "出站门岗拒绝两条既有appFetch importer；新增redirect阳性检查在原路径6失败/19。",
+  "direct_cause": "两桥已在每个公开入口严格限制回环地址，但缺少统一声明的禁止重定向约束及精确出站清单登记。",
+  "class_root": "本机控制通道必须一直停留在已配置的回环origin，不能因HTTP跳转转为远端请求；登记必须绑定真实边界与负例，而非宽泛忽略。",
+  "affected_population": [
+    "即梦/Pavo健康检查、一次提交、任务查询及本地文件取回"
+  ],
+  "scope_paths": [
+    "electron/jimengWeb/seedanceBridge.ts",
+    "electron/pavoWeb/bridge.ts",
+    "electron/catalog/webBridgeTransportBoundary.test.ts",
+    "scripts/outbound-policy-baseline.json"
+  ],
+  "entry_points": [
+    "electron/jimengWeb/ipc.ts::probeJimengWebServer",
+    "electron/jimengWeb/ipc.ts::probeJimengWebServer",
+    "electron/jimengWeb/runner.ts::probeJimengWebServer",
+    "electron/jimengWeb/seedanceBridge.ts::probeJimengWebServer",
+    "electron/pavoWeb/ipc.ts::probePavoWebServer",
+    "electron/pavoWeb/bridge.ts::probePavoWebServer",
+    "electron/pavoWeb/ipc.ts::probePavoWebServer",
+    "electron/pavoWeb/runner.ts::probePavoWebServer",
+    "electron/webBridge/taskDispatch.ts::submitJimengWebTask",
+    "electron/webBridge/taskDispatch.ts::submitPavoWebTask",
+    "electron/webBridge/registry.ts::queryJimengWebTask",
+    "electron/webBridge/registry.ts::queryPavoWebTask"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "沿用现有两桥配置协议、appFetch/凭据重定向owner与本地服务，不接新API。2026-10-25用户明确批准只登记这两条本机通道。",
+  "invariants": [
+    "即梦原HTTP/HTTPS回环支持保留，Pavo原HTTP回环保留；远端、回环伪域名、元数据地址均在transport前拒绝。",
+    "JSON与本地文件请求均固定redirect:error，注入测试传输也能看到该要求；不靠有无认证头决定是否允许跳转。",
+    "不修改URL/body/auth/幂等键、所有者、次数、超时、自动重发或素材回收；排队查询只GET。",
+    "只有用户批准后才在原精确清单登记这两个既有文件，不改扫描器或接受任意新增importer；公网探测另外走hardenedFetch。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/jimengWeb/seedanceBridge.ts / electron/pavoWeb/bridge.ts",
+    "tests": [
+      "electron/catalog/webBridgeTransportBoundary.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/jimengWeb/ipc.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "write",
+      "path": "electron/jimengWeb/ipc.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "write",
+      "path": "electron/jimengWeb/runner.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "write",
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "probeJimengWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/pavoWeb/ipc.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "write",
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "write",
+      "path": "electron/pavoWeb/ipc.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "write",
+      "path": "electron/pavoWeb/runner.ts",
+      "symbol": "probePavoWebServer"
+    },
+    {
+      "kind": "read",
+      "path": "electron/webBridge/taskDispatch.ts",
+      "symbol": "submitJimengWebTask"
+    },
+    {
+      "kind": "read",
+      "path": "electron/webBridge/taskDispatch.ts",
+      "symbol": "submitPavoWebTask"
+    },
+    {
+      "kind": "read",
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "queryJimengWebTask"
+    },
+    {
+      "kind": "read",
+      "path": "electron/webBridge/registry.ts",
+      "symbol": "queryPavoWebTask"
+    }
+  ],
+  "door_reduction": {
+    "before": 12,
+    "after": 12,
+    "why_not": "scripts/door-map.mjs对六个公开符号实际扫描2972生产文件，12个文件/符号/读写身份；保留两个各自业务、探测/提交/轮询角色，不增加或合并业务请求。"
+  },
+  "generality_proof": "两通道同一矩阵检查回环远端拒绝、所有实际GET/POST的redirect:error、单次POST、排队无写入、未知无自动重提及显式测试seam。健康/查询/下载每一跳都只构造已归一化serverUrl，文件id编码，不采纳返回的任意远端URL。",
+  "shared_boundaries": [
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "resolveJimengWebBaseUrl",
+      "responsibility": "即梦公开入口只接受原回环协议及主机"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "resolvePavoWebBaseUrl",
+      "responsibility": "Pavo公开入口只接受原HTTP回环origin"
+    },
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "fetchJson",
+      "responsibility": "即梦JSON请求不自动跟随重定向"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "fetchJson",
+      "responsibility": "Pavo JSON请求不自动跟随重定向"
+    },
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "symbol": "downloadLocalServerFile",
+      "responsibility": "即梦本地文件取回不跟随重定向"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "symbol": "downloadFile",
+      "responsibility": "Pavo本地文件取回不跟随重定向"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/jimengWeb/seedanceBridge.ts",
+      "entry_point": "submitJimengWebTask / queryJimengWebTask",
+      "disposition": "enforced",
+      "evidence": "公开入口先归一化回环origin；真实默认传输矩阵要求redirect:error且只提交一次。"
+    },
+    {
+      "path": "electron/pavoWeb/bridge.ts",
+      "entry_point": "submitPavoWebTask / queryPavoWebTask",
+      "disposition": "enforced",
+      "evidence": "同一负例矩阵与默认传输断言，排队只有GET，无重发或素材写入。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "相同本地服务族在无凭据或重定向场景可离开已批准origin，需要每条通道一致约束。",
+    "same_class_scan": [
+      "六符号AST门表12门，原始输出保存在local-bridge-door-map-35.txt",
+      "rg fetchImpl四处：两JSON、两本地文件；公开引用读取仍经hardenedFetch",
+      "HTTPS loopback在即梦本来合法；纠正错误负例，不砍现有协议"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/jimengWeb/seedanceBridge.ts / electron/pavoWeb/bridge.ts",
+    "invariant": "所有默认控制/本地文件请求不离开归一化回环origin，不通过跳转扩大目的地。",
+    "failure_mode": "非法origin在请求前失败，重定向由fetch拒绝；无自动POST重发，失败保留原归因。",
+    "exception_policy": "none",
+    "strategy": "保留原URL边界，在真实传输选项禁止跳转，精确清单须用户授权后登记，不改变扫描规则。",
+    "artifacts": [
+      "electron/jimengWeb/seedanceBridge.ts",
+      "electron/pavoWeb/bridge.ts",
+      "electron/catalog/webBridgeTransportBoundary.test.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/catalog/webBridgeTransportBoundary.test.ts",
+    "electron/jimengWeb/seedanceBridge.test.ts",
+    "electron/pavoWeb/bridge.test.ts",
+    "electron/pavoWeb/taskBridgeBatch.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/catalog/webBridgeTransportBoundary.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "保留原业务与目录，不删除接口；仅取消自动跳转。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "继续用现有Node原生fetch及appFetch，无依赖升级。",
+    "exit_criteria": []
+  },
+  "migration": "无项目/账号/凭据或服务部署变动。",
+  "residual_risks": [
+    "两项精确登记已获用户批准；仍须原出站门岗和本轮CI实际通过，审批不是测试收据。",
+    "隔离测试不证明实际网页已登录、生成可用或本机服务实时在线。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "electron/catalog/webBridgeTransportBoundary.test.ts"
+  }
+}

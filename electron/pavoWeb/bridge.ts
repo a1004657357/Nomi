@@ -105,6 +105,7 @@ async function fetchJson(fetchImpl: FetchLike, baseUrl: string, route: string, o
     ...options,
     headers: pavoWebAuthHeaders(options.headers),
     signal: options.signal || timeoutSignal(DEFAULT_TIMEOUT_MS),
+    redirect: 'error',
   });
   const text = await response.text();
   let body: unknown;
@@ -401,6 +402,7 @@ async function downloadFile(fetchImpl: FetchLike, serverUrl: string, fileId: str
   const response = await fetchImpl(`${serverUrl}/api/files/${encodeURIComponent(fileId)}`, {
     headers: pavoWebAuthHeaders(),
     signal: timeoutSignal(120_000),
+    redirect: 'error',
   });
   if (!response.ok) throw new Error(desktopT("custom.pavoWeb.bridge.text22", { value0: `${response.status}` }));
   const contentType = normalizedMime(response.headers.get("content-type") || "");

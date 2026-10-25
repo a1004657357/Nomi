@@ -24,3 +24,14 @@
 - independent-review-56b3c050a-composer-fixture-dirty-20261025.md
 
 本轮不调用真实Provider，不以历史四模型生成充当本次验收。日常项目、账号与共享代理不参与测试。最终是否可合并仍取决于完整运行、PR CI、合并前检查及真实merge SHA交付收据。
+
+## 后续CI阻断与独立复核
+
+- 首轮e102 CI的完整Vitest为18991通过，后续Node阶段四项失败另处理，不能把整个Unit签绿。协调线按已批准完整字段重跑原Node运行时：511/511通过、0跳过；P5实测2031/2035，core767/785，说明131字符。
+- 原WebBridge组件七例在其他重套件退出后实际7/7通过，35.71秒；不改hookTimeout、beforeAll、网络守护或组件覆盖级别，不等同真实网页登录/生成。
+- C的Director共享strict schema保持原native序列化和对象同一owner，独立复核未发现宽容解析偷换；原精确冻结6个变异对照通过。
+- 独立复核新增F3/P2：提交前预检继承已付费retrieval语义。沿用既有submit/retrieval类型透传后，原真实executor反例重放metadata/vendor/build/rate均0，码为outbound-blocked-submit且非retrieval；默认下载对照保留，此项可关闭。
+- 两项最新明确批准已精确对账：本机桥appFetchImporters仅24→26两个路径；P5 FULL仅1706→2035，core785、MCP上限和并发不变。原报告与红测保留，不回改历史。
+- 首轮315只读314通过/1时钟差异，Date-only后该状态两次通过；尚须新的完整315只读，不能将局部补跑充当整套绿。Linux resize单样本133ms超过原128ms，原门槛保持，最终CI必须另验。
+
+新增独立报告：independent-review-f5a9-headers-only-native-dirty-20261025.md、independent-review-f3-closure-and-approved-register-dirty-20261025.md。后续smoke绑定修复、hover请求贯通、技能精确集合和Date-only仍须最终增量复核及真实App/CI；整体仍非GO。

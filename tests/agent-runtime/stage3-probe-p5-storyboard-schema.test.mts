@@ -35,7 +35,11 @@ const CORE_TOKEN_BUDGET = 785;
 // tool. Preserve the old core cap separately; explicitly account for the new subtree.
 // This is a +486 total-cap change, not an unchanged budget. No schema field, validator,
 // description or estimator is removed to fit. See core-a-restart.md, P5 contract review.
-const FULL_TOKEN_BUDGET = 1_706;
+// 2026-10-25: the user explicitly approved retaining all 15 existing author fields.
+// Measured full estimate: 2_031; reviewed cap: 2_035 (+329, four tokens of headroom).
+// CORE_TOKEN_BUDGET, descriptions, estimator and exact model-face checks stay unchanged.
+// See docs/plan/2026-10-25-approved-merge-compatibility-register.md.
+const FULL_TOKEN_BUDGET = 2_035;
 
 type DraftPublishedSchema = {
   properties: { shots: { items: { properties: Record<string, unknown> } } };

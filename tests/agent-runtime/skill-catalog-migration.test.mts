@@ -7,6 +7,7 @@
 //
 // 跑的是真的 pi 加载器（`loadSourcedSkills`）、真的盘、真的 `read` 工具与可信读根；只有远端模型是假的。
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
@@ -181,9 +182,11 @@ test('S55 · 真实 ChatCut 技能的提示词：正文原样、权威节在正�
 // 发现与解析（S2 S3 S4 S10 S11 S12 S37 S38 S39 S42）
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('S3/S6 · 仓内 88 个内置技能经 pi 加载：88 条、零 pi 诊断——判官与被判的是同一把尺子', async () => {
+test('S3/S6 · 仓内97个既有内置技能经pi加载：精确名称集合、零pi诊断', async () => {
   const { records, diagnostics } = await discoverSkillRecords([{ path: REPO_SKILLS, origin: 'builtin' }]);
-  assert.equal(records.length, 88);
+  assert.equal(records.length, 97);
+  assert.equal(createHash('sha256').update(records.map(record => record.name).sort().join('\n')).digest('hex'),
+    '363387aafabbf30ac2e20b7cb89360bac61a971fcc0d4ab9c4ecebef12fc5673', '名称集合逐项冻结，不能用同数替换或过滤加载结果通过');
   assert.deepEqual(diagnostics, []);
   for (const record of records) {
     assert.equal(record.origin, 'builtin');
