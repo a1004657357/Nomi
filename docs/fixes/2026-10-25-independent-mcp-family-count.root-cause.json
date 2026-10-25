@@ -1,0 +1,108 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-independent-mcp-family-count",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "冻结检查遗漏一族已有 MCP-only 声明",
+  "symptom": "独立审查发现只从 onboarding 家族计算 MCP-only 期待数，漏掉 localCanvas 两项声明。",
+  "direct_cause": "期望总数只读取一族声明，而装配面包含两族。",
+  "class_root": "元数据校验的独立声明清单没有覆盖全部现有声明家族。",
+  "affected_population": [
+    "工具冻结检查",
+    "现有 internal 和 MCP 表面的分离校验"
+  ],
+  "scope_paths": [
+    "scripts/check-model-face-frozen.mjs",
+    "scripts/agent-tool-face-usecases.node-test.mjs"
+  ],
+  "entry_points": [
+    "scripts/check-model-face-frozen.mjs::expectedMcpOnlyCount"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "使用仓内已有两族声明，不新增工具或执行入口。",
+  "invariants": [
+    "internal 冻结值仍为21，真实27继续 fail-closed，未经人工批准不得更新 snapshot。",
+    "MCP-only 期待数独立来自 onboarding 与 localCanvas，分别7和2，不由 assembled face 反推。",
+    "总数少任一家族或任何单项都必须失败；不提高说明大小、并发、付费或权限预算。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "scripts/check-model-face-frozen.mjs",
+    "tests": [
+      "scripts/agent-tool-face-usecases.node-test.mjs"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "scripts/check-model-face-frozen.mjs",
+      "symbol": "expectedMcpOnlyCount"
+    }
+  ],
+  "door_reduction": {
+    "before": 1,
+    "after": 1,
+    "why_not": "同一冻结检查脚本对 expectedMcpOnlyCount 的实际 AST 文件/符号映射仍为1；只补全独立声明家族。"
+  },
+  "generality_proof": "原计数为7的红测失败；新回归10/10，逐族隔离得到7和2；真实只读脚本仍拒绝 internal27/approved21。pnpm完整门岗初次因tsx pipe EPERM未执行，不能算冻结验收通过。",
+  "shared_boundaries": [
+    {
+      "path": "scripts/check-model-face-frozen.mjs",
+      "symbol": "expectedMcpOnlyCount",
+      "responsibility": "完整、独立的 MCP-only 声明计数，保留 internal 和内容快照的人工批准门槛"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "scripts/check-model-face-frozen.mjs",
+      "entry_point": "expectedMcpOnlyCount",
+      "disposition": "enforced",
+      "evidence": "执行实际源 initializer/predicate/count comparison；移除两项、一族或单项均红。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增声明家族若只改装配面而忽略期待计数，会使冻结仪器错误拒绝或漏扫。",
+    "same_class_scan": [
+      "读取两族真实 profiles",
+      "断言期待数不能来自 face/capture/VERB_DECLARATIONS",
+      "真实 guard21 保留且拒绝27"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "scripts/check-model-face-frozen.mjs",
+    "invariant": "完整独立声明计数与审批冻结分别校验，不以自动接受当前输出修复计数错误。",
+    "failure_mode": "两族任一遗漏或 assembled 总数缺项由实际源码回归失败；未经批准 internal 增量由原guard拒绝。",
+    "exception_policy": "none",
+    "strategy": "修正计数推导，不自动更新快照或内部冻结。",
+    "artifacts": [
+      "scripts/check-model-face-frozen.mjs",
+      "scripts/agent-tool-face-usecases.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "scripts/agent-tool-face-usecases.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/agent-tool-face-usecases.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "没有删除工具或运行路径。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "只使用已有 TypeScript 测试依赖与声明函数。",
+    "exit_criteria": []
+  },
+  "migration": "无项目、模型、账号或素材迁移；禁止真实 Provider 提交。",
+  "residual_risks": [
+    "人工审批冻结更新尚未收到，当前门岗仍不通过。",
+    "截图差异与其他全仓失败未收口，不能据本补丁合并 main。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/agent-tool-face-usecases.node-test.mjs"
+  }
+}

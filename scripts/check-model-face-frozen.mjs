@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url'
 
 import { captureModelFace, serializeModelFace } from './model-face-snapshot.mjs'
 import { onboardingVerbs } from '../electron/shared/agentCapabilities/verbs/onboardingVerbs.ts'
+import { localCanvasVerbs } from '../electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const baselinePath = path.join(repoRoot, 'scripts', 'model-face-baseline.json')
@@ -40,7 +41,7 @@ const baselinePath = path.join(repoRoot, 'scripts', 'model-face-baseline.json')
  */
 const EXPECTED_INTERNAL_VERB_COUNT = 21
 const isMcpOnly = (verb) => verb.profiles?.length === 1 && verb.profiles[0] === 'mcp'
-const expectedMcpOnlyCount = onboardingVerbs().filter(isMcpOnly).length
+const expectedMcpOnlyCount = [...onboardingVerbs(), ...localCanvasVerbs()].filter(isMcpOnly).length
 
 const face = await captureModelFace()
 const internalVerbCount = face.tools.filter((verb) => !isMcpOnly(verb)).length
