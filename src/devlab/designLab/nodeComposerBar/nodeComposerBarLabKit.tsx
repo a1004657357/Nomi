@@ -41,7 +41,7 @@ export const NODE_COMPOSER_BAR_CELL_HEIGHT = 720
 
 const NODE_WIDTH = 340
 const NODE_HEIGHT = 192
-const NODE_LEFT = 28
+const NODE_LEFT = (NODE_COMPOSER_BAR_CELL_WIDTH - NODE_WIDTH) / 2
 // 节点上方要留出**浮条的位置**（它挂在 bottom-[calc(100%+40px)]）——留少了，
 // 「锁回到浮条」这件主张就直接被取景框裁掉，看不见。
 const NODE_TOP = 96
@@ -73,6 +73,7 @@ const CATALOG_MODELS = [
     enabled: true,
     published: true,
     publishedModes: ['text_to_video', 'image_to_video'],
+    availability: { usable: true },
     createdAt: '2026-09-10',
     updatedAt: '2026-09-10',
   },
@@ -84,10 +85,11 @@ const CATALOG_MODELS = [
     enabled: true,
     published: true,
     publishedModes: ['text_to_image', 'image_edit'],
+    availability: { usable: true },
     createdAt: '2026-09-10',
     updatedAt: '2026-09-10',
   },
-]
+] satisfies ModelCatalogModelDto[]
 
 const CATALOG_VENDORS = [
   {

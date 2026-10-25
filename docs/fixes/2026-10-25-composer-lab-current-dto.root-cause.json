@@ -1,0 +1,60 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-composer-lab-current-dto",
+  "change_kind": "structural",
+  "problem_type": "节点浮框展示夹具的取景与目录DTO漂移",
+  "symptom": "新版截图中浮框左侧被取景台裁掉，现有模型显示去配置，原像素更新未发现这些语义错误。",
+  "direct_cause": "取景台仍把340像素节点放在left=28，但现役浮框以节点居中且宽560；夹具模型行缺少现行DTO必需的availability，真实目录过滤正确地排除这些行。",
+  "class_root": "隔离夹具必须满足现行共享DTO并完整呈现被验证组件；仅成功截图不能证明模型与控件已挂载。",
+  "scope_paths": [
+    "src/devlab/designLab/nodeComposerBar/nodeComposerBarLabKit.tsx",
+    "tests/ux/design-lab-node-composer-bar.walk.mjs"
+  ],
+  "affected_population": [
+    "节点浮框五个shell展示状态"
+  ],
+  "entry_points": [
+    "design-lab node-composer-bar",
+    "tests/ux/design-lab-node-composer-bar.walk.mjs"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "只修本地夹具：复用ModelCatalogModelDto与原浮框几何，不改模型目录过滤、生产放置、权限或调用。",
+  "invariants": [
+    "不改生产composerCanvasPlacement：节点下方、固定宽度、随画布缩放的现行规则保持。",
+    "夹具显式声明正常可用模型，使用satisfies ModelCatalogModelDto[]阻止未来漏DTO字段；不增加渲染层可用性兜底。",
+    "走查必须实测完整卡片在取景台内，且正确模型与两个参数摘要实际出现；原单行/顺序/图标/锁/参数操作断言保留。",
+    "先用原夹具执行新增反例，再修夹具重跑；不放宽视觉容差，不产生Provider请求。"
+  ],
+  "structural_evidence": {
+    "affected_paths": [
+      "src/devlab/designLab/nodeComposerBar/nodeComposerBarLabKit.tsx",
+      "tests/ux/design-lab-node-composer-bar.walk.mjs"
+    ],
+    "preserved_exports": [
+      "makeBarNode",
+      "ComposerBarStage"
+    ],
+    "behavior_preservation": "保留全部8状态、真实BaseGenerationNode/NodeGenerationComposer、模型与参数真实派生；只居中取景和补全夹具availability。不改变被用户明确固定的生产浮框放置。",
+    "verification_limits": "当前只形成反例，尚未执行修后测试和新图检查。"
+  },
+  "regression_tests": [
+    "tests/ux/design-lab-node-composer-bar.walk.mjs",
+    "src/workbench/generationCanvas/nodes/composerCanvasPlacement.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "不删除旧状态或断言。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "沿用现有Playwright/Vite与共享DTO，无依赖变更。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移日常数据；只修改隔离展示与测试。",
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "夹具通过不代表真实Provider可用或真实画布所有边缘摆位均已验收。"
+  ]
+}

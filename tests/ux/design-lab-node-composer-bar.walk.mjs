@@ -197,6 +197,18 @@ await walkDesignLabScreen({
     // 画布五格都是真身：现役 composer 卡必须真的挂出来了，否则下面每一条「没看到 X」都是废话。
     const card = await page.locator('.generation-canvas-v2-node__composer-card').count()
     if (card !== 1) { record(`${state.id} 现役 composer 卡应有 1 张，实际 ${card} —— 这一格没渲染出真身`); return }
+    const framing = await page.evaluate(() => {
+      const stage = document.querySelector('[data-design-lab-stage="node-composer-bar"]')?.getBoundingClientRect()
+      const card = document.querySelector('.generation-canvas-v2-node__composer-card')?.getBoundingClientRect()
+      if (!stage || !card) return null
+      return { contained: card.left >= stage.left && card.right <= stage.right && card.top >= stage.top && card.bottom <= stage.bottom,
+        stage: { left: stage.left, right: stage.right, top: stage.top, bottom: stage.bottom },
+        card: { left: card.left, right: card.right, top: card.top, bottom: card.bottom } }
+    })
+    if (!framing?.contained) record(`${state.id} 完整浮框被取景台裁剪：${JSON.stringify(framing)}`)
+    const modelText = await page.locator('[data-bar-segment="model-params"]').innerText()
+    const modelName = state.id.startsWith('composer-bar-v1-image') ? 'GPT Image 2' : 'Seedance 2'
+    if (!modelText.includes(modelName)) record(`${state.id} 夹具应挂载真实目录模型 ${modelName}，实际「${modelText}」`)
     await assertSingleRow(page, record, state.id)
     await assertClusterIsSmaller(page, record, state.id)
     // 锁：先证「浮条上确实有一把锁」，再断言「浮框里一把都没有」。
@@ -224,13 +236,13 @@ await walkDesignLabScreen({
       { provenBy: clusterInBarProof, message: `${state.id} 提示词区右端不该有任何控件` },
     )
     const clusterButtons = await page.locator('[data-prompt-tool-cluster="true"] [data-prompt-tool]').count()
-    const expected = 2
-    if (clusterButtons !== expected) record(`${state.id} B 簇应有 ${expected} 颗 icon（视频含运镜、图片没有），实际 ${clusterButtons}`)
-    // 簇内顺序也是拍板那句话的一部分：运镜 → 效果 → 优化。图片节点没有运镜，只掉头一颗。
+    const expected = 3
+    if (clusterButtons !== expected) record(`${state.id} B 簇应有 ${expected} 颗 icon（效果、翻译、优化），实际 ${clusterButtons}`)
+    // 翻译是现役 composer 已有功能，不为旧快照删除它；仍精确核对三颗和相对顺序。
     const clusterOrder = await page.locator('[data-prompt-tool-cluster="true"] [data-prompt-tool]').evaluateAll(
       (nodes) => nodes.map((node) => node.getAttribute('data-prompt-tool')).join(' → '),
     )
-    const wantedOrder = (['effects', 'optimize']).join(' → ')
+    const wantedOrder = (['effects', 'translate', 'optimize']).join(' → ')
     if (clusterOrder !== wantedOrder) record(`${state.id} B 簇顺序应是「${wantedOrder}」，实际「${clusterOrder}」`)
     const clusterText = (await page.locator('[data-prompt-tool-cluster="true"]').innerText().catch(() => '')).trim()
     if (clusterText) record(`${state.id} B 簇必须是纯 icon，却渲出了文字「${clusterText}」`)
