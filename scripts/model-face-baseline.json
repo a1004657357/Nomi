@@ -1,11 +1,11 @@
 {
-  "verbCount": 28,
+  "verbCount": 36,
   "tools": [
     {
       "aliasBoundInput": null,
       "alsoCovers": null,
       "contractId": "canvas.read",
-      "description": "Read everything on the generation canvas: every node (id, kind, title, prompt, model, status), the reference links and groups, and the selection. Before any change to shots, links or groups, and whenever the user asks what is on the canvas or what is still waiting on them. Do not use it to read the script (read_script), the timeline (read_timeline) or the media library (look_at_media). It never changes anything. Takes no arguments. Every id you pass to a write verb comes from here; inventing an id is the most common way an edit fails. Nothing changes; it only reads.",
+      "description": "Read all canvas nodes (id, kind, title, prompt, model, status), reference links, groups and selection. Before any change to shots, links or groups, and whenever the user asks what is on the canvas or what is still waiting on them. Do not use it to read the script (read_script), the timeline (read_timeline) or the media library (look_at_media). It never changes anything. Takes no arguments. Every id you pass to a write verb comes from here; inventing an id is the most common way an edit fails. Nothing changes; it only reads.",
       "effect": "read",
       "effectGroups": null,
       "examples": [
@@ -24,9 +24,9 @@
       "profileReason": null,
       "profiles": null,
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses."
       ],
-      "promptSnippet": "Read everything on the generation canvas: every node (id, kind, title, prompt, model, status), the reference links and groups, and the selection.",
+      "promptSnippet": "Read all canvas nodes (id, kind, title, prompt, model, status), reference links, groups and selection.",
       "publishedJsonSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -38,7 +38,7 @@
       "aliasBoundInput": null,
       "alsoCovers": null,
       "contractId": "document.read",
-      "description": "Read the creation document as plain text: the whole document, or only the text the user has selected. Before editing the script, when splitting it into shots, and whenever the user says \"this\" or \"here\" (use scope selection — it is the only way to resolve those words). Not for shots or canvas content (look_at_canvas). An empty selection means ask, not guess. scope is full (default) or selection. Long text is truncated to the first 2000 lines or 50KB; the result says so when that happens. Nothing changes; it only reads.",
+      "description": "Read all creation-document plain text or only the user's selected text. Before editing the script, when splitting it into shots, and whenever the user says \"this\" or \"here\" (use scope selection — it is the only way to resolve those words). Not for shots or canvas content (look_at_canvas). An empty selection means ask, not guess. scope is full (default) or selection. Long text is truncated to the first 2000 lines or 50KB; the result says so when that happens. Nothing changes; it only reads.",
       "effect": "read",
       "effectGroups": null,
       "examples": [
@@ -69,9 +69,9 @@
       "profileReason": null,
       "profiles": null,
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses."
       ],
-      "promptSnippet": "Read the creation document as plain text: the whole document, or only the text the user has selected.",
+      "promptSnippet": "Read all creation-document plain text or only the user's selected text.",
       "publishedJsonSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -92,7 +92,7 @@
       "aliasBoundInput": null,
       "alsoCovers": null,
       "contractId": "timeline.read",
-      "description": "Read the project timeline: fps, duration, playhead, every track, clip, text overlay and transition, plus the revision every edit must carry. Before edit_timeline, and when the user talks about a moment (\"the part around 0:30\" — pass startFrame and endFrame to read only that range). Not for canvas shots that are not on the timeline yet (look_at_canvas). Frames, not seconds: convert with the fps this verb returns. startFrame and endFrame are optional integer frames at the project fps; give both to read one range, neither to read the whole timeline (which is the only call that returns the revision). Nothing changes; it only reads.",
+      "description": "Read timeline fps, duration, playhead, every track, clip, text overlay and transition, and the edit revision. Before edit_timeline, and when the user talks about a moment (\"the part around 0:30\" — pass startFrame and endFrame to read only that range). Not for canvas shots that are not on the timeline yet (look_at_canvas). Frames, not seconds: convert with the fps this verb returns. startFrame and endFrame are optional integer frames at the project fps; give both to read one range, neither to read the whole timeline (which is the only call that returns the revision). Nothing changes; it only reads.",
       "effect": "read",
       "effectGroups": null,
       "examples": [
@@ -118,9 +118,9 @@
       "profileReason": null,
       "profiles": null,
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses."
       ],
-      "promptSnippet": "Read the project timeline: fps, duration, playhead, every track, clip, text overlay and transition, plus the revision every edit must carry.",
+      "promptSnippet": "Read timeline fps, duration, playhead, every track, clip, text overlay and transition, and the edit revision.",
       "publishedJsonSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -181,7 +181,7 @@
       "profileReason": null,
       "profiles": null,
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses."
       ],
       "promptSnippet": "Search the project's media library, or read bounded technical facts (record, codec, frame-range usage, waveform buckets) about one asset.",
       "publishedJsonSchema": {
@@ -259,7 +259,7 @@
       "aliasBoundInput": null,
       "alsoCovers": null,
       "contractId": "generation.context.read",
-      "description": "Read the models the user has connected: each model's modes, parameters with allowed values, and reference slots. Before choosing a modelId or any parameter in draft_shots, and when the user asks which models can do something. It cannot connect a model or take an API key (start_model_setup). Never invent a modelId — use the exact strings returned here. kind (image, video or audio) narrows the catalog; modelId returns one model in full; vendor picks which provider when two of them carry the same modelId. Nothing changes; it only reads.",
+      "description": "Read connected models, their modes, allowed parameter values and reference slots. Before choosing a modelId or any parameter in draft_shots, and when the user asks which models can do something. It cannot connect a model or take an API key (start_model_setup). Never invent a modelId — use the exact strings returned here. kind (image, video or audio) narrows the catalog; modelId returns one model in full; vendor picks which provider when two of them carry the same modelId. Nothing changes; it only reads.",
       "effect": "read",
       "effectGroups": null,
       "examples": [
@@ -282,9 +282,9 @@
         "internal"
       ],
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses."
       ],
-      "promptSnippet": "Read the models the user has connected: each model's modes, parameters with allowed values, and reference slots.",
+      "promptSnippet": "Read connected models, their modes, allowed parameter values and reference slots.",
       "publishedJsonSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -344,7 +344,7 @@
         "internal"
       ],
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses."
       ],
       "promptSnippet": "Read one generation or export job: its stage, progress, result reference and what it has cost so far.",
       "publishedJsonSchema": {
@@ -530,7 +530,7 @@
         "internal"
       ],
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork.",
+        "For writes, use IDs only from reads in this conversation, never memory or guesses.",
         "High-quality generation prompt, in the SAME language as the user (Chinese user → Chinese prompt). Write it as a STRUCTURED skeleton, not a run-on sentence:\n- character/scene reference card: stable appearance/environment description + unified style keywords (neutral full-body pose for a character, empty wide establishing shot for a scene; no plot action).\n- image / keyframe shot: scene·time·light → subject·action·expression → shot language (wide / close-up / low-angle…) → style keywords.\n- video shot: camera move (push / pull / pan / track…) → on-screen action progression → rhythm & duration feel; do NOT restate the static keyframe description.\nKeep the same subject's appearance description consistent across shots. agent-artifact nodes carry no prompt: send an empty string."
       ],
       "promptSnippet": "Create or update image, video, audio or 3D shot drafts in the project; document plans are saved without automatic canvas placement.",
@@ -663,12 +663,24 @@
                       "minimum": 0,
                       "type": "integer"
                     },
+                    "cameraAngle": {
+                      "description": "Camera angle.",
+                      "type": "string"
+                    },
+                    "cameraMove": {
+                      "description": "Camera movement.",
+                      "type": "string"
+                    },
                     "carrier": {
                       "description": "Visual or text guidance",
                       "enum": [
                         "visual",
                         "text"
                       ],
+                      "type": "string"
+                    },
+                    "characters": {
+                      "description": "Characters on screen.",
                       "type": "string"
                     },
                     "continuity": {
@@ -713,6 +725,10 @@
                       ],
                       "description": "Continuity facts"
                     },
+                    "dialogue": {
+                      "description": "Spoken dialogue.",
+                      "type": "string"
+                    },
                     "durationSec": {
                       "description": "Seconds for stills too",
                       "type": "number"
@@ -723,6 +739,10 @@
                     },
                     "ffDesc": {
                       "description": "First-frame description",
+                      "type": "string"
+                    },
+                    "imagePrompt": {
+                      "description": "Static image prompt, independent from motion.",
                       "type": "string"
                     },
                     "keyframe": {
@@ -774,6 +794,14 @@
                       "description": "Frame-to-frame motion",
                       "type": "string"
                     },
+                    "notes": {
+                      "description": "Continuity and production notes.",
+                      "type": "string"
+                    },
+                    "performance": {
+                      "description": "Acting and action progression.",
+                      "type": "string"
+                    },
                     "promptSegments": {
                       "description": "Prompt text ranges",
                       "items": {
@@ -803,6 +831,10 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "props": {
+                      "description": "Visible props.",
+                      "type": "string"
                     },
                     "referenceBindings": {
                       "additionalProperties": {
@@ -862,6 +894,10 @@
                       "minLength": 1,
                       "type": "string"
                     },
+                    "scene": {
+                      "description": "Scene and location.",
+                      "type": "string"
+                    },
                     "sceneId": {
                       "description": "Scene id; omit when the story has no scene grouping.",
                       "minLength": 1,
@@ -875,8 +911,49 @@
                       ],
                       "type": "string"
                     },
+                    "shotSize": {
+                      "description": "Shot size.",
+                      "type": "string"
+                    },
+                    "sound": {
+                      "description": "Sound and music.",
+                      "type": "string"
+                    },
                     "staticFeatures": {
                       "description": "Identity features that must remain consistent across shots, such as face shape, hair, bone structure and distinguishing marks.",
+                      "type": "string"
+                    },
+                    "subtitle": {
+                      "description": "Editorial subtitle, not a request to burn text into an image.",
+                      "type": "string"
+                    },
+                    "transition": {
+                      "additionalProperties": true,
+                      "description": "Editorial transition after this shot.",
+                      "properties": {
+                        "durationFrames": {
+                          "description": "Timeline frames",
+                          "type": "number"
+                        },
+                        "type": {
+                          "description": "Transition style",
+                          "enum": [
+                            "cut",
+                            "dissolve",
+                            "fade",
+                            "match_cut",
+                            "whip_pan"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ],
+                      "type": "object"
+                    },
+                    "variantId": {
+                      "description": "Model variant id from list_models.",
                       "type": "string"
                     },
                     "variants": {
@@ -893,6 +970,10 @@
                         "medium",
                         "small"
                       ],
+                      "type": "string"
+                    },
+                    "videoPrompt": {
+                      "description": "Video action chain and camera movement.",
                       "type": "string"
                     }
                   },
@@ -1028,8 +1109,8 @@
         "internal"
       ],
       "promptGuidelines": [
-        "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork.",
-        "Every canvas write is a reversible local edit: describe what changed in your reply using the returned userSees line rather than claiming more."
+        "For writes, use IDs only from reads in this conversation, never memory or guesses.",
+        "Canvas writes are reversible local edits. Report only the returned userSees change; never claim more."
       ],
       "promptSnippet": "Change how existing nodes relate and sit on the canvas: connect reference links or tidy the layout.",
       "publishedJsonSchema": {
@@ -1117,7 +1198,7 @@
         "internal"
       ],
       "promptGuidelines": [
-        "Every canvas write is a reversible local edit: describe what changed in your reply using the returned userSees line rather than claiming more."
+        "Canvas writes are reversible local edits. Report only the returned userSees change; never claim more."
       ],
       "promptSnippet": "Put a hand-authored artifact on the canvas — SVG, HTML, Markdown, a table or plain text you wrote yourself.",
       "publishedJsonSchema": {
@@ -2475,7 +2556,7 @@
         "mcp"
       ],
       "promptGuidelines": [
-        "Nomi never hands a saved key back: not in a result, not in an error, not in a trace. If you need to know whether a key is saved, read nomi_read target=models, which only says yes or no."
+        "Saved keys are never returned in results, errors or traces. Check only saved-key presence via nomi_read target=models (yes/no)."
       ],
       "promptSnippet": "Save an API key the user handed you onto one connection, through the same door Nomi's own credential page writes to.",
       "publishedJsonSchema": {
@@ -2760,6 +2841,947 @@
         "required": [
           "vendorKey",
           "ifUnchanged"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": {
+        "operation": "list_capability_recipes"
+      },
+      "alsoCovers": null,
+      "contractId": "creative.component.read",
+      "description": "List recipes. Find a supported recipe or reusable resource before planning a transformation. Use apply_capability_recipe to plan a selected recipe, or read_vibing_director to inspect a director scene. No arguments. Returned recipe and resource ids are the inputs for subsequent plans. Nothing changes; it only reads.",
+      "effect": "read",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {},
+          "when": "Read available creative recipes:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 30000
+      },
+      "internalGroup": "media",
+      "mcpTransportFields": null,
+      "name": "list_capability_recipes",
+      "nextAction": "none",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "internal"
+      ],
+      "promptGuidelines": [
+        "list_capability_recipes reads creative recipes, compatible models and reusable resources; read_vibing_director reads the selected Blender Director scene, asset library and spatial relationships. Recipe plans derive new outputs without replacing the source; saved style/effect/identity/palette resources reuse an existing result. GLB handoff stages an existing model; Director plans apply reviewed scene, actor, relation and camera edits.",
+        "Source/target node IDs come from look_at_canvas (a current-turn clientId is also accepted). Recipe, compatible vendor/model/variant/mode IDs, controls, limits and reusable-resource IDs come from list_capability_recipes; omitted model/mode uses a compatible default. Preserve the source and prior results.",
+        "Use exactly the listed recipe controls. portrait.mood generationMode=single|sample5|matrix5x5 expands to 1, 5 or 25 requests; requestedOutputs remains bounded by recipe/model limits. image.multiview.custom takes one ID, label and angle/framing descriptor per requested view.",
+        "Save user-approved labels, prompt fragments, source, license, commercial-use and credit facts; never invent rights. GLB handoff preserves provenance, uses the license note when copying into the Director library, and creates a destination only when targetNodeId is omitted.",
+        "Director node IDs come from look_at_canvas; existing object/camera/relation/asset references come from a fresh read_vibing_director. Choose stable IDs for new objects, relations and beats. Omitted cameraRef uses the active camera. Positions, lookAt and path points use Director Y-up XYZ scene units (Blender X,-Z,Y); rotations are XYZ Euler degrees, scale uses XYZ factors, FOV is degrees and distance is horizontal XZ scene units. Paths use seconds at 24 fps; beats allow at most 120 seconds. Framing fits all objects or targetRef, while fixed preserves pose. replace resets the scene; amend preserves existing state.",
+        "Creative component writes never start generation. Do not automatically resend a write after failure, timeout, cancellation or a pending paid confirmation; inspect the current state and wait for explicit user intent."
+      ],
+      "promptSnippet": "List recipes.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": {
+        "operation": "read_vibing_director"
+      },
+      "alsoCovers": null,
+      "contractId": "creative.component.read",
+      "description": "Read Director. Inspect a director node before proposing changes to its scene. Use look_at_canvas to find the director node, or apply_vibing_director_plan to change it. directorNodeId comes from look_at_canvas. Nothing changes; it only reads.",
+      "effect": "read",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "directorNodeId": "director-1"
+          },
+          "when": "Inspect a director:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 30000
+      },
+      "internalGroup": "media",
+      "mcpTransportFields": null,
+      "name": "read_vibing_director",
+      "nextAction": "none",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "internal"
+      ],
+      "promptGuidelines": [
+        "list_capability_recipes reads creative recipes, compatible models and reusable resources; read_vibing_director reads the selected Blender Director scene, asset library and spatial relationships. Recipe plans derive new outputs without replacing the source; saved style/effect/identity/palette resources reuse an existing result. GLB handoff stages an existing model; Director plans apply reviewed scene, actor, relation and camera edits.",
+        "Source/target node IDs come from look_at_canvas (a current-turn clientId is also accepted). Recipe, compatible vendor/model/variant/mode IDs, controls, limits and reusable-resource IDs come from list_capability_recipes; omitted model/mode uses a compatible default. Preserve the source and prior results.",
+        "Use exactly the listed recipe controls. portrait.mood generationMode=single|sample5|matrix5x5 expands to 1, 5 or 25 requests; requestedOutputs remains bounded by recipe/model limits. image.multiview.custom takes one ID, label and angle/framing descriptor per requested view.",
+        "Save user-approved labels, prompt fragments, source, license, commercial-use and credit facts; never invent rights. GLB handoff preserves provenance, uses the license note when copying into the Director library, and creates a destination only when targetNodeId is omitted.",
+        "Director node IDs come from look_at_canvas; existing object/camera/relation/asset references come from a fresh read_vibing_director. Choose stable IDs for new objects, relations and beats. Omitted cameraRef uses the active camera. Positions, lookAt and path points use Director Y-up XYZ scene units (Blender X,-Z,Y); rotations are XYZ Euler degrees, scale uses XYZ factors, FOV is degrees and distance is horizontal XZ scene units. Paths use seconds at 24 fps; beats allow at most 120 seconds. Framing fits all objects or targetRef, while fixed preserves pose. replace resets the scene; amend preserves existing state.",
+        "Creative component writes never start generation. Do not automatically resend a write after failure, timeout, cancellation or a pending paid confirmation; inspect the current state and wait for explicit user intent."
+      ],
+      "promptSnippet": "Read Director.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "directorNodeId": {
+            "description": "Director ID",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "directorNodeId"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": {
+        "operation": "apply_capability_recipe"
+      },
+      "alsoCovers": null,
+      "contractId": "creative.component.write",
+      "description": "Plan recipe. The user wants a transformation using a compatible recipe and existing source. Use list_capability_recipes to discover recipes first, or save_creative_resource to save an existing result. Paid execution needs a separate explicit user confirmation. sourceNodeId comes from look_at_canvas; recipeId, controls and compatible model ids come from list_capability_recipes. The user sees the plan highlighted with a review card before it applies (in full-auto mode it applies and the result says so). The edit is reversible.",
+      "effect": "reversible_local",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "recipeId": "image.multiview.grid9",
+            "sourceNodeId": "image-1"
+          },
+          "when": "Prepare a multiview plan:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 60000
+      },
+      "internalGroup": "media",
+      "mcpTransportFields": null,
+      "name": "apply_capability_recipe",
+      "nextAction": "user_sees_review_card",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "internal"
+      ],
+      "promptGuidelines": [
+        "list_capability_recipes reads creative recipes, compatible models and reusable resources; read_vibing_director reads the selected Blender Director scene, asset library and spatial relationships. Recipe plans derive new outputs without replacing the source; saved style/effect/identity/palette resources reuse an existing result. GLB handoff stages an existing model; Director plans apply reviewed scene, actor, relation and camera edits.",
+        "Source/target node IDs come from look_at_canvas (a current-turn clientId is also accepted). Recipe, compatible vendor/model/variant/mode IDs, controls, limits and reusable-resource IDs come from list_capability_recipes; omitted model/mode uses a compatible default. Preserve the source and prior results.",
+        "Use exactly the listed recipe controls. portrait.mood generationMode=single|sample5|matrix5x5 expands to 1, 5 or 25 requests; requestedOutputs remains bounded by recipe/model limits. image.multiview.custom takes one ID, label and angle/framing descriptor per requested view.",
+        "Save user-approved labels, prompt fragments, source, license, commercial-use and credit facts; never invent rights. GLB handoff preserves provenance, uses the license note when copying into the Director library, and creates a destination only when targetNodeId is omitted.",
+        "Director node IDs come from look_at_canvas; existing object/camera/relation/asset references come from a fresh read_vibing_director. Choose stable IDs for new objects, relations and beats. Omitted cameraRef uses the active camera. Positions, lookAt and path points use Director Y-up XYZ scene units (Blender X,-Z,Y); rotations are XYZ Euler degrees, scale uses XYZ factors, FOV is degrees and distance is horizontal XZ scene units. Paths use seconds at 24 fps; beats allow at most 120 seconds. Framing fits all objects or targetRef, while fixed preserves pose. replace resets the scene; amend preserves existing state.",
+        "Creative component writes never start generation. Do not automatically resend a write after failure, timeout, cancellation or a pending paid confirmation; inspect the current state and wait for explicit user intent."
+      ],
+      "promptSnippet": "Plan recipe.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "modeId": {
+            "description": "Mode ID",
+            "minLength": 1,
+            "type": "string"
+          },
+          "modelKey": {
+            "description": "Model ID",
+            "minLength": 1,
+            "type": "string"
+          },
+          "outputs": {
+            "description": "View outputs",
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "azimuth": {
+                  "description": "Azimuth, degrees",
+                  "maximum": 180,
+                  "minimum": -180,
+                  "type": "number"
+                },
+                "elevation": {
+                  "description": "Elevation, degrees",
+                  "maximum": 30,
+                  "minimum": -30,
+                  "type": "number"
+                },
+                "id": {
+                  "description": "Result ID",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "description": "View label",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "shotSize": {
+                  "description": "Shot framing",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ],
+              "type": "object"
+            },
+            "maxItems": 6,
+            "type": "array"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "description": "Recipe controls",
+            "type": "object"
+          },
+          "recipeId": {
+            "description": "Recipe ID",
+            "minLength": 1,
+            "type": "string"
+          },
+          "requestedOutputs": {
+            "description": "Output count",
+            "maximum": 9,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "resourceIds": {
+            "description": "Resource IDs",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 6,
+            "type": "array"
+          },
+          "sourceNodeId": {
+            "description": "Source node ID",
+            "minLength": 1,
+            "type": "string"
+          },
+          "variantId": {
+            "description": "Variant ID",
+            "minLength": 1,
+            "type": "string"
+          },
+          "vendorKey": {
+            "description": "Model supplier",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceNodeId",
+          "recipeId"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": {
+        "operation": "save_creative_resource"
+      },
+      "alsoCovers": null,
+      "contractId": "creative.component.write",
+      "description": "Save resource. The user wants to reuse an existing generated result with its license and prompt tokens. Use apply_capability_recipe to plan new outputs, or list_capability_recipes to inspect saved resources. sourceNodeId comes from look_at_canvas. Supply the user-approved label, resource kind and license facts; do not invent rights. The user sees the plan highlighted with a review card before it applies (in full-auto mode it applies and the result says so). The edit is reversible.",
+      "effect": "reversible_local",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "kind": "style",
+            "label": "Ink style",
+            "license": {
+              "commercialUse": "unknown"
+            },
+            "sourceNodeId": "image-1"
+          },
+          "when": "Save a reusable style:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 60000
+      },
+      "internalGroup": "media",
+      "mcpTransportFields": null,
+      "name": "save_creative_resource",
+      "nextAction": "user_sees_review_card",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "internal"
+      ],
+      "promptGuidelines": [
+        "list_capability_recipes reads creative recipes, compatible models and reusable resources; read_vibing_director reads the selected Blender Director scene, asset library and spatial relationships. Recipe plans derive new outputs without replacing the source; saved style/effect/identity/palette resources reuse an existing result. GLB handoff stages an existing model; Director plans apply reviewed scene, actor, relation and camera edits.",
+        "Source/target node IDs come from look_at_canvas (a current-turn clientId is also accepted). Recipe, compatible vendor/model/variant/mode IDs, controls, limits and reusable-resource IDs come from list_capability_recipes; omitted model/mode uses a compatible default. Preserve the source and prior results.",
+        "Use exactly the listed recipe controls. portrait.mood generationMode=single|sample5|matrix5x5 expands to 1, 5 or 25 requests; requestedOutputs remains bounded by recipe/model limits. image.multiview.custom takes one ID, label and angle/framing descriptor per requested view.",
+        "Save user-approved labels, prompt fragments, source, license, commercial-use and credit facts; never invent rights. GLB handoff preserves provenance, uses the license note when copying into the Director library, and creates a destination only when targetNodeId is omitted.",
+        "Director node IDs come from look_at_canvas; existing object/camera/relation/asset references come from a fresh read_vibing_director. Choose stable IDs for new objects, relations and beats. Omitted cameraRef uses the active camera. Positions, lookAt and path points use Director Y-up XYZ scene units (Blender X,-Z,Y); rotations are XYZ Euler degrees, scale uses XYZ factors, FOV is degrees and distance is horizontal XZ scene units. Paths use seconds at 24 fps; beats allow at most 120 seconds. Framing fits all objects or targetRef, while fixed preserves pose. replace resets the scene; amend preserves existing state.",
+        "Creative component writes never start generation. Do not automatically resend a write after failure, timeout, cancellation or a pending paid confirmation; inspect the current state and wait for explicit user intent."
+      ],
+      "promptSnippet": "Save resource.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Reuse notes",
+            "maxLength": 500,
+            "type": "string"
+          },
+          "kind": {
+            "description": "Reuse kind",
+            "enum": [
+              "style",
+              "effect",
+              "identity",
+              "palette"
+            ],
+            "type": "string"
+          },
+          "label": {
+            "description": "Display label",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "license": {
+            "additionalProperties": true,
+            "description": "Rights facts",
+            "properties": {
+              "attribution": {
+                "description": "Attribution",
+                "type": "string"
+              },
+              "commercialUse": {
+                "description": "Usage rights",
+                "enum": [
+                  "allowed",
+                  "restricted",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "license": {
+                "description": "License terms",
+                "type": "string"
+              },
+              "source": {
+                "description": "Rights source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "commercialUse"
+            ],
+            "type": "object"
+          },
+          "promptTokens": {
+            "default": [],
+            "description": "Prompt tokens",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 24,
+            "type": "array"
+          },
+          "sourceNodeId": {
+            "description": "Result node ID",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceNodeId",
+          "kind",
+          "label",
+          "license"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": {
+        "operation": "handoff_model3d"
+      },
+      "alsoCovers": null,
+      "contractId": "creative.component.write",
+      "description": "Hand off GLB. The user wants to stage an existing model while preserving its source and provenance. Use stage_shot for a staging reference, or read_vibing_director to inspect an existing director scene. sourceNodeId and optional targetNodeId come from look_at_canvas. The source must already have a GLB result. The user sees the plan highlighted with a review card before it applies (in full-auto mode it applies and the result says so). The edit is reversible.",
+      "effect": "reversible_local",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "sourceNodeId": "model-1",
+            "target": "vibingDirector"
+          },
+          "when": "Hand off an existing GLB:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 60000
+      },
+      "internalGroup": "media",
+      "mcpTransportFields": null,
+      "name": "handoff_model3d",
+      "nextAction": "user_sees_review_card",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "internal"
+      ],
+      "promptGuidelines": [
+        "list_capability_recipes reads creative recipes, compatible models and reusable resources; read_vibing_director reads the selected Blender Director scene, asset library and spatial relationships. Recipe plans derive new outputs without replacing the source; saved style/effect/identity/palette resources reuse an existing result. GLB handoff stages an existing model; Director plans apply reviewed scene, actor, relation and camera edits.",
+        "Source/target node IDs come from look_at_canvas (a current-turn clientId is also accepted). Recipe, compatible vendor/model/variant/mode IDs, controls, limits and reusable-resource IDs come from list_capability_recipes; omitted model/mode uses a compatible default. Preserve the source and prior results.",
+        "Use exactly the listed recipe controls. portrait.mood generationMode=single|sample5|matrix5x5 expands to 1, 5 or 25 requests; requestedOutputs remains bounded by recipe/model limits. image.multiview.custom takes one ID, label and angle/framing descriptor per requested view.",
+        "Save user-approved labels, prompt fragments, source, license, commercial-use and credit facts; never invent rights. GLB handoff preserves provenance, uses the license note when copying into the Director library, and creates a destination only when targetNodeId is omitted.",
+        "Director node IDs come from look_at_canvas; existing object/camera/relation/asset references come from a fresh read_vibing_director. Choose stable IDs for new objects, relations and beats. Omitted cameraRef uses the active camera. Positions, lookAt and path points use Director Y-up XYZ scene units (Blender X,-Z,Y); rotations are XYZ Euler degrees, scale uses XYZ factors, FOV is degrees and distance is horizontal XZ scene units. Paths use seconds at 24 fps; beats allow at most 120 seconds. Framing fits all objects or targetRef, while fixed preserves pose. replace resets the scene; amend preserves existing state.",
+        "Creative component writes never start generation. Do not automatically resend a write after failure, timeout, cancellation or a pending paid confirmation; inspect the current state and wait for explicit user intent."
+      ],
+      "promptSnippet": "Hand off GLB.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "license": {
+            "description": "GLB license note",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "description": "GLB node ID",
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "description": "Destination",
+            "enum": [
+              "scene3d",
+              "vibingDirector"
+            ],
+            "type": "string"
+          },
+          "targetNodeId": {
+            "description": "Target node ID",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceNodeId",
+          "target"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": {
+        "operation": "apply_vibing_director_plan"
+      },
+      "alsoCovers": null,
+      "contractId": "creative.component.write",
+      "description": "Edit Director. The user wants local director scene edits based on a freshly read scene. Use read_vibing_director before editing, or handoff_model3d to import an existing GLB. This never renders or submits model generation. directorNodeId, object and asset references come from read_vibing_director. Supply a summary and validated semantic actions. The user sees the plan highlighted with a review card before it applies (in full-auto mode it applies and the result says so). The edit is reversible.",
+      "effect": "reversible_local",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "directorNodeId": "director-1",
+            "plan": {
+              "actions": [
+                {
+                  "op": "set_stage",
+                  "preset": "studio"
+                }
+              ],
+              "mode": "amend"
+            },
+            "summary": "Set up the studio"
+          },
+          "when": "Change the stage:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 60000
+      },
+      "internalGroup": "media",
+      "mcpTransportFields": null,
+      "name": "apply_vibing_director_plan",
+      "nextAction": "user_sees_review_card",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "internal"
+      ],
+      "promptGuidelines": [
+        "list_capability_recipes reads creative recipes, compatible models and reusable resources; read_vibing_director reads the selected Blender Director scene, asset library and spatial relationships. Recipe plans derive new outputs without replacing the source; saved style/effect/identity/palette resources reuse an existing result. GLB handoff stages an existing model; Director plans apply reviewed scene, actor, relation and camera edits.",
+        "Source/target node IDs come from look_at_canvas (a current-turn clientId is also accepted). Recipe, compatible vendor/model/variant/mode IDs, controls, limits and reusable-resource IDs come from list_capability_recipes; omitted model/mode uses a compatible default. Preserve the source and prior results.",
+        "Use exactly the listed recipe controls. portrait.mood generationMode=single|sample5|matrix5x5 expands to 1, 5 or 25 requests; requestedOutputs remains bounded by recipe/model limits. image.multiview.custom takes one ID, label and angle/framing descriptor per requested view.",
+        "Save user-approved labels, prompt fragments, source, license, commercial-use and credit facts; never invent rights. GLB handoff preserves provenance, uses the license note when copying into the Director library, and creates a destination only when targetNodeId is omitted.",
+        "Director node IDs come from look_at_canvas; existing object/camera/relation/asset references come from a fresh read_vibing_director. Choose stable IDs for new objects, relations and beats. Omitted cameraRef uses the active camera. Positions, lookAt and path points use Director Y-up XYZ scene units (Blender X,-Z,Y); rotations are XYZ Euler degrees, scale uses XYZ factors, FOV is degrees and distance is horizontal XZ scene units. Paths use seconds at 24 fps; beats allow at most 120 seconds. Framing fits all objects or targetRef, while fixed preserves pose. replace resets the scene; amend preserves existing state.",
+        "Creative component writes never start generation. Do not automatically resend a write after failure, timeout, cancellation or a pending paid confirmation; inspect the current state and wait for explicit user intent."
+      ],
+      "promptSnippet": "Edit Director.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "directorNodeId": {
+            "description": "Director ID",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "plan": {
+            "additionalProperties": true,
+            "description": "Scene edit plan",
+            "properties": {
+              "actions": {
+                "description": "Edit sequence",
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "action": {
+                      "description": "Beat action",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "actorAName": {
+                      "description": "Actor A name",
+                      "maxLength": 160,
+                      "type": "string"
+                    },
+                    "actorBName": {
+                      "description": "Actor B name",
+                      "maxLength": 160,
+                      "type": "string"
+                    },
+                    "aspectRatio": {
+                      "description": "Width:height",
+                      "enum": [
+                        "16:9",
+                        "9:16",
+                        "4:3",
+                        "3:4",
+                        "1:1",
+                        "2.39:1"
+                      ],
+                      "type": "string"
+                    },
+                    "assetId": {
+                      "description": "Asset ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "cameraNote": {
+                      "description": "Camera intent",
+                      "maxLength": 1000,
+                      "type": "string"
+                    },
+                    "cameraRef": {
+                      "description": "Camera ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "color": {
+                      "description": "RGB #RRGGBB",
+                      "pattern": "^#[0-9a-f]{6}$",
+                      "type": "string"
+                    },
+                    "dialogue": {
+                      "description": "Dialogue",
+                      "maxLength": 1000,
+                      "type": "string"
+                    },
+                    "distance": {
+                      "description": "XZ scene units",
+                      "maximum": 1000,
+                      "minimum": 0.05,
+                      "type": "number"
+                    },
+                    "durationSec": {
+                      "description": "Seconds",
+                      "maximum": 300,
+                      "minimum": 0.1,
+                      "type": "number"
+                    },
+                    "fov": {
+                      "description": "Degrees",
+                      "maximum": 160,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "framing": {
+                      "description": "Fit/keep pose",
+                      "enum": [
+                        "all",
+                        "target",
+                        "fixed"
+                      ],
+                      "type": "string"
+                    },
+                    "id": {
+                      "description": "Edit ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "Relation kind",
+                      "enum": [
+                        "facing",
+                        "distance",
+                        "support",
+                        "offset",
+                        "line_of_sight"
+                      ],
+                      "type": "string"
+                    },
+                    "lookAt": {
+                      "description": "Y-up XYZ aim",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "type": "array"
+                    },
+                    "mutual": {
+                      "description": "Face both",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Display name",
+                      "maxLength": 160,
+                      "type": "string"
+                    },
+                    "notes": {
+                      "description": "Beat notes",
+                      "maxLength": 1000,
+                      "type": "string"
+                    },
+                    "objectRef": {
+                      "description": "Object ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "op": {
+                      "description": "Edit kind",
+                      "enum": [
+                        "set_stage",
+                        "set_blocking_layout",
+                        "place_asset",
+                        "add_marker",
+                        "move_object",
+                        "remove_object",
+                        "set_relation",
+                        "remove_relation",
+                        "set_camera",
+                        "set_camera_path",
+                        "set_beat"
+                      ],
+                      "type": "string"
+                    },
+                    "points": {
+                      "description": "Y-up XYZ path",
+                      "items": {
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ],
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "maxItems": 32,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "position": {
+                      "description": "Y-up XYZ units",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "type": "array"
+                    },
+                    "preset": {
+                      "description": "Stage preset",
+                      "enum": [
+                        "empty",
+                        "studio",
+                        "coffee_shop",
+                        "city_street",
+                        "interior_room"
+                      ],
+                      "type": "string"
+                    },
+                    "relationRef": {
+                      "description": "Relation ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "role": {
+                      "description": "Marker role",
+                      "maxLength": 120,
+                      "type": "string"
+                    },
+                    "rotation": {
+                      "description": "XYZ degrees",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "type": "array"
+                    },
+                    "scale": {
+                      "description": "XYZ factors",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "type": "array"
+                    },
+                    "subjectRef": {
+                      "description": "Subject ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "targetRef": {
+                      "description": "Target ID",
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^(?!https?:\\/\\/)(?!file:)[a-zA-Z0-9_\\-.:\\u4e00-\\u9fff ]+$",
+                      "type": "string"
+                    },
+                    "template": {
+                      "description": "Blocking preset",
+                      "enum": [
+                        "coffee_two_person_conversation"
+                      ],
+                      "type": "string"
+                    },
+                    "title": {
+                      "description": "Beat title",
+                      "maxLength": 160,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 24,
+                "minItems": 1,
+                "type": "array"
+              },
+              "brief": {
+                "description": "Plan intent",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "mode": {
+                "description": "Reset/amend",
+                "enum": [
+                  "replace",
+                  "amend"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "actions"
+            ],
+            "type": "object"
+          },
+          "summary": {
+            "description": "Review text",
+            "maxLength": 600,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "directorNodeId",
+          "summary",
+          "plan"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": null,
+      "alsoCovers": null,
+      "contractId": "director.render",
+      "description": "Render existing scene3d via local Blender to linked PNG/GLB nodes. The user wants a local director preview in Nomi desktop. Use nomi_generate_batch for existing model-generation nodes, or apply_vibing_director_plan for semantic scene edits. sourceNodeId comes from nomi_read target=canvas; leaseHandle is the canvas:write project-session lease. The change lands in the project as a reversible local edit (in step-by-step approval mode the user confirms it first; otherwise it applies right away). This local edit grants no new spending permission; use the tool result for any generation status.",
+      "effect": "reversible_local",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "sourceNodeId": "scene-1",
+            "stagePreset": "studio"
+          },
+          "when": "Preview an existing scene:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 60000
+      },
+      "internalGroup": null,
+      "mcpTransportFields": null,
+      "name": "nomi_render_director",
+      "nextAction": "none",
+      "profileReason": "headlessHost",
+      "profiles": [
+        "mcp"
+      ],
+      "promptGuidelines": [
+        "Nomi desktop; canvas:write lease. No provider generation; returns IDs, not media. Not idempotent: never auto-resend after failure/timeout/cancellation; inspect state."
+      ],
+      "promptSnippet": "Render existing scene3d via local Blender to linked PNG/GLB nodes.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "sourceNodeId": {
+            "description": "Scene3d node ID from nomi_read target=canvas",
+            "minLength": 1,
+            "type": "string"
+          },
+          "stagePreset": {
+            "description": "Stage preset",
+            "enum": [
+              "empty",
+              "studio",
+              "coffee_shop",
+              "city_street",
+              "interior_room"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceNodeId"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "aliasBoundInput": null,
+      "alsoCovers": null,
+      "contractId": "generation.batch",
+      "description": "Request native batch confirmation for 1-24 existing nodes. The user wants to generate existing canvas nodes. Use nomi_render_director for local scene3d previews, or draft_shots to prepare new shots. nodeIds come from nomi_read target=canvas; leaseHandle is the generation:plan project-session lease. The user's provider credit is spent only after the user approves the card in the host; the call itself never spends.",
+      "effect": "spend",
+      "effectGroups": null,
+      "examples": [
+        {
+          "arguments": {
+            "nodeIds": [
+              "node-1",
+              "node-2"
+            ]
+          },
+          "when": "Request a batch confirmation:"
+        }
+      ],
+      "execution": {
+        "timeoutMs": 60000
+      },
+      "internalGroup": null,
+      "mcpTransportFields": null,
+      "name": "nomi_generate_batch",
+      "nextAction": "user_sees_spend_card",
+      "profileReason": "paidBoundary",
+      "profiles": [
+        "mcp"
+      ],
+      "promptGuidelines": [
+        "Nomi desktop; generation:plan lease. Pending human spending confirmation, not media; caller flags never approve spending. Deduplicates IDs in order, not an idempotency key. Never auto-resend after failure/timeout/cancellation or pending confirmation; inspect state and await explicit user intent."
+      ],
+      "promptSnippet": "Request native batch confirmation for 1-24 existing nodes.",
+      "publishedJsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "description": "Node IDs from nomi_read target=canvas",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 24,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodeIds"
         ],
         "type": "object"
       }

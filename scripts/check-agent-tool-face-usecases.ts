@@ -23,9 +23,9 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
 const published = modelFacingToolSpecs("internal").map((spec) => spec.name);
 const errors: string[] = validateAgentToolFaceUsecases(manifest, published);
 
-// 21 = 设计正本的 20 个动词 + 2026-09-21 的通用反问 `ask_user`。这个数手写而不是从
+// 27 = 原21 + 2026-10-25用户明确批准的6项现有创意/导演工具。这个数手写而不是从
 // 投影数出来，理由与 `check-model-face-frozen.mjs` 里那个一样：动它就等于一次签名。
-if (published.length !== 21) errors.push(`internal profile publishes ${published.length} verbs, the design says 21: ${published.join(", ")}`);
+if (published.length !== 27) errors.push(`internal profile publishes ${published.length} verbs, the approved design says 27: ${published.join(", ")}`);
 
 // ── 技能面：题库里点名的每一条技能都必须真的装着，而且真的能在 composer 里选中 ──────────
 //

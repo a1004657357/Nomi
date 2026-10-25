@@ -14,6 +14,7 @@ import { LAYOUT_READ_CAPABILITY, LAYOUT_WRITE_CAPABILITY } from "./layout";
 import { MODEL_ONBOARDING_REMOVE_CAPABILITY, MODEL_ONBOARDING_SETUP_CAPABILITY, MODEL_ONBOARDING_TRY_CAPABILITY } from "./modelOnboarding";
 import { MODEL_SETUP_OPEN_CAPABILITY } from "./modelSetup";
 import { CREATIVE_COMPONENT_READ_CAPABILITY, CREATIVE_COMPONENT_WRITE_CAPABILITY } from "./creativeComponent";
+import { DIRECTOR_RENDER_CAPABILITY, GENERATION_BATCH_REQUEST_CAPABILITY } from "./localCanvasOperations";
 import {
   PRODUCTION_ARTIFACT_WRITE_CAPABILITY,
   PRODUCTION_RUN_READ_CAPABILITY,
@@ -93,6 +94,8 @@ describe("capability contract registry", () => {
       MODEL_ONBOARDING_REMOVE_CAPABILITY,
       CREATIVE_COMPONENT_READ_CAPABILITY,
       CREATIVE_COMPONENT_WRITE_CAPABILITY,
+      DIRECTOR_RENDER_CAPABILITY,
+      GENERATION_BATCH_REQUEST_CAPABILITY,
     ]);
 
     const ids = CAPABILITY_CONTRACTS.map((contract) => contract.id);
@@ -138,6 +141,8 @@ describe("capability contract registry", () => {
       "model.onboarding.remove",
       "creative.component.read",
       "creative.component.write",
+      "director.render",
+      "generation.batch",
     ]);
     // 主别名按 surface 摆平：`pi` 只放模型可见动词名（与 `verbDeclarations.ts` 对账，门岗
     // `no-orphan-alias`），`method` 放宿主/dispatcher 方法名，`mcp` 放对外名，`ui` 放渲染层入口名。
@@ -164,6 +169,7 @@ describe("capability contract registry", () => {
       "try_model", "nomi_try_model",
       "remove_model_provider", "nomi_remove_provider",
       "list_capability_recipes", "apply_capability_recipe",
+      "nomi_render_director", "nomi_generate_batch",
     ]);
     expect(CAPABILITY_CONTRACTS.find((contract) => contract.id === "canvas.read")?.exposure).toBe("mcp_safe");
     expect(CAPABILITY_CONTRACTS.every((contract) => CAPABILITY_EFFECT_CLASSES.includes(contract.effectClass))).toBe(true);

@@ -9,7 +9,7 @@ import { modelFacingToolSpecs } from '../electron/shared/agentCapabilities/model
 import { creativeComponentArgumentSchemas } from '../electron/shared/agentCapabilities/creativeComponentSchemas.ts'
 const manifest = JSON.parse(fs.readFileSync(new URL('../tests/system/agent-tool-face-usecases.json', import.meta.url), 'utf8'))
 const published = modelFacingToolSpecs('internal').map(spec => spec.name)
-test('frozen counts independently include both MCP-only declaration families without approving an internal increase', () => {
+test('approved internal count stays exact while both MCP-only declaration families are independently counted', () => {
   const text = fs.readFileSync(new URL('./check-model-face-frozen.mjs', import.meta.url), 'utf8')
   const tree = ts.createSourceFile('check-model-face-frozen.mjs', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   const declarations = new Map()
@@ -20,7 +20,7 @@ test('frozen counts independently include both MCP-only declaration families wit
     ts.forEachChild(node, visit)
   }
   visit(tree)
-  assert.equal(declarations.get('EXPECTED_INTERNAL_VERB_COUNT').getText(tree), '21', 'the internal freeze still requires separate human approval')
+  assert.equal(declarations.get('EXPECTED_INTERNAL_VERB_COUNT').getText(tree), '27', 'only the explicitly approved internal catalog is accepted')
   const initializer = declarations.get('expectedMcpOnlyCount').getText(tree)
   assert.ok(!/face\.|captureModelFace|VERB_DECLARATIONS/.test(initializer), 'expected declarations cannot be derived from the assembled surface')
   const isMcpOnly = new Function(`return (${declarations.get('isMcpOnly').getText(tree)})`)()

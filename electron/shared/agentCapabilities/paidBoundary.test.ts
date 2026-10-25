@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { CAPABILITY_CONTRACTS } from "./registry";
 import { LANE_MODEL_TOOL_CATALOG } from "../../agentLane/laneToolCatalog";
+import { GENERATION_BATCH_REQUEST_CAPABILITY } from "./localCanvasOperations";
 import {
   PAID_CAPABILITY_CONTRACTS,
   assertPaidBoundaryExternalSurface,
@@ -18,8 +19,8 @@ import {
 
 describe("付费边界（方案 §3.1 第二行）", () => {
   it("唯一判据是契约上的 effect:\"paid\"", () => {
-    // 2026-09-21 起是两条：Run 的付费门，和接模型的试跑（一次真实生成 = 真花钱）。
-    expect(PAID_CAPABILITY_CONTRACTS.map((contract) => contract.id)).toEqual(["generation.gate", "model.onboarding.try"]);
+    // The existing batch-confirmation request also retains its paid-boundary classification.
+    expect(PAID_CAPABILITY_CONTRACTS.map((contract) => contract.id)).toEqual(["generation.gate", "model.onboarding.try", "generation.batch"]);
     // 阳性对照：判据真的在读契约，而不是抄了一个 id。
     expect(CAPABILITY_CONTRACTS.filter((contract) => contract.effect === "paid").map((c) => c.id))
       .toEqual(PAID_CAPABILITY_CONTRACTS.map((c) => c.id));
@@ -81,5 +82,7 @@ describe("付费边界（方案 §3.1 第二行）", () => {
   it("同一个函数回答两个面的问题——这才是「只表达一次」在代码里的形状", () => {
     expect(isPaidBoundaryAlias("nomi_start_generation")).toBe(true);
     expect(isPaidBoundaryAlias("read_timeline")).toBe(false);
+    expect(isPaidBoundaryAlias("nomi_generate_batch")).toBe(true);
+    expect(projectsToInternalProfile(GENERATION_BATCH_REQUEST_CAPABILITY)).toBe(false);
   });
 });

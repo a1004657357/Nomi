@@ -194,6 +194,8 @@ Claude Code 会依次调 `nomi_project_create` → `nomi_read`（target=models�
 
 ### MCP 工具
 
+当前目录为 26 个工具；完整参数与即时数量以本机 `tools/list` 为准。
+
 对外 MCP 以对象与 action/phase 组织工具，应用内 Agentlane 使用模型动词；两者不是可互换的工具名。读侧使用 `nomi_read`，画布写侧使用带租约的语义入口；付费确认和执行仍然分开。完整目录与数量以本机 `tools/list` 为准。
 
 | 工具 | 对应 |
@@ -216,14 +218,18 @@ Claude Code 会依次调 `nomi_project_create` → `nomi_read`（target=models�
 | `nomi_run_gate` | Run 的确认门（`action`=decide 表态可逆创意门 / materialize 把已批分镜落画布并登记 jobs+预算）；服务端会再次向真人确认，不能决定预算、逐镜头付费、导出或发布 |
 | `nomi_model_setup` | 接模型（`action`=connect_provider / submit_declaration / show_models / cancel）。`connect_provider` 打开 Nomi 的贴 key 页并开一次接入；`submit_declaration` 交一张声明卡，Nomi 一跳做完三件（形状校验 + 同源 + 免费自检）并登记，模型进模型框标「未试跑」。密钥永不经 Agent；`baseUrl / authType / authHeader / authQueryParam / authScheme / proxyUrl` 一律不是任何工具的入参（`check:credential-origin` 盯着）。 |
 | `nomi_remove_provider` | 永久删除一条连接（含已存密钥）或它的几个模型。撤不回，所以要带 `nomi_read target=models` 返回的 `fingerprint`；隐藏模型请用 `nomi_model_setup action=show_models visible=false`。 |
+| `nomi_try_model` | 为已连接模型申请一次真实试跑，仍须原生确认；可能消耗额度，不代替接入自检，结果不明时不自动重提 |
 | `nomi_project_create` | 新建一个空白 Nomi 项目，返回项目 id |
 | `nomi_timeline_read` | 读取时间轴快照或指定范围（只读） |
 | `nomi_timeline_edit` | 预览、申请或撤销时间轴编辑；apply/undo 必须回到 Nomi 宿主确认 |
 | `nomi_export_job` | 查询导出状态或验证渲染结果；启动/取消导出仍是宿主专属 |
 | `nomi_media_query` | 查询项目媒体、素材范围或波形信息（只读） |
 | `nomi_render_director` | 自定义本地 Blender 预演入口；只接受已有导演节点与受限场景预设，不接受脚本或任意命令 |
+| `nomi_generate_batch` | 对已有节点申请 Nomi 原生批量确认；不替真人授权，不直接开始生成，未确认或结果不明时不自动重提 |
 
-`nomi_render_director` 需要 `projectId` 和指向已有 `scene3d` 节点的 `sourceNodeId`。可选 `stagePreset` 仅支持 `empty`、`studio`、`coffee_shop`、`city_street`、`interior_room`；场景状态由 Nomi 读取，外部调用方不能提交脚本。该工具依赖 Nomi 主进程的本地 Blender 能力，不是付费图像或视频生成入口。
+`nomi_render_director` 需要有效的项目 `leaseHandle`、`projectId` 和指向已有 `scene3d` 节点的 `sourceNodeId`。可选 `stagePreset` 仅支持 `empty`、`studio`、`coffee_shop`、`city_street`、`interior_room`；场景状态由 Nomi 读取，外部调用方不能提交脚本。该工具依赖 Nomi 主进程的本地 Blender 能力，不是付费图像或视频生成入口。
+
+`nomi_generate_batch` 同样需要有效的项目租约；`nodeIds` 来自当前画布，最多 24 项。它返回等待确认的节点清单，实际模型、参数、上传、预算和执行仍由 Nomi 的原确认与执行链决定。
 
 ---
 
