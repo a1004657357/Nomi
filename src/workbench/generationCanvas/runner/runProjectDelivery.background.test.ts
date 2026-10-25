@@ -181,9 +181,9 @@ it.each([false, true])('does not submit a node deleted during author validation 
   expect(useGenerationCanvasStore.getState().nodes.find(candidate => candidate.id === node.id)).toBeUndefined()
 })
 
-it('does not resurrect the initial node on a retry after deletion', async () => {
+it('does not resurrect the initial text node on a safe transport retry after deletion', async () => {
   const target = await session.open('project-a')
-  const node = useGenerationCanvasStore.getState().addNode({ kind: 'image', prompt: 'delete during failed attempt' })
+  const node = useGenerationCanvasStore.getState().addNode({ kind: 'text', prompt: 'delete during failed attempt' })
   const executor = vi.fn(async (): Promise<GenerationNodeResult> => {
     useGenerationCanvasStore.getState().deleteNode(node.id)
     throw new TypeError('failed to fetch')
@@ -192,6 +192,32 @@ it('does not resurrect the initial node on a retry after deletion', async () => 
     target, assetUploadConsent: 'not-needed', executor, retry: { maxAttempts: 2, baseDelayMs: 0 },
   })).rejects.toThrow('node not found')
   expect(executor).toHaveBeenCalledOnce()
+  expect(useGenerationCanvasStore.getState().nodes.find(candidate => candidate.id === node.id)).toBeUndefined()
+})
+
+it('retries a safe text transport failure when the original node still exists', async () => {
+  const target = await session.open('project-a')
+  const node = useGenerationCanvasStore.getState().addNode({ kind: 'text', prompt: 'safe retry positive' })
+  const executor = vi.fn<() => Promise<GenerationNodeResult>>()
+    .mockRejectedValueOnce(new TypeError('failed to fetch'))
+    .mockResolvedValueOnce({ id: 'text-result', type: 'text', text: 'done', createdAt: 1 })
+  await expect(runGenerationNode(node.id, { target, assetUploadConsent: 'not-needed', executor,
+    retry: { maxAttempts: 2, baseDelayMs: 0 } })).resolves.toMatchObject({ id: 'text-result', type: 'text' })
+  expect(executor).toHaveBeenCalledTimes(2)
+})
+
+it.each(['image', 'video', 'model3d'] as const)('does not resubmit %s with an unknown submission, including after deletion', async kind => {
+  const target = await session.open('project-a')
+  const node = useGenerationCanvasStore.getState().addNode({ kind, prompt: 'media unknown' })
+  const error = Object.assign(new Error('media submission outcome unknown'), { structured: { category: 'submission-unknown', retryable: true } })
+  const executor = vi.fn(async (): Promise<GenerationNodeResult> => {
+    useGenerationCanvasStore.getState().deleteNode(node.id)
+    throw error
+  })
+  await expect(runGenerationNode(node.id, { target, assetUploadConsent: 'not-needed', executor,
+    retry: { maxAttempts: 2, baseDelayMs: 0 } })).rejects.toThrow('media submission outcome unknown')
+  expect(executor).toHaveBeenCalledOnce()
+  expect(useGenerationCanvasStore.getState().nodes.find(candidate => candidate.id === node.id)).toBeUndefined()
 })
 
 

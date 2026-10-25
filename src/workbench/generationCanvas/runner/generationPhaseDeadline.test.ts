@@ -187,8 +187,21 @@ describe('到点收场的错误永远不进自动重试（重试 = 重新提交 
     expect(isRetryableGenerationError(new RecoverableTimeoutError(detail, { lastError: new TypeError('Failed to fetch') }))).toBe(false)
     expect(isRetryableGenerationError(new RecoverableTimeoutError(detail, { lastError: new Error('Fetch timed out after 860000ms') }))).toBe(false)
     expect(isRetryableGenerationError(new GenerationPhaseStalledError('requesting', 'fail-maybe-charged', TICK_MS))).toBe(false)
-    // 阳性对照：同样的原话在普通错误上照旧重试，说明是按类型排除、不是把重试整个关了。
-    expect(isRetryableGenerationError(new TypeError('Failed to fetch'))).toBe(true)
+    // 只有明确的文本传输错误是阳性；媒体/未知 kind 不能据此证明可安全重提。
+    expect(isRetryableGenerationError(new TypeError('Failed to fetch'), 'text')).toBe(true)
+  })
+
+  it.each([undefined, 'image', 'video', 'model3d'])('媒体或未声明 kind=%s 的网络错误不自动重发', kind => {
+    expect(isRetryableGenerationError(new TypeError('Failed to fetch'), kind)).toBe(false)
+    expect(isRetryableGenerationError(new Error('Fetch timed out'), kind)).toBe(false)
+  })
+
+  it.each(['text', 'image', 'video'])('kind=%s 也不能重试未知提交、可找回或取消', kind => {
+    expect(isRetryableGenerationError(Object.assign(new Error('unknown submission'), {
+      structured: { category: 'submission-unknown', retryable: true },
+    }), kind)).toBe(false)
+    expect(isRetryableGenerationError(new RecoverableTimeoutError({ taskId: 't', vendor: 'v', modelKey: 'm', taskKind: 'text_to_video' }, { lastError: new TypeError('Failed to fetch') }), kind)).toBe(false)
+    expect(isRetryableGenerationError(new Error('NOMI_ERR::operation-cancelled:: cancelled'), kind)).toBe(false)
   })
 })
 

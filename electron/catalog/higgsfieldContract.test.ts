@@ -67,7 +67,7 @@ describe("Higgsfield 状态词映射", () => {
     ["in_progress", "running"],
     ["completed", "succeeded"],
     ["failed", "failed"],
-    ["canceled", "failed"],
+    ["canceled", "cancelled"],
   ];
   for (const [raw, expected] of bySharedVocabulary) {
     it(`${raw} 由通用词表认出 → ${expected}（故不进本表）`, () => {
@@ -78,6 +78,14 @@ describe("Higgsfield 状态词映射", () => {
       expect(Object.values(HIGGSFIELD_STATUS_MAPPING).flat()).not.toContain(raw);
     });
   }
+
+  it('does not collapse cancellation into failure or an unknown status into a terminal result', () => {
+    expect(resolve('canceled').status).toBe('cancelled');
+    expect(resolve('canceled').status).not.toBe(resolve('failed').status);
+    const unknown = resolve('awaiting_policy_review');
+    expect(unknown.status).toBe('queued');
+    expect(unknown.unrecognizedStatus).toBe('awaiting_policy_review');
+  });
 
   it("in_progress 出现在真实轮询里（文档没列它），通用词表认得", () => {
     const live = fixture("in-progress.json");

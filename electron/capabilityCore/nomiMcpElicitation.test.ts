@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { createMcpProtocol, type McpTransport } from './mcpProtocol'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { createProjectLeaseAuthority } from './projectLease'
+import { createProjectLeaseStore } from './projectLeaseStore'
 
 // MCP 协议层的 elicitation 付费确认握手。
 // 验证手搓双向 JSON-RPC：服务端能发 elicitation/create 给客户端、按 id 路由响应、按确认结果放行/拦截。
@@ -67,9 +72,32 @@ class ProtocolHarness {
 }
 
 let harness: ProtocolHarness | null = null
+const tempDirs: string[] = []
+
+async function directorLeaseFixture(scopeSet = ['canvas:write']) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-mcp-elicitation-lease-'))
+  tempDirs.push(root)
+  const now = () => '2026-10-25T00:00:00.000Z'
+  const connection = { authenticatedClient: 'codex', principal: 'mcp:codex', sessionId: 'fixture-session', connectionNonce: 'fixture-connection' } as const
+  const identity = { projectId: 'p', immutableProjectUuid: 'fixture-uuid', projectGeneration: 1, canonicalRootDigest: 'fixture-root' }
+  const authority = createProjectLeaseAuthority({
+    macKey: 'fixture-only-authority', now,
+    store: createProjectLeaseStore({ filePath: path.join(root, 'leases'), macKey: 'fixture-only-store', now }),
+    verifyProjectIdentity: async projectId => {
+      if (projectId !== identity.projectId) throw new Error('fixture project unavailable')
+      return identity
+    },
+  })
+  const selection = authority.issueSelectionHandle({ ...identity, manifestDigest: 'fixture-manifest', scopeSet }, connection)
+  const { token } = await authority.issueLease(selection.token, connection)
+  return { token, verify: (params: Record<string, unknown>) => authority.verifyLease(String(params.leaseHandle), {
+    connection, projectHint: String(params.projectId), scope: 'canvas:write',
+  }) }
+}
 
 afterEach(() => {
   harness = null
+  for (const root of tempDirs.splice(0)) fs.rmSync(root, { recursive: true, force: true })
 })
 
 describe('nomi-mcp · retired direct generation route', () => {
@@ -119,23 +147,46 @@ describe('nomi-mcp · 创意门由服务端强制 elicitation', () => {
   })
 
   it('director tool 直接路由到受约束的 director.render，不触发付费确认', async () => {
-    harness = new ProtocolHarness(true)
+    const lease = await directorLeaseFixture()
+    const render = vi.fn(async () => ({ jobId: 'director-job', previewNodeId: 'preview-node' }))
+    harness = new ProtocolHarness(true, async (method, params) => {
+      expect(method).toBe('director.render')
+      await lease.verify(params)
+      return render()
+    })
     await harness.initialize(true)
-    harness.invoke.mockResolvedValueOnce({ jobId: 'director-job', previewNodeId: 'preview-node' })
     harness.send({
       jsonrpc: '2.0',
       id: 3,
       method: 'tools/call',
-      params: { name: 'nomi_render_director', arguments: { projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' } },
+      params: { name: 'nomi_render_director', arguments: { leaseHandle: lease.token, projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' } },
     })
     const toolRes = await harness.next()
     expect(harness.invoke).toHaveBeenCalledWith(
       'director.render',
-      { projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' },
+      { leaseHandle: lease.token, projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' },
     )
     const result = toolRes.result as { content: Array<{ text: string }>; isError?: boolean }
     expect(result.isError).toBeUndefined()
     expect(result.content[0].text).toContain('director-job')
+    expect(render).toHaveBeenCalledOnce()
+  })
+
+  it.each(['missing', 'tampered', 'foreign-project', 'wrong-scope'] as const)('does not run a local Director action with a %s lease', async failure => {
+    const lease = await directorLeaseFixture(failure === 'wrong-scope' ? ['canvas:read'] : ['canvas:write'])
+    const render = vi.fn()
+    harness = new ProtocolHarness(true, async (_method, params) => { await lease.verify(params); return render() })
+    await harness.initialize(true)
+    const args: Record<string, unknown> = { leaseHandle: lease.token, projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' }
+    if (failure === 'missing') delete args.leaseHandle
+    if (failure === 'tampered') args.leaseHandle = 'not-issued'
+    if (failure === 'foreign-project') args.projectId = 'foreign'
+    harness.send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nomi_render_director', arguments: args } })
+    const response = await harness.next()
+    expect(response.id).toBe(3)
+    expect(response.result).toMatchObject({ isError: true })
+    expect(harness.invoke).toHaveBeenCalledTimes(failure === 'missing' ? 0 : 1)
+    expect(render).not.toHaveBeenCalled()
   })
 
   it('真人拒绝：只读当前门，不应用决定', async () => {

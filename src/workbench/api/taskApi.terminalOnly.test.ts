@@ -23,9 +23,9 @@ const inFlight = statuses.filter((status) => TASK_STATUS_PHASE[status] === 'in-f
 const terminal = statuses.filter((status) => TASK_STATUS_PHASE[status] === 'terminal')
 
 describe('非终态不产出 generation.completed', () => {
-  it('状态表里有排队 / 运行两种非终态和成功 / 失败两种终态（有人改了表，这里要跟着看一眼）', () => {
-    expect(inFlight.sort()).toEqual(['queued', 'running'])
-    expect(terminal.sort()).toEqual(['failed', 'succeeded'])
+  it('canonical 六状态分为 queued/running/unknown 在途与 succeeded/failed/cancelled 终态', () => {
+    expect(inFlight.sort()).toEqual(['queued', 'running', 'unknown'])
+    expect(terminal.sort()).toEqual(['cancelled', 'failed', 'succeeded'])
   })
 
   it.each(inFlight)('提交返回 %s：不报', async (status) => {
@@ -51,6 +51,18 @@ describe('非终态不产出 generation.completed', () => {
     installDesktop()
     run.mockResolvedValue(task('t-sync', status))
     await runWorkbenchTaskByVendor('v', { kind: 'text_to_image', prompt: 'p', extras: {} }, null)
+    expect(completed()).toHaveLength(1)
+  })
+
+  it.each(terminal)('轮询进入 %s 后重复查询也只上报一次', async status => {
+    installDesktop()
+    const id = `poll-terminal-${status}`
+    run.mockResolvedValue(task(id, 'unknown'))
+    await runWorkbenchTaskByVendor('v', { kind: 'text_to_video', prompt: 'p', extras: {} }, null)
+    expect(completed()).toHaveLength(0)
+    result.mockResolvedValue({ vendor: 'v', result: task(id, status) })
+    await fetchWorkbenchTaskResultByVendor({ taskId: id, vendor: 'v', projectId: null })
+    await fetchWorkbenchTaskResultByVendor({ taskId: id, vendor: 'v', projectId: null })
     expect(completed()).toHaveLength(1)
   })
 

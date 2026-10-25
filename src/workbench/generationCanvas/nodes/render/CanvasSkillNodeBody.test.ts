@@ -1,5 +1,5 @@
 import React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { SkillListItemDto } from '../../../api/skillApi'
 import type {
@@ -8,6 +8,7 @@ import type {
 } from '../../model/generationCanvasTypes'
 import { buildCanvasSkillNodeState } from '../../skills/canvasSkillModel'
 import CanvasSkillNodeBody from './CanvasSkillNodeBody'
+import i18n from '../../../../i18n'
 
 const mockCanvasStore = vi.hoisted(() => ({
   nodes: [] as GenerationCanvasNode[],
@@ -69,25 +70,29 @@ const imageNode: GenerationCanvasNode = {
   },
 }
 
-function renderBody(): string {
-  return renderToStaticMarkup(React.createElement(CanvasSkillNodeBody, { node: skillNode }))
+function renderBody(readOnly = false): string {
+  return renderToStaticMarkup(React.createElement(CanvasSkillNodeBody, { node: skillNode, readOnly }))
 }
 
 function recipeButtonTag(markup: string): string {
-  return markup.match(/<button[^>]*aria-label="配置并运行 多机位九宫格"[^>]*>/)?.[0] ?? ''
+  return markup.match(/<button[^>]*data-recipe-ready="(?:true|false)"[^>]*>/)?.[0] ?? ''
 }
 
 describe('CanvasSkillNodeBody recipe readiness', () => {
-  beforeEach(() => {
+  const initialLanguage = i18n.language
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh-CN')
     mockCanvasStore.nodes = [skillNode]
     mockCanvasStore.edges = []
   })
+  afterEach(async () => { await i18n.changeLanguage(initialLanguage) })
 
   it('shows the missing typed input and disables recipe configuration', () => {
     const markup = renderBody()
     expect(markup).toContain('data-recipe-ready="false"')
     expect(markup).toContain('缺图片')
-    expect(markup).toContain('>配置并运行</span>')
+    expect(markup).toContain('>配置</span>')
+    expect(recipeButtonTag(markup)).toContain('aria-label="配置并运行 多机位九宫格"')
     expect(recipeButtonTag(markup)).toContain('disabled=""')
   })
 
@@ -105,5 +110,31 @@ describe('CanvasSkillNodeBody recipe readiness', () => {
     expect(markup).toContain('data-recipe-ready="true"')
     expect(markup).toContain('已就绪')
     expect(recipeButtonTag(markup)).not.toContain('disabled=""')
+  })
+
+  it('localizes the built-in display name without rewriting node inputs or enabling missing input', async () => {
+    const originalNode = JSON.stringify(skillNode)
+    await i18n.changeLanguage('en')
+    const markup = renderBody()
+    expect(markup).toContain('>Configure</span>')
+    expect(recipeButtonTag(markup)).toContain('aria-label="Configure and run Nine-view camera grid"')
+    expect(recipeButtonTag(markup)).toContain('disabled=""')
+    expect(JSON.stringify(skillNode)).toBe(originalNode)
+  })
+
+  it('does not accept a connected video as the required image', () => {
+    mockCanvasStore.nodes = [skillNode, { ...imageNode, kind: 'video', result: { ...imageNode.result!, type: 'video' } }]
+    mockCanvasStore.edges = [{ id: 'wrong-media', source: imageNode.id, target: skillNode.id, mode: 'reference', order: 0 }]
+    const markup = renderBody()
+    expect(markup).toContain('data-recipe-ready="false"')
+    expect(recipeButtonTag(markup)).toContain('disabled=""')
+  })
+
+  it('keeps a valid recipe disabled on a read-only surface', () => {
+    mockCanvasStore.nodes = [imageNode, skillNode]
+    mockCanvasStore.edges = [{ id: 'read-only', source: imageNode.id, target: skillNode.id, mode: 'reference', order: 0 }]
+    const markup = renderBody(true)
+    expect(markup).toContain('data-recipe-ready="true"')
+    expect(recipeButtonTag(markup)).toContain('disabled=""')
   })
 })

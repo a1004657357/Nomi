@@ -1,0 +1,30 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-stale-fixture-contract-alignment",
+  "change_kind": "structural",
+  "problem_type": "Bounded test characterizations and mocks lag existing production contracts",
+  "symptom": "Eleven assigned tests fail on the fixed integration base because fixtures still model removed transports, four states, missing exports/leases/window events or old labels.",
+  "direct_cause": "Test doubles and exact assertions were not updated when their existing owners changed; a missing error-class export also masks the missing request-role export.",
+  "class_root": "Test boundaries must retain real contract identities and negative authorization/retry controls rather than approximating or bypassing them.",
+  "scope_paths": [
+    "electron/agentLane/laneDesktopStructure.test.ts", "electron/catalog/customCallFalQueueFixture.test.ts", "electron/catalog/higgsfieldContract.test.ts", "electron/jimengWeb/ipc.test.ts", "electron/capabilityCore/mcpSurfaceCollapse.test.ts", "electron/capabilityCore/nomiMcpElicitation.test.ts", "src/workbench/api/taskApi.terminalOnly.test.ts", "src/workbench/generationCanvas/runner/generationPhaseDeadline.test.ts", "src/workbench/generationCanvas/runner/runProjectDelivery.background.test.ts", "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.test.ts", "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.test.ts"
+  ],
+  "affected_population": ["Assigned offline Vitest contract fixtures on 09221429e"],
+  "entry_points": ["Three explicit maxWorkers=1 test groups"],
+  "external_sources": [],
+  "internal_only_reason": "Current repository owners and recorded fixtures decide the expected semantics; no external API, dependency or production behavior is changed.",
+  "invariants": ["Production bytes, callbacks, Host/capability guards and budgets remain unchanged", "No new skip or timeout changes", "Retired chatV2/MCP surfaces remain forbidden", "A fixture must provide a genuine scoped lease rather than exempting itself", "Text retry positive controls coexist with media unknown no-resend negatives", "Canonical cancelled/unknown semantics and existing compact display contracts are preserved"],
+  "structural_evidence": {
+    "affected_paths": ["electron/agentLane/laneDesktopStructure.test.ts", "electron/catalog/customCallFalQueueFixture.test.ts", "electron/catalog/higgsfieldContract.test.ts", "electron/jimengWeb/ipc.test.ts", "electron/capabilityCore/mcpSurfaceCollapse.test.ts", "electron/capabilityCore/nomiMcpElicitation.test.ts", "src/workbench/api/taskApi.terminalOnly.test.ts", "src/workbench/generationCanvas/runner/generationPhaseDeadline.test.ts", "src/workbench/generationCanvas/runner/runProjectDelivery.background.test.ts", "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.test.ts", "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.test.ts"],
+    "preserved_exports": [],
+    "behavior_preservation": "This is a test-only structural alignment, not a production corrective claim. All production files are byte-identical to the fixed base; original positive/negative assertions remain except precisely superseded expectations, replaced by owner-backed controls.",
+    "verification_limits": "Only grouped offline tests with one worker; no App, Provider, full suite, PNG or frozen/count baselines. The existing C9 skip is unchanged. Final independent review belongs to a different reviewer."
+  },
+  "regression_tests": ["electron/agentLane/laneDesktopStructure.test.ts", "electron/catalog/customCallFalQueueFixture.test.ts", "electron/catalog/higgsfieldContract.test.ts", "electron/jimengWeb/ipc.test.ts", "electron/capabilityCore/mcpSurfaceCollapse.test.ts", "electron/capabilityCore/nomiMcpElicitation.test.ts", "src/workbench/api/taskApi.terminalOnly.test.ts", "src/workbench/generationCanvas/runner/generationPhaseDeadline.test.ts", "src/workbench/generationCanvas/runner/runProjectDelivery.background.test.ts", "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.test.ts", "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.test.ts"],
+  "legacy_paths": {"status":"not-applicable","removed_paths":[],"rationale":"Update assigned tests in place; production retirement guards and execution paths remain unchanged."},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"Use installed Vitest/TypeScript, Node EventEmitter and existing authorities without dependency changes.","exit_criteria":[]},
+  "migration": "No runtime, project, source-input or baseline migration; only assigned offline fixtures and characterizations change.",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": ["Out-of-scope failures from the historical inventory are not addressed", "Any newly exposed production defect must be reported, not hidden by assertions", "No final independent review is provided by this author"]
+}

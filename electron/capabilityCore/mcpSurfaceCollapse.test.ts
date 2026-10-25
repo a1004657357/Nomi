@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { MCP_TOOL_NAMES } from './mcpProtocol'
 import { MCP_TOOL_RESOLVER, CANVAS_READ_METHOD, type McpToolDefinition } from './mcpToolCatalog'
+import { localCanvasVerbs } from '../shared/agentCapabilities/verbs/localCanvasVerbs'
 
 // 面收敛（surface-16-collapse）等价锚 + P1 无并行版断言。
 // ① 退役：42 个旧 MCP name 同 commit 从目录删净（resolve→undefined、不在 tools/list、不在 MCP_TOOL_NAMES）。
@@ -44,7 +45,8 @@ const M2_EDITING_TOOL_NAMES = [
   // 不是 `nomi_model_setup` 的第五个 action——付费边界的全部判据都挂在契约的 effect 上。
   'nomi_model_setup', 'nomi_try_model', 'nomi_remove_provider',
 ]
-const NEW_TOOL_NAMES = [...COLLAPSED_TOOL_NAMES, ...M2_EDITING_TOOL_NAMES]
+const PRESERVED_DESKTOP_TOOL_NAMES = ['nomi_render_director', 'nomi_generate_batch']
+const NEW_TOOL_NAMES = [...COLLAPSED_TOOL_NAMES, ...M2_EDITING_TOOL_NAMES, ...PRESERVED_DESKTOP_TOOL_NAMES]
 
 function tool(name: string): McpToolDefinition {
   const resolved = MCP_TOOL_RESOLVER.resolve(name)
@@ -73,7 +75,7 @@ describe('MCP surface collapse 42→15 · P1 retirement', () => {
     expect(MCP_TOOL_RESOLVER.resolve('nomi_generate')).toBeUndefined()
   })
 
-  it('exposes exactly the 15 collapsed tools + the preserved M2 editing tools', () => {
+  it('exposes exactly the collapsed tools plus preserved M2 and existing MCP-only desktop tools', () => {
     const listed = MCP_TOOL_RESOLVER.list()
     expect(listed.map((t) => t.name)).toEqual(NEW_TOOL_NAMES)
     // 所有公开工具都必须带人读 title；M2 语义工具的中英文标题由目录层补齐。
@@ -81,6 +83,23 @@ describe('MCP surface collapse 42→15 · P1 retirement', () => {
       expect(typeof (t as { title?: unknown }).title, `${t.name} carries a title`).toBe('string')
       expect((t as { title: string }).title.length, `${t.name} title is non-empty`).toBeGreaterThan(0)
     }
+  })
+
+  it('keeps the two existing MCP-only declarations lease-scoped and batch spending visible', () => {
+    const declarations = localCanvasVerbs()
+    expect(declarations.map(declaration => declaration.name)).toEqual(PRESERVED_DESKTOP_TOOL_NAMES)
+    for (const declaration of declarations) {
+      expect(declaration.profiles).toEqual(['mcp'])
+      expect(tool(declaration.name).inputSchema).toEqual(expect.objectContaining({
+        required: expect.arrayContaining(['leaseHandle']),
+      }))
+    }
+    expect(route('nomi_render_director', { leaseHandle: 'lease-1', projectId: 'p', sourceNodeId: 'scene-1', stagePreset: 'studio' }))
+      .toEqual({ method: 'director.render', params: { leaseHandle: 'lease-1', projectId: 'p', sourceNodeId: 'scene-1', stagePreset: 'studio' } })
+    expect(route('nomi_generate_batch', { leaseHandle: 'lease-1', projectId: 'p', nodeIds: ['n-1'] }))
+      .toEqual({ method: 'generation.batch', params: { leaseHandle: 'lease-1', projectId: 'p', nodeIds: ['n-1'] } })
+    expect(declarations[1]).toMatchObject({ effect: 'spend', nextAction: 'user_sees_spend_card' })
+    expect(tool('nomi_generate_batch').annotations).toEqual({ destructiveHint: true })
   })
 
   it('marks read-only via annotations (not a name set): nomi_read + nomi_operation_preview + M2 read tools', () => {
