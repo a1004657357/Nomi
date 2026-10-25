@@ -1,5 +1,7 @@
 # Main functional follow-up: library floor and migrated registry tests
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Parent commit: `bdf1fbb3406aca49ffc11254a26535d16d6e0e6d`. Same isolated branch and worktree; coordinator owns integration and full CI.
 
 ## Design Card

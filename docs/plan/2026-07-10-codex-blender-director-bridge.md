@@ -1,5 +1,7 @@
 # Codex Blender Director Bridge
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Date: 2026-07-10
 Status: implemented and locally verified
 Gate: 8 - AI capability integration

@@ -1,5 +1,7 @@
 # Creative Capability Product Gaps Implementation Plan
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 > **For Codex:** Use the implementation-builder and Executing Plans skills to implement this plan task by task while the project remains at Gate 8.
 
 **Goal:** Turn the existing creative-recipe technical slice into a visible, honest, provider-verified, visually measurable, and recoverable product workflow without advancing to Gate 9.

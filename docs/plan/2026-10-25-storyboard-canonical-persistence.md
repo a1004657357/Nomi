@@ -1,5 +1,7 @@
 # 分镜存档单 Owner
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 基点 `e83e30711f300b57c5a38f3766b01c56191ae4cd`；独立分支 `codex/storyboard-canonical-persistence-fix-20261025`，旧型号修复分支不动。生产范围仅 session/schema，另已说明必须触及真正读写归一化边界 `projectNormalize.ts`。
 
 | 格 | 决定 |

@@ -1,5 +1,7 @@
 # Smoke Director V2 Viewport Locator
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: `b57818beba4635470515df081b2c9c40b39c8d93`. No merge of coordinator.
 Status: implemented, not pushed; final independent review belongs to D.
 

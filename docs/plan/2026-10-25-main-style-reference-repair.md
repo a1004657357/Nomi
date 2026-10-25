@@ -1,5 +1,7 @@
 # Main Style Reference Repair
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Implementation line: `codex/main-style-fix-20261025`.
 Base: `1dbfc36ab7c8f82421555cea47131c7835fc9dfb`.
 Category: existing-UI bug repair, not a new interface or redesign.

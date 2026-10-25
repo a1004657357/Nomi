@@ -1,5 +1,7 @@
 # Official v0.21.0 Integration Into the Custom Nomi
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 ## Target and Baseline
 
 - Target: official stable release `v0.21.0`, verified from the GitHub latest-release page on 2026-09-12.

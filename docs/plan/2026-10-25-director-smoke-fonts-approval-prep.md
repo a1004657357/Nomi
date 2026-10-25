@@ -1,5 +1,7 @@
 # App74 Director Four Font Owners
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Status: implemented, not pushed; four class tokens only, no PNG change.
 Authorization: coordinator relayed the user's latest instruction to close normal
 merge-blocking bugs under the original repair authorization, without per-item

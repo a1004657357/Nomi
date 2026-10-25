@@ -1,5 +1,7 @@
 # 模型组与退役路线特征测试
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 1. 使用：维护者跑原两个红测时，正确识别现有Pixstag H3和明确拒绝的旧路线。
 2. owner：模型身份/seed不动；handleCapabilityApply早拒绝不动，测试执行真实projectSessionTestHarness。
 3. 复用：只补一项已存在供应商地址；复用TypeScript AST区分throw与旧执行。

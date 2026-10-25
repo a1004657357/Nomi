@@ -1,5 +1,7 @@
 # 功能卡片分发保护
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 基点 `f7f3834293424fde9fb9135a6f394d3da25e556d`，新分支 `codex/functional-card-render-protection-20261025`；原分支保留。协调线已将 f7 集成为 297e8bfbf，本批只修 resolver 功能保留，不触碰其 metadata、冻结模型、PNG 或旧四簇其他 owner。
 
 | 格 | 决定 |

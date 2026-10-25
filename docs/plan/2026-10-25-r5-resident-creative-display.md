@@ -1,5 +1,7 @@
 # R5 Resident 创意操作显示修复
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 固定基点 `209f3f2d0765b1e8abb79a4567f7528b82e76965`；独立 sibling `Nomi-r5-resident-display-20261025`，分支 `codex/r5-resident-tool-display-20261025`。
 
 ## 设计卡

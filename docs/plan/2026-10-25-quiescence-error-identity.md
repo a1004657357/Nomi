@@ -1,5 +1,7 @@
 # Visual Quiescence Error Identity
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 实现线：B；类别：其他。只改 tests/ux/_assert.mjs 的共享异常边界、已有单测及本计划/v3合同。
 
 ## 设计卡

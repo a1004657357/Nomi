@@ -1,5 +1,7 @@
 # Main Style Registry Followup
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Line: `codex/main-style-fix-20261025`.
 Base: `399e30c40485158665dedca35e154129f799b2bd`.
 Category: existing-UI style and semantic-reference repair.

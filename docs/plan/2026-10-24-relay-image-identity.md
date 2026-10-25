@@ -1,5 +1,7 @@
 # Relay image identity and editable connection repair
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Implementation line: coordinator. Independent review: Hypatia. UI line: Sagan.
 Categories: spend, long-running, existing interface repair.
 

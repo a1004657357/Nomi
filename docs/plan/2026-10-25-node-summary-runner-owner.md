@@ -1,5 +1,7 @@
 # 多模态摘要测试运行器归属
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 1. 使用：维护者跑正式test时，原五项Node摘要/提交次数用例确实执行，而不是Vitest空套件。
 2. owner：test:eng-system的既有Node组；原五个测试体保留，增加入口可达自验。
 3. 复用：沿用node:test/vm，文件改.node-test，不新增runner或全仓忽略。

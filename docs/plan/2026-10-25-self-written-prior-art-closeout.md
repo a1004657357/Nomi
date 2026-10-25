@@ -1,5 +1,7 @@
 # Self-written 登记与 prior-art 收口设计卡
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 ## 范围与决定
 
 - 目标比较基准是用户 fork 的 `fork/main`，已解析为 `3d94d96fe1f11a3079cfa9502efe322338b5084b`，不是官方 origin。

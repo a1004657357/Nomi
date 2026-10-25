@@ -1,5 +1,7 @@
 # Main functional fix: storyboard parameters and product aliases
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Status: implemented, not pushed; local verification below. Base: `1dbfc36ab7c8f82421555cea47131c7835fc9dfb`.
 Owner: main-functional-fix line. Coordinator owns integration, push and merge.
 

@@ -1,5 +1,7 @@
 # 3D Camera Proxy Implementation Plan
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 > **For Claude:** Use `${SUPERPOWERS_SKILLS_ROOT}/skills/collaboration/executing-plans/SKILL.md` to implement this plan task-by-task.
 
 **Goal:** Turn an image-derived GLB into a controllable camera proxy that can be orbit-adjusted, numerically framed, and captured back to a new connected image node.

@@ -1,5 +1,7 @@
 # 限定过期测试与模拟契约对齐
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 基点 `09221429ea0c94955334b7c66c72b6620bb7b001`，复用干净 sibling `Nomi-r5-resident-display-20261025`；新分支 `codex/stale-fixtures-contracts-20261025`，保留旧 `codex/r5-resident-tool-display-20261025`，不 reset。
 
 ## 设计卡

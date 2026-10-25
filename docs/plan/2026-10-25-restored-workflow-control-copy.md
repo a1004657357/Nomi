@@ -1,5 +1,7 @@
 # Restored Workflow Compact Control Copy
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: b3dc614ba87f56ac88853884a0fe7d87766858b7. Follow-up is a separate commit from workflow signal compatibility. Use controls-compact-06.log only; never 05. No App, generation, remote writes or memory writes.
 
 ## Design Card

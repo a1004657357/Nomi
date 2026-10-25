@@ -1,5 +1,7 @@
 # 公网图片预检复用出站owner
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 1. 使用：保持AGNES参考图预检，只探测响应元数据，不下载整张图、不提交生成。
 2. Owner：hardenedFetch及networkOutboundPolicy统一决定目的地、重定向、代理、取消与清理。
 3. 复用：新增显式headersOnly分支，默认完整读取不变，不另造分类器或提高字节/超时预算。

@@ -1,5 +1,7 @@
 # CLIProxy Configuration Entry Investigation
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Baseline: `a730dacb5ad307904420b375f539d454c42ed27f`.
 Owner: configuration UI line. Scope: `src/ui/onboarding` and directly related tests/locales. No provider requests, credential reads, catalog writes, production app interaction, commits or merges.
 

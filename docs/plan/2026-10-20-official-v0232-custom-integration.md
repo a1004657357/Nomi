@@ -1,5 +1,7 @@
 # Official v0.23.2 Integration Into Customized Nomi
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 ## Target and Workspace
 
 - Stable target: official tag v0.23.2, commit e572242858111bfabfccbfba379c2230c8855d1e.

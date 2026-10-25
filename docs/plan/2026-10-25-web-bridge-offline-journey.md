@@ -1,5 +1,7 @@
 # WebBridge 离线组件旅程
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 分支 `codex/web-bridge-journey-20261025`，代码基点仍为指定 `460b68d77e822f28b3f6a9069768ef535673fd25`；父提交是独立 renderer 修复 `e01e4770d`，本项不修改该测试，也无运行时依赖。旧分支保留，不 reset、不复制协调树工作区。
 
 ## 设计卡

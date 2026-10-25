@@ -1,5 +1,7 @@
 # R5 Display CI Owner Repair
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: `e10258014`. Author line: R5, not final independent reviewer.
 Status: implemented, not pushed; coordinator integration and full CI unverified.
 

@@ -1,5 +1,7 @@
 # CI 视频悬停断线诊断
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 隔离基点 `e10258014c13521b4ff95801cef48a1b3d6c5c35`，分支 `codex/video-hover-diagnosis-20261025`，worktree `Nomi-i18n-display-align-20261025`。协调树只读，不在它写入/切分支/运行命令服务。此时协调线 315 截图在跑，本批禁止 App、浏览器、截图、全套、Provider；不碰 outbound 或 C 的 resident。
 
 ## 已证明与未知

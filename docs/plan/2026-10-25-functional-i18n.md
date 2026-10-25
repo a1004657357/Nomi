@@ -1,5 +1,7 @@
 # Functional i18n batch
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Parent: `d98d944ff48f340ad929c46f5861788a43638cb8`. Independent functional line; no TSX or scene3d edits. Coordinator owns full integration/CI.
 
 ## Design Card

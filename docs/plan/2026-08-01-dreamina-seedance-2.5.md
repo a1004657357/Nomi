@@ -1,5 +1,7 @@
 # Dreamina Seedance 2.5 接入计划
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 ## 依据
 
 - 即梦官方 CLI `version.json` 当前版本为 `1.4.15`，发布说明明确新增 `--model_version=seedance2.5`。

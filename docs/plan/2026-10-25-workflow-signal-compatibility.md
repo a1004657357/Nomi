@@ -1,5 +1,7 @@
 # Workflow Signal Compatibility Tail
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: 33cd631ddccddee1c678838763e37aa7eea9fd9c. Existing private sibling worktree and branch. No global locking tasks, App/media/paid calls, push/merge or memory writes.
 
 ## Design Card

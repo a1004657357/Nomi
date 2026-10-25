@@ -1,5 +1,7 @@
 # Agent Tool Metadata Compatibility
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Parent: `84161276d46fcb4b775d248a80f839bc28ea6b7c`. Same isolated worktree; local commit only. Runtime: bundled Node v24.19.0. No user App launch or actual media/provider execution.
 
 ## Design Card

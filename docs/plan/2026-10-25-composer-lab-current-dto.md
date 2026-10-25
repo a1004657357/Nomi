@@ -1,5 +1,7 @@
 # 节点浮框夹具与现行组件对账
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 1. 使用：新版截图检查发现左侧裁剪及模型退化，先修夹具，不把错误外观作为批准基准。
 2. Owner：ModelCatalogModelDto决定模型行；composerCanvasPlacement决定生产浮框几何；夹具仅负责取景。
 3. 复用：现役节点与目录读取保持，补satisfies和合法availability；取景用原尺寸派生居中坐标。

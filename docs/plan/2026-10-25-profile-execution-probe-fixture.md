@@ -1,5 +1,7 @@
 # Profile Execution Metadata Probe Fixture
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Status: implemented, not pushed. Author line is not final independent acceptance.
 Normal merge of candidate `503348841f2d05fe922d65c11450b8c5990befad`
 completed without conflicts at `09f72b52323aed8e330da7c7a553a294e1fe49de`.

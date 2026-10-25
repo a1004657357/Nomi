@@ -1,5 +1,7 @@
 # Renderer Batch 独立测试修复
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 固定基点 `460b68d77e822f28b3f6a9069768ef535673fd25`，分支 `codex/renderer-batch-compatibility-20261025`。按协调者最新要求单独交付，不依赖 WebBridge journey，不复制协调树工作区；旧 98e6 分支保留。
 
 ## 设计卡

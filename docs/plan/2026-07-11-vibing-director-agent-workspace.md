@@ -1,5 +1,7 @@
 # VIBING Director Implementation Plan
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 > **For Codex:** Use the implementation-builder skill and execute this plan as a Gate 8 AI-capability slice.
 
 **Goal:** Add an independent, conversation-driven 3D director workspace whose source of truth is owned by the new director node, not by a legacy `scene3d` node or Blender.

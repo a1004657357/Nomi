@@ -1,5 +1,7 @@
 # Main Style Content Flow
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Line: `codex/main-style-fix-20261025`; base: `d34454bafcb459356e434135879da0fd18875480`.
 
 ## Approved Design Card

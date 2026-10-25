@@ -1,5 +1,7 @@
 # 节点滚动手势边界收口
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 ## 根因与修复
 
 原完整单测列出 24 个滚动区域，分布于 19 个定制 TSX 文件。原生画布监听早于 React 合成事件，仅 stopPropagation 无效。复用现有 NODE_SCROLL_REGION_CLASS_NAME：nowheel、nodrag 和项目的 noPan，保持区域外正常手势。

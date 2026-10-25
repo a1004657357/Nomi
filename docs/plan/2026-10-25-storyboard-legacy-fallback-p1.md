@@ -1,5 +1,7 @@
 # 混合旧分镜 P1
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 基点 `7b52f6529520b6bd52a5bd1ca6c65ab204a86593`，分支 `codex/storyboard-legacy-fallback-p1-20261025`。四簇未提交工作已完整 stash `c7265c98732202fb0a0ce8d3f8c87c091c5cc4cb`，原分支保留，不混入本提交。复用依赖与 worktree，不新建重型环境。
 
 依据新独立审查 `independent-review-7b52f6529-fresh-20261025.md`：a773 只分别测 single/map，没有覆盖“旧 map + 有效单方案”。旧 map 对象存在并不代表活动文档的数据已迁移；删除旧投影后，该缺口变成保存成功但活动载荷丢失。本批不恢复双 owner，而是修正唯一 normalizer 的迁移完备性。

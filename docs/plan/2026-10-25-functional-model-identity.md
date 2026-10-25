@@ -1,5 +1,7 @@
 # Functional Model Identity Repair
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Parent: `d6f10408a164f346d8ed27b1f80548c6dacd3f52`. Independent local commit; coordinator owns integration and complete CI. No TSX, scene3d, visionReviewModels, media generation, credentials, proxy or memory edits.
 
 ## Design Card

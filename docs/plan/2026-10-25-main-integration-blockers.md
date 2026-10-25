@@ -1,5 +1,7 @@
 # 自定义 Nomi 同步 main：合并阻断修复
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 状态：实施中；PR #2。实现线：nomi-main-blockers-20261025。
 
 ### 本轮追加收口

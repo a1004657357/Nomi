@@ -1,5 +1,7 @@
 # 四簇生产 Owner 阻断
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 最初基点 `09221429ea0c94955334b7c66c72b6620bb7b001`，原分支 `codex/production-owner-blockers-fix-20261025` 保留。优先 P1 已单独提交后，本批从 `504d1bdfc97ce06369e61b9b84c037f71139f4e7` 新建 `codex/production-owner-blockers-resume-20261025`，恢复 stash `c7265c98732202fb0a0ce8d3f8c87c091c5cc4cb` 而不删除原 stash；相关生产文件和展示 fixture/Node 测试在两基点间无变化。禁止 reset、push、Provider、日常 App、全套、媒体或截图基线变更。库存来自协调线 `vitest-integrated-full-01.failure-inventory.json`，仅处理本批四簇。
 
 | 格 | 约束 |

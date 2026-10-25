@@ -1,5 +1,7 @@
 # Multiview Accuracy And Skill Truth Implementation Plan
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 > **For Claude:** Use `${SUPERPOWERS_SKILLS_ROOT}/skills/collaboration/executing-plans/SKILL.md` to implement this plan task-by-task.
 
 **Goal:** Make Nomi's multiview workflow preserve the source scene, request each exact camera independently when accuracy is selected, and expose honest evidence for every built-in creative Skill.

@@ -1,5 +1,7 @@
 # Standalone smoke 断言导入
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 基点 `6334117050d288d8eb048e64561ad46339eec3a9`，独立分支 `codex/smoke-expect-import-20261025`，保留 hover 分支。只改 smoke 导入、直接结构单测和本设计/v3，不碰协调树、启动 App/浏览器、截图、Provider 或大类型检查。
 
 依据 `ci-e102-e2e-25.log:1649–1658`：启动和四条基础检查已过，首次 `expect(primaryCard)` 因本地 ESM 模块未导入 expect 而失败。这不是产品 UI 不可见或 Playwright 超时；standalone 没有 Vitest runner 自动注入。

@@ -1,5 +1,7 @@
 # Stored Credential Configuration Reachability
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Baseline: `29e6da02a`. Owner: UI line; main owns the public physical-storage DTO flag and its backend contract/tests.
 
 | Cell | Decision and Evidence |

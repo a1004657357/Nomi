@@ -1,5 +1,7 @@
 # TSX Diagnostics Lint Follow-Up
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: 77c98040a249a4e92e76d0cf2f8acf08e1dbc939. The i18n batch is already committed in the separate Nomi-main-tsx-i18n-20261025 worktree, not the earlier style worktree.
 
 | Design Card | Decision |

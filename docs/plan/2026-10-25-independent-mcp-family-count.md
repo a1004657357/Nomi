@@ -1,5 +1,7 @@
 # MCP-only 独立家族计数
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 - 范围：只修冻结检查漏计 localCanvas 两项，不批准 internal 增量。
 - 声明事实：onboarding MCP-only 7、localCanvas MCP-only 2；当前 internal27、总计36。
 - 冻结值仍21，原 snapshot 与 usecase count guard 不动；未获批准不得把真实面自动写成基线。

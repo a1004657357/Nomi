@@ -1,5 +1,7 @@
 # Smoke Route Readiness and Per-Run Evidence
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Status: implemented, not pushed; real App verification pending with coordinator.
 Base `647c0f5b273667a878e058c796eea0b9344eb478`.
 Scope: smoke script, its existing standalone owner test, this plan and v3 contract.

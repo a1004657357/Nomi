@@ -1,5 +1,7 @@
 # Fresh-base 绑定真实 PR 仓库设计卡
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 类别：其他，Git 门岗绑定修复。首批基点 `a396045cc19d5008cf8811f2088a2f419f24be01`；审看修正基点 `c5aaa75dd0a3d45e4f18293b0c448a193af1ba3b`。只改 scripts 与本卡/v3，不改主工作树、remote 配置、workflow、baseline、frozen 或任何业务功能。
 
 | 格 | 决定与证据 |

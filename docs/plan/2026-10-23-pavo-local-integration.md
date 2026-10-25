@@ -1,5 +1,7 @@
 # Pavo local integration
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 The user approved merging the accepted Pavo work into the customized daily checkout on 2026-10-23. This supersedes the earlier isolation-only instruction for these files. No remote push, release, project-data migration, or new generation is part of this integration.
 
 Source: `codex/nomi-multimodal-zcode-20261020`. Target: `codex/nomi-codex-director-upgrade-20260705`. Both start at `6f6867c287e4f4ccb2caca78b43f905318ac1e83`.

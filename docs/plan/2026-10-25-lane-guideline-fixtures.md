@@ -1,5 +1,7 @@
 # Lane Guideline Fixture Alignment
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: `f1c0d0bdb365f51df37caa7d3471faeeaf45f308` (parent e102).
 Only the two assigned Node tests and this design/contract change.
 

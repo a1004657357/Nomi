@@ -1,5 +1,7 @@
 # Gate 8 Provider And Quality Hardening Plan
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 **Goal:** Repair the failed Gate 8 acceptance cases without entering Gate 9 or publishing a build.
 
 **Call budget:** At most 10 real calls per selected model. Real calls happen only after zero-call contract and quality tests pass.

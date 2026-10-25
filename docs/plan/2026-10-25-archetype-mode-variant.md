@@ -1,5 +1,7 @@
 # 模式与变体一致性
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 基点 `209f3f2d0765b1e8abb79a4567f7528b82e76965`；复用干净 sibling，分支 `codex/archetype-mode-variant-fix-20261025`。保留旧 cc6cc557 分支，不 reset，不混入协调线未提交文件。
 
 | 格 | 决定 |

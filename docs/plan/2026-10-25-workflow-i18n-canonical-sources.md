@@ -1,5 +1,7 @@
 # Workflow I18n and Stable Source Values
 
+> 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
+
 Base: 21c4de6ea589c78a6318f6f89d210a72d2e68604. Private branch codex/main-i18n-workflow-fix-20261025 in the existing private sibling worktree. No App launch, media generation, remote writes or memory writes.
 
 ## Design Card
