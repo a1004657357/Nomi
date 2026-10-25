@@ -93,7 +93,7 @@ test('the contract parse runs once, after pi\'s ajv, and a cross-field failure r
   const system = first.messages?.find((message) => message.role === 'system')?.content ?? '';
   assert.match(system, /^NOMI_LANE_SYSTEM/, 'the host identity prompt comes first');
   assert.match(system, /Available tools:\n- look_at_canvas: /);
-  assert.match(system, /Guidelines:\n- Read before you write/);
+  assert.match(system, /Guidelines:\n- For writes, use IDs only from reads in this conversation, never memory or guesses\.\n/);
 });
 
 test('G-04 · an oversized tool result reaches the model truncated, with a next step it can act on', async (t) => {

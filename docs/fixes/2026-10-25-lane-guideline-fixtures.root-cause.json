@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-lane-guideline-fixtures",
+  "change_kind": "structural",
+  "problem_type": "Exact guidance fixtures lag approved model-facing metadata",
+  "symptom": "Two CI Node tests still expect retired Read before you write wording.",
+  "direct_cause": "The catalog publishes the approved conversation-local ID requirement, but two tests retain an older substring/regex.",
+  "class_root": "Exact prompt assertions must track approved metadata without removing deduplication and real runtime rejection controls.",
+  "scope_paths": ["tests/agent-runtime/lane-tool-contract.test.mts", "tests/agent-runtime/lane-tool-output.test.mts"],
+  "structural_evidence": {
+    "affected_paths": ["tests/agent-runtime/lane-tool-contract.test.mts", "tests/agent-runtime/lane-tool-output.test.mts"],
+    "preserved_exports": [],
+    "behavior_preservation": "Test-only exact-copy alignment. Full current guidance is still asserted, cross-tool unique rendering and naive-repeat controls remain. All parse-once, cross-field rejection, model next-step, valid one-write and truncation positive/negative assertions remain unchanged. Production metadata and all other production bytes are untouched.",
+    "verification_limits": "Only two Node test files with test-concurrency=1 and the existing local HTTP fixture; tsx avoids full typecheck. Electron path resolution is pinned to an unused path to avoid binary bootstrap, never launching App. No real Provider, complete suite, gates, skills97 or P5 budget work. The first aborted setup is separately documented. Author does not provide final independent acceptance."
+  },
+  "regression_tests": ["tests/agent-runtime/lane-tool-contract.test.mts", "tests/agent-runtime/lane-tool-output.test.mts"],
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

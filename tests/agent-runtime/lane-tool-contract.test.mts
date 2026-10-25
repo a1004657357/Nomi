@@ -95,7 +95,7 @@ test('三条描述通道各就各位，且 Guidelines 跨工具去重', () => {
   const lines = rendered.split('\n');
   const guidelineLines = lines.slice(lines.indexOf('Guidelines:') + 1);
   assert.equal(new Set(guidelineLines).size, guidelineLines.length, 'Guidelines 出现了重复行');
-  const shared = 'Read before you write';
+  const shared = 'For writes, use IDs only from reads in this conversation, never memory or guesses.';
   assert.equal(guidelineLines.filter((line) => line.includes(shared)).length, 1);
   // 阳性对照：把去重摘掉会怎样——同一条纪律来自 5 个工具，不去重就是 5 行。
   const naive = LANE_MODEL_TOOL_CATALOG.flatMap((spec) => spec.promptGuidelines ?? []);
