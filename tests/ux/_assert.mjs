@@ -11,7 +11,7 @@
 // 断言「没看到坏东西」**。这种空洞通过没有任何库能替你挡——只能由本文件的 API 在签名上逼出来，
 // 这就是 expectAbsent 强制要 provenBy 的全部理由。
 import { stationTimeout } from './_station-budget.mjs'
-import { expect as nativeExpect } from '@playwright/test'
+import { errors, expect as nativeExpect } from '@playwright/test'
 import { collectingExpect } from './_collect.mjs'
 export { createWalkSession } from './_collect.mjs'
 const expect = collectingExpect(nativeExpect)
@@ -487,7 +487,8 @@ export async function waitForVisualQuiescence(win, { timeout = QUIESCENCE_TIMEOU
       QUIESCENCE_STABLE_FRAMES,
       { timeout, polling: 'raf' },
     )
-    .catch(async () => {
+    .catch(async (error) => {
+      if (!(error instanceof errors.TimeoutError)) throw error
       // 超时要说清**是什么还在动**，否则下一个人只会把 timeout 调大。
       const stillMoving = await win
         .evaluate(() => {
@@ -512,6 +513,7 @@ export async function waitForVisualQuiescence(win, { timeout = QUIESCENCE_TIMEOU
             : '→ 没有未结束的动画，那就是**几何一直在变**：多半有浮层在反复重排。\n')
           + '  拍一张还在动的图，比报红更糟：证据不确定，人眼对账会对着假象下结论。\n'
           + '  别调大 timeout 了事——先弄清是谁一直在动（无限循环的转圈已排除，不会是它）。',
+        { cause: error },
       )
     })
   // 清掉指纹缓存，免得下一次调用读到上一次的残留而误判「已经稳了」。

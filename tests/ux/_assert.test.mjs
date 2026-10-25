@@ -3,8 +3,15 @@
 // 这里钉的不是「helper 能跑」，而是**它必须拦得住那种写法**：
 // `expectAbsent` 没有 provenBy 就得当场抛错。这条一旦松了，整套加固就退回成一句口号——
 // 因为「没有基线的『没看到』」正是本仓 94% 的「不存在」断言在犯的错，也是我两天内栽的两次。
-import { describe, expect, it } from 'vitest'
-import { expectAbsent, holdAbsent, proveProbe, stripCommentsAndStrings } from './_assert.mjs'
+import { describe, expect, it, vi } from 'vitest'
+import { errors as playwrightErrors } from '@playwright/test'
+import { errors as runtimeErrors } from 'playwright'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { runInNewContext } from 'node:vm'
+import { installFeelObserver } from './_feel-observer.mjs'
+import { expectAbsent, holdAbsent, proveProbe, screenshotSettled, stripCommentsAndStrings, waitForVisualQuiescence } from './_assert.mjs'
 
 /** 假 locator：这些测试只验签名契约，不碰真浏览器。 */
 const fakeLocator = { toString: () => 'locator(fake)' }
@@ -88,5 +95,119 @@ describe('stripCommentsAndStrings', () => {
     const stripped = stripCommentsAndStrings(source)
     expect(stripped).not.toContain('assets')
     expect(stripped).toContain("'story'")
+  })
+})
+
+describe('waitForVisualQuiescence / screenshotSettled error ownership', () => {
+  it('canonical TimeoutError 是真实 Playwright 运行时的同一构造器', () => {
+    expect(playwrightErrors.TimeoutError).toBe(runtimeErrors.TimeoutError)
+  })
+  it('真实 FEEL wait 包装成功等待后抛字体 drift：保留错误对象，不追加几何诊断', async () => {
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-quiescence-feel-'))
+    try {
+      const findings = Array.from({ length: 4 }, () => ({ rule: 'font-size', target: ['span'], text: ['Badge'], fontSizes: [11] }))
+      const screenshot = vi.fn(async () => Buffer.from('not-an-image'))
+      const page = {
+        screenshot,
+        evaluate: vi.fn().mockResolvedValueOnce({ label: 'smoke:waitForFunction', findings }).mockResolvedValueOnce([]).mockResolvedValue([]),
+        waitForFunction: vi.fn(async () => undefined),
+        waitForSelector: vi.fn(async () => undefined),
+        waitForLoadState: vi.fn(async () => undefined),
+      }
+      installFeelObserver(page, {
+        name: 'smoke', outputDir, exemptions: { entries: [] },
+        baseline: { entries: [{ journey: 'smoke', screenshotName: 'waitForFunction.png', rule: 'font-size', count: 0 }] },
+      })
+      const observedWait = page.waitForFunction
+      let originalError
+      page.waitForFunction = async (...args) => {
+        try { return await observedWait(...args) } catch (error) { originalError = error; throw error }
+      }
+      const caught = await screenshotSettled(page, { path: 'must-not-be-created.png' }).catch(error => error)
+      expect(originalError).toBeInstanceOf(Error)
+      expect(originalError.message).toContain('Feel baseline drift')
+      expect(originalError.message).toContain('"actual":4,"allowed":0')
+      expect(caught).toBe(originalError)
+      expect(caught.message).not.toMatch(/视觉安定|几何一直在变/)
+      expect(page.evaluate).toHaveBeenCalledTimes(2)
+      expect(screenshot).toHaveBeenCalledTimes(1) // Only FEEL's checkpoint, not the settled screenshot.
+      expect(fs.readdirSync(outputDir).some(file => file.endsWith('.png'))).toBe(false)
+    } finally {
+      fs.rmSync(outputDir, { recursive: true, force: true })
+    }
+  })
+
+  const upstreamCause = new Error('original upstream cause')
+  const namedTimeout = Object.assign(new Error('Timeout 5000ms exceeded', { cause: upstreamCause }), { name: 'TimeoutError' })
+  for (const [label, error] of [
+    ['FEEL with cause', new Error('Feel baseline drift: font-size 4>0', { cause: upstreamCause })],
+    ['AbortError', new DOMException('operation aborted', 'AbortError')],
+    ['ordinary timeout wording', new Error('timeout while reading checkpoint', { cause: upstreamCause })],
+    ['spoofed TimeoutError name', namedTimeout],
+    ['TypeError', new TypeError('checkpoint contract failed', { cause: upstreamCause })],
+    ['non-Error rejection', 'timeout is not an error type'],
+  ]) {
+    it(`${label}: 原身份/信息/cause 直接拒绝，不读诊断或截图`, async () => {
+      const page = {
+        waitForFunction: vi.fn(async () => { throw error }),
+        evaluate: vi.fn(async () => []),
+        screenshot: vi.fn(async () => undefined),
+      }
+      await expect(screenshotSettled(page)).rejects.toBe(error)
+      expect(page.evaluate).not.toHaveBeenCalled()
+      expect(page.screenshot).not.toHaveBeenCalled()
+      if (error instanceof Error && error.cause) expect(error.cause).toBe(upstreamCause)
+    })
+  }
+
+  for (const animations of [[], ['DIV.toast-enter']]) {
+    it(`真实 Playwright TimeoutError：保留 cause 和${animations.length ? '动画' : '几何'}诊断`, async () => {
+      const original = new playwrightErrors.TimeoutError('page.waitForFunction: Timeout 5000ms exceeded')
+      const page = {
+        waitForFunction: vi.fn(async () => { throw original }),
+        evaluate: vi.fn(async () => animations),
+      }
+      const caught = await waitForVisualQuiescence(page).catch(error => error)
+      expect(caught).toBeInstanceOf(Error)
+      expect(caught).not.toBe(original)
+      expect(caught.cause).toBe(original)
+      expect(caught.message).toContain('仍未视觉安定')
+      expect(caught.message).toContain('别调大 timeout')
+      expect(caught.message).toContain(animations.length ? 'DIV.toast-enter' : '几何一直在变')
+      expect(page.evaluate).toHaveBeenCalledTimes(1)
+      expect(page.waitForFunction.mock.calls[0][1]).toBe(3)
+      expect(page.waitForFunction.mock.calls[0][2]).toEqual({ timeout: 5000, polling: 'raf' })
+    })
+  }
+
+  it('真实 timeout 的诊断读取失败仍保留原 timeout cause', async () => {
+    const original = new playwrightErrors.TimeoutError('Timeout 5000ms exceeded')
+    const page = {
+      waitForFunction: vi.fn(async () => { throw original }),
+      evaluate: vi.fn(async () => { throw new Error('diagnostic target unavailable') }),
+    }
+    const caught = await waitForVisualQuiescence(page).catch(error => error)
+    expect(caught.cause).toBe(original)
+    expect(caught.message).toContain('仍未视觉安定')
+  })
+
+  it('成功清 fingerprint 后才截图；默认3帧/5000ms和截图参数不变', async () => {
+    const state = { __nomiQuiescence: { fingerprint: 'old', stable: 3 } }
+    const sequence = []
+    const page = {
+      waitForFunction: vi.fn(async () => { sequence.push('wait') }),
+      evaluate: vi.fn(async callback => {
+        sequence.push('cleanup')
+        return runInNewContext(`(${callback.toString()})()`, { window: state })
+      }),
+      screenshot: vi.fn(async () => { sequence.push('screenshot'); return 'shot-result' }),
+    }
+    const result = await screenshotSettled(page, { path: 'evidence.png', fullPage: true })
+    expect(result).toBe('shot-result')
+    expect(state).not.toHaveProperty('__nomiQuiescence')
+    expect(sequence).toEqual(['wait', 'cleanup', 'screenshot'])
+    expect(page.waitForFunction.mock.calls[0][1]).toBe(3)
+    expect(page.waitForFunction.mock.calls[0][2]).toEqual({ timeout: 5000, polling: 'raf' })
+    expect(page.screenshot).toHaveBeenCalledWith({ path: 'evidence.png', fullPage: true })
   })
 })
