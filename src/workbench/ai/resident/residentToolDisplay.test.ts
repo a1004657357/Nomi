@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import i18next from 'i18next'
+import { zhAgentResident, enAgentResident } from '../../../i18n/locales/agentResident'
+import { toSemanticInput } from '../../../../electron/shared/agentCapabilities/modelFacingTools'
+import { projectV4Intervention } from '../v4/agentPanelV4Intervention'
+import { V4Intervention } from '../v4/AgentPanelV4Cards'
 import {
   humanizeToolFailure,
   proposalForTool,
@@ -16,6 +23,206 @@ const translate = (key: string, options?: Record<string, unknown>): string => {
   if (!options) return key
   return `${key}(${Object.entries(options).map(([name, value]) => `${name}=${String(value)}`).join(',')})`
 }
+
+const sideEffects = vi.hoisted(() => ({
+  write: vi.fn(() => { throw new Error('display must not write a project') }),
+  bridge: vi.fn(() => { throw new Error('display must not enter the desktop bridge') }),
+  network: vi.fn(() => { throw new Error('display must not call a provider') }),
+}))
+vi.mock('../../project/workbenchProjectSession', () => ({ persistActiveWorkbenchProjectNow: sideEffects.write }))
+vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: sideEffects.bridge }))
+vi.mock('../../generationCanvas/store/generationCanvasStore', () => ({
+  useGenerationCanvasStore: Object.assign(sideEffects.write, { getState: sideEffects.write, setState: sideEffects.write }),
+}))
+
+const creativeCases = [
+  { operation: 'list_capability_recipes', zh: '查看创意配方', en: 'Browse creative recipes', args: {} },
+  { operation: 'read_vibing_director', zh: '查看导演场景', en: 'Inspect Director scene', args: { directorNodeId: 'director-A' } },
+  { operation: 'apply_capability_recipe', zh: '准备配方计划', en: 'Prepare recipe plan', args: {
+    sourceNodeId: 'source-A', recipeId: 'portrait.refine', vendorKey: '供应商原值', modelKey: '原始模型', variantId: 'v1', modeId: 'i2i',
+    requestedOutputs: 3, params: { generationMode: 'matrix5x5', quality: 'high', apiKey: 'SECRET-param' }, resourceIds: ['resource-A'],
+    outputs: [{ id: 'view-1', label: '机位 1', azimuth: 45, elevation: 7, shotSize: '全景' }],
+  } },
+  { operation: 'save_creative_resource', zh: '保存创意资源', en: 'Save creative resource', args: {
+    sourceNodeId: 'source-A', kind: 'style', label: '全景', description: '用户原文', promptTokens: ['机位 1', '中景'],
+    license: { source: '用户自有', license: 'CC0', commercialUse: 'unknown', attribution: '原作者', token: 'SECRET-license' },
+  } },
+  { operation: 'handoff_model3d', zh: '交接已有 3D 模型', en: 'Hand off existing 3D model', args: {
+    sourceNodeId: 'model-A', target: 'vibingDirector', targetNodeId: 'director-A', license: '用户授权原文',
+  } },
+  { operation: 'apply_vibing_director_plan', zh: '修改导演场景', en: 'Amend Director scene', args: {
+    directorNodeId: 'director-A', summary: '转向机位 1', plan: { mode: 'amend', brief: '保留全景原名', actions: [
+      { op: 'move_object', objectRef: 'actor-A', position: [1, 2, 3], apiKey: 'SECRET-action' },
+      { op: 'set_beat', id: 'beat-A', title: '机位 1', dialogue: '用户对白' },
+    ] },
+  } },
+] as const
+
+async function localeTranslator(language: 'zh-CN' | 'en') {
+  const i18n = i18next.createInstance()
+  await i18n.init({ lng: language, fallbackLng: false, resources: {
+    'zh-CN': { translation: { agentResident: zhAgentResident } }, en: { translation: { agentResident: enAgentResident } },
+  }, interpolation: { escapeValue: false } })
+  return (key: string, options?: Record<string, unknown>) => String(i18n.t(key, options ?? {}))
+}
+
+function displayEvidence(t: typeof translate, name: string, args?: unknown) {
+  return {
+    name: readableToolName(t, name, args), summary: readableToolSummary(t, name, args),
+    preview: readableToolPreview(t, name, args), details: readableToolDetailRows(t, name, args),
+    proposal: proposalForTool(t, name, args),
+  }
+}
+
+function renderIntervention(t: typeof translate, name: string, args: unknown, effectClass: 'reversible_local' | 'spend') {
+  const labels = { irreversible: 'Review', reversible: 'Review', spendBadge: 'Spend', credentialTitle: 'Credential', credentialConfirm: 'Confirm', credentialAlternate: 'Other', planTitle: 'Plan', more: 'More', scopeOnce: 'Once', scopeCapability: 'Capability' }
+  const card = projectV4Intervention({ toolName: name, args, effectClass, pendingCount: 1 }, labels, t)
+  const html = renderToStaticMarkup(React.createElement(V4Intervention, { data: card, labels: {
+    confirm: 'Confirm', reject: 'Reject', escalate: 'Always', cancel: 'Cancel', confirmReject: 'Reject', collapsePlan: 'Collapse', expandPlan: 'Expand',
+    ask: { dismiss: 'Dismiss', skip: 'Skip', continueLabel: 'Continue', send: 'Send', customPlaceholder: 'Answer', recommended: 'Recommended' },
+  }, onPlanToggle: () => undefined, onCollapsePlan: () => undefined }))
+  return { card, html }
+}
+
+afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
+
+describe('creative operations on the real resident display boundary', () => {
+  it.each(['zh-CN', 'en'] as const)('localizes every registry name and alias without dropping coverage (%s)', async language => {
+    const t = await localeTranslator(language)
+    for (const name of [...CAPABILITY_CONTRACTS.map(contract => contract.id), ...CAPABILITY_ALIAS_ENTRIES.map(entry => entry.alias)]) {
+      expect(readableToolName(t, name), name).not.toBe(t('agentResident.toolGeneric'))
+      expect(readableToolName(t, name), name).not.toContain('agentResident.')
+    }
+  })
+
+  it.each(creativeCases)('projects $operation identically through its real alias and canonical operation', async entry => {
+    const spec = modelFacingToolSpecs('internal').find(spec => spec.name === entry.operation)!
+    expect(spec).toBeDefined()
+    const semantic = toSemanticInput(spec, entry.args)
+    for (const language of ['zh-CN', 'en'] as const) {
+      const t = await localeTranslator(language)
+      const alias = displayEvidence(t, spec.name, entry.args)
+      expect(alias.name).toBe(language === 'en' ? entry.en : entry.zh)
+      expect(displayEvidence(t, spec.contractId, semantic)).toEqual(alias)
+      expect(alias.proposal?.fields).toEqual(alias.details)
+      expect(alias.details.some(field => field.kind === 'boundary')).toBe(true)
+      expect(isReadOnlyToolName(spec.name, entry.args)).toBe(spec.contractId === 'creative.component.read')
+    }
+  })
+
+  it('keeps canonical calls without an operation neutral and owner-bound aliases unspoofed', () => {
+    expect(readableToolName(translate, 'creative.component.read')).toBe('agentResident.toolCreativeRead')
+    expect(readableToolName(translate, 'creative.component.write')).toBe('agentResident.toolCreativeWrite')
+    expect(readableToolName(translate, 'list_capability_recipes', { operation: 'save_creative_resource' }))
+      .toBe(readableToolName(translate, 'list_capability_recipes'))
+    for (const name of [...creativeCases.map(entry => entry.operation), 'creative.component.write', 'director.render', 'generation.batch']) {
+      const evidence = displayEvidence(translate, name)
+      expect(JSON.stringify(evidence)).not.toMatch(/已执行|已保存|已生成|已创建|completed|finished/i)
+      expect(evidence.summary).not.toBe('agentResident.toolPendingSummary')
+    }
+    expect(readableToolDetailRows(translate, 'apply_capability_recipe').some(field => field.value === 'agentResident.creativeArgumentsPending')).toBe(true)
+  })
+
+  it.each(['zh-CN', 'en'] as const)('retains review fields, raw authored values, and no project/network effects (%s)', async language => {
+    const t = await localeTranslator(language)
+    vi.stubGlobal('fetch', sideEffects.network)
+    for (const entry of creativeCases) {
+      const args = structuredClone({ ...entry.args, apiKey: 'SECRET-root', leaseHandle: 'SECRET-lease', sourceUrl: 'https://private.invalid/?token=SECRET-url' })
+      const before = JSON.stringify(args)
+      const freeze = (value: unknown): void => {
+        if (value && typeof value === 'object') { Object.freeze(value); Object.values(value).forEach(freeze) }
+      }
+      freeze(args)
+      const evidence = displayEvidence(t, entry.operation, args)
+      expect(JSON.stringify(evidence)).not.toContain('SECRET-')
+      expect(JSON.stringify(args)).toBe(before)
+    }
+    const recipe = readableToolDetailRows(t, 'apply_capability_recipe', creativeCases[2].args)
+    const recipeText = JSON.stringify(recipe)
+    for (const raw of ['source-A', 'portrait.refine', '供应商原值', '原始模型', 'matrix5x5', '机位 1', '全景', '45', '7', 'resource-A']) expect(recipeText).toContain(raw)
+    const saved = JSON.stringify(readableToolDetailRows(t, 'save_creative_resource', creativeCases[3].args))
+    for (const raw of ['全景', '用户原文', '机位 1', '中景', '用户自有', 'CC0', 'unknown', '原作者']) expect(saved).toContain(raw)
+    const director = JSON.stringify(readableToolDetailRows(t, 'apply_vibing_director_plan', creativeCases[5].args))
+    for (const raw of ['转向机位 1', '保留全景原名', 'actor-A', '[1,2,3]', '机位 1', '用户对白']) expect(director).toContain(raw)
+    expect(sideEffects.write).not.toHaveBeenCalled()
+    expect(sideEffects.bridge).not.toHaveBeenCalled()
+    expect(sideEffects.network).not.toHaveBeenCalled()
+  })
+
+  it('uses the real Director mode owner, including a layout that replaces an amend request', () => {
+    const args = { directorNodeId: 'director-A', summary: '场景方案', plan: { mode: 'amend', actions: [{ op: 'set_blocking_layout', template: 'coffee_two_person_conversation' }] } }
+    const before = JSON.stringify(args)
+    expect(readableToolName(translate, 'apply_vibing_director_plan', args)).toBe('agentResident.toolDirectorReplace')
+    expect(readableToolSummary(translate, 'apply_vibing_director_plan', args)).toContain('agentResident.toolDirectorReplaceSummary')
+    expect(JSON.stringify(args)).toBe(before)
+    expect(readableToolName(translate, 'apply_vibing_director_plan', { ...args, plan: { mode: 'replace', actions: [{ op: 'set_stage', preset: 'studio' }] } }))
+      .toBe('agentResident.toolDirectorReplace')
+  })
+
+  it.each(creativeCases)('renders $operation through the actual V4 card in both locales', async entry => {
+    vi.stubGlobal('fetch', sideEffects.network)
+    for (const language of ['zh-CN', 'en'] as const) {
+      const t = await localeTranslator(language)
+      const before = JSON.stringify(entry.args)
+      const { card, html } = renderIntervention(t, entry.operation, entry.args, 'reversible_local')
+      const boundary = readableToolDetailRows(t, entry.operation, entry.args).find(field => field.kind === 'boundary')!.value
+      expect(card.summary).toContain(boundary)
+      expect(html).toContain(boundary)
+      expect(html).not.toContain('agentResident.')
+      expect(html).not.toContain('SECRET-')
+      if (entry.operation === 'apply_capability_recipe') {
+        expect(card.summary).toContain('matrix5x5')
+        expect(card.summary).toContain('resource-A')
+        expect(html).toContain('机位 1')
+      }
+      if (entry.operation === 'save_creative_resource') {
+        expect(card.summary).toContain('CC0')
+        expect(card.summary).toContain('中景')
+      }
+      if (entry.operation === 'apply_vibing_director_plan') {
+        expect(card.summary).toContain('actor-A')
+        expect(card.summary).toContain('用户对白')
+      }
+      expect(JSON.stringify(entry.args)).toBe(before)
+    }
+    expect(sideEffects.write).not.toHaveBeenCalled()
+    expect(sideEffects.bridge).not.toHaveBeenCalled()
+    expect(sideEffects.network).not.toHaveBeenCalled()
+  })
+
+  it('does not turn malformed/unknown operations into completed writes or expose raw arguments', () => {
+    for (const [name, args] of [
+      ['creative.component.write', { operation: 'not-a-real-operation', content: 'SECRET-content' }],
+      ['apply_vibing_director_plan', { directorNodeId: 'director-A', summary: 'review', plan: { mode: 'replace', actions: [{ op: 'not-real', apiKey: 'SECRET-invalid' }] } }],
+      ['generation.batch', { nodeIds: 'SECRET-invalid' }],
+    ] as const) {
+      const evidence = displayEvidence(translate, name, args)
+      expect(JSON.stringify(evidence)).not.toContain('SECRET-')
+      expect(evidence.details).toContainEqual(expect.objectContaining({ value: 'agentResident.creativeArgumentsPending' }))
+    }
+  })
+
+  it.each(['zh-CN', 'en'] as const)('keeps local preview and paid-confirmation batch separate and renders real cards (%s)', async language => {
+    const t = await localeTranslator(language)
+    const renderArgs = { sourceNodeId: 'scene-A', stagePreset: 'studio', leaseHandle: 'SECRET-lease' }
+    const batchArgs = { nodeIds: ['node-A', 'node-B', 'node-A'], estimatedCost: 'SECRET-cost', apiKey: 'SECRET-key' }
+    expect(displayEvidence(t, 'director.render', renderArgs)).toEqual(displayEvidence(t, 'nomi_render_director', renderArgs))
+    expect(displayEvidence(t, 'generation.batch', batchArgs)).toEqual(displayEvidence(t, 'nomi_generate_batch', batchArgs))
+    expect(readableToolName(t, 'director.render')).toBe(language === 'en' ? 'Render local Blender preview' : '渲染本地 Blender 预览')
+    expect(readableToolName(t, 'generation.batch')).toBe(language === 'en' ? 'Request batch generation confirmation' : '请求批量生成确认')
+    const { card, html } = renderIntervention(t, 'nomi_generate_batch', batchArgs, 'spend')
+    expect(card.kind).toBe('spend')
+    expect(card.scope).toBe('Once')
+    expect(html).toContain(readableToolName(t, 'nomi_generate_batch'))
+    expect(html).toContain(language === 'en' ? 'network requests and fees' : '网络请求与费用')
+    expect(html).toContain('node-A')
+    expect(html).not.toContain('SECRET-')
+    expect(readableToolSummary(t, 'handoff_model3d', creativeCases[4].args)).toContain(language === 'en' ? 'download or copy' : '下载或复制')
+    const boundary = readableToolDetailRows(t, 'director.render', renderArgs).find(field => field.kind === 'boundary')!.value
+    expect(boundary).toContain(language === 'en' ? 'PNG/GLB' : 'PNG/GLB')
+    expect(readableToolDetailRows(t, 'generation.batch', batchArgs)).toContainEqual(expect.objectContaining({ kind: 'estimate', value: t('agentResident.costUnknown') }))
+  })
+})
 
 describe('resident tool display projection', () => {
   it('names every current lane tool and preserves operation-specific effects', () => {

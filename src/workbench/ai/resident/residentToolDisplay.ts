@@ -1,5 +1,10 @@
 import { MODEL_FACING_TOOL_SPECS, resolveModelToolCapabilityId } from '../../../../electron/shared/agentCapabilities/modelFacingToolRegistry'
 import { GENERATION_METHOD_NAMES } from '../../../../electron/shared/agentCapabilities/generation'
+import { toSemanticInput } from '../../../../electron/shared/agentCapabilities/modelFacingTools'
+import { CREATIVE_COMPONENT_READ_CAPABILITY, CREATIVE_COMPONENT_WRITE_CAPABILITY, type CreativeComponentInput } from '../../../../electron/shared/agentCapabilities/creativeComponent'
+import { DIRECTOR_RENDER_CAPABILITY, GENERATION_BATCH_REQUEST_CAPABILITY } from '../../../../electron/shared/agentCapabilities/localCanvasOperations'
+import { parseVibingDirectorPlanRequest } from '../../../../electron/ai/vibingDirectorTools'
+import { materializeVibingDirectorPlan } from '../../generationCanvas/nodes/vibingDirector/vibingDirectorState'
 import type { TranslationKey } from '../../../i18n/translationKey'
 import type { ResidentApprovalDetail, ResidentProposalData } from './residentProposalDisplay'
 
@@ -126,6 +131,7 @@ const READABLE_PARAMETER_LABELS = {
   steps: 'agentResident.toolParameterSteps',
   guidance_scale: 'agentResident.toolParameterGuidance',
   guidanceScale: 'agentResident.toolParameterGuidance',
+  generationMode: 'agentResident.creativeGenerationMode',
 } as const satisfies Record<string, TranslationKey>
 
 type ParameterLabelKey = (typeof READABLE_PARAMETER_LABELS)[keyof typeof READABLE_PARAMETER_LABELS]
@@ -161,6 +167,127 @@ function readableParameters(t: Translate, record: Record<string, unknown>): stri
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+const CREATIVE_OPERATION_COPY = {
+  list_capability_recipes: { name: 'agentResident.toolCreativeRecipes', boundary: 'agentResident.toolCreativeRecipesSummary' },
+  read_vibing_director: { name: 'agentResident.toolDirectorRead', boundary: 'agentResident.toolDirectorReadSummary' },
+  apply_capability_recipe: { name: 'agentResident.toolRecipePlan', boundary: 'agentResident.toolRecipePlanSummary' },
+  save_creative_resource: { name: 'agentResident.toolCreativeResource', boundary: 'agentResident.toolCreativeResourceSummary' },
+  handoff_model3d: { name: 'agentResident.toolModel3dHandoff', boundary: 'agentResident.toolModel3dHandoffSummary' },
+  apply_vibing_director_plan: { name: 'agentResident.toolDirectorPlan', boundary: 'agentResident.toolDirectorPlanSummary' },
+} as const satisfies Record<CreativeComponentInput['operation'], { name: TranslationKey; boundary: TranslationKey }>
+
+/** Display only: owner-bound operations and parsed evidence, never execution or authorization. */
+function readableCreativeTool(t: Translate, name: string, rawArgs?: unknown): { name: string; summary: string; fields: readonly ResidentApprovalDetail[] } | undefined {
+  const raw = asRecord(rawArgs) ?? {}
+  const canonical = canonicalCapabilityId(name, raw) || name
+  const fields: ResidentApprovalDetail[] = []
+  let nameKey: TranslationKey
+  let boundaryKey: TranslationKey
+  const add = (label: TranslationKey, value: unknown, kind: ResidentApprovalDetail['kind'] = 'parameters') => {
+    if (value === undefined || value === null || value === '') return
+    fields.push({ label: t(label), value: typeof value === 'string' ? value : JSON.stringify(value), kind })
+  }
+  switch (canonical) {
+    case CREATIVE_COMPONENT_READ_CAPABILITY.id:
+    case CREATIVE_COMPONENT_WRITE_CAPABILITY.id: {
+      const spec = MODEL_FACING_TOOL_SPECS.find(spec => spec.name === name)
+      // A caller cannot relabel an alias's owner-bound operation with an extra argument.
+      const input = spec ? toSemanticInput(spec, { ...raw, ...spec.aliasBoundInput }) : raw
+      const schema = canonical === CREATIVE_COMPONENT_READ_CAPABILITY.id
+        ? CREATIVE_COMPONENT_READ_CAPABILITY.inputSchema : CREATIVE_COMPONENT_WRITE_CAPABILITY.inputSchema
+      const operationSchema = schema.options.find(option => option.shape.operation.value === input.operation)
+      const operation = operationSchema?.shape.operation.value
+      const copy = operation ? CREATIVE_OPERATION_COPY[operation] : undefined
+      nameKey = copy?.name ?? (canonical === CREATIVE_COMPONENT_READ_CAPABILITY.id ? 'agentResident.toolCreativeRead' : 'agentResident.toolCreativeWrite')
+      boundaryKey = copy?.boundary ?? (canonical === CREATIVE_COMPONENT_READ_CAPABILITY.id ? 'agentResident.toolCreativeReadSummary' : 'agentResident.toolCreativeWriteSummary')
+      // Strip transport/unknown fields at the root; nested evidence is schema-owned too.
+      const parsed = operationSchema?.strip().safeParse(input)
+      if (!parsed?.success) {
+        add('agentResident.toolOperationDetailsLabel', t('agentResident.creativeArgumentsPending'))
+        break
+      }
+      const record = parsed.data
+      switch (record.operation) {
+        case 'list_capability_recipes': break
+        case 'read_vibing_director':
+          add('agentResident.toolTargetLabel', record.directorNodeId, 'target')
+          break
+        case 'apply_capability_recipe':
+          add('agentResident.creativeSource', record.sourceNodeId, 'target')
+          add('agentResident.creativeRecipe', record.recipeId)
+          add('agentResident.creativeVendor', record.vendorKey, 'model')
+          add('agentResident.toolModelLabel', record.modelKey, 'model')
+          add('agentResident.creativeVariant', record.variantId, 'model')
+          add('agentResident.creativeMode', record.modeId)
+          add('agentResident.toolParameterCount', record.requestedOutputs)
+          add('agentResident.toolOperationDetailsLabel', record.params ? readableParameters(t, record.params) : undefined)
+          add('agentResident.creativeResources', record.resourceIds, 'references')
+          add('agentResident.creativeOutputs', record.outputs, 'technical')
+          break
+        case 'save_creative_resource':
+          add('agentResident.creativeSource', record.sourceNodeId, 'target')
+          add('agentResident.creativeResourceName', record.label)
+          add('agentResident.creativeResourceKind', record.kind)
+          add('agentResident.creativeNotes', record.description, 'prompt')
+          add('agentResident.toolPromptLabel', record.promptTokens.join('\n'), 'prompt')
+          add('agentResident.creativeLicense', record.license, 'technical')
+          break
+        case 'handoff_model3d':
+          add('agentResident.creativeSource', record.sourceNodeId, 'target')
+          add('agentResident.creativeDestination', record.target)
+          add('agentResident.toolTargetLabel', record.targetNodeId ?? t('agentResident.creativeNewTarget'), 'target')
+          add('agentResident.creativeLicense', record.license, 'technical')
+          break
+        case 'apply_vibing_director_plan': {
+          add('agentResident.toolTargetLabel', record.directorNodeId, 'target')
+          add('agentResident.creativeReview', record.summary, 'prompt')
+          const request = parseVibingDirectorPlanRequest(record)
+          if (!request) {
+            add('agentResident.toolOperationDetailsLabel', t('agentResident.creativeArgumentsPending'))
+            break
+          }
+          const effective = materializeVibingDirectorPlan(request.plan)
+          nameKey = effective.mode === 'replace' ? 'agentResident.toolDirectorReplace' : 'agentResident.toolDirectorAmend'
+          boundaryKey = effective.mode === 'replace' ? 'agentResident.toolDirectorReplaceSummary' : 'agentResident.toolDirectorPlanSummary'
+          add('agentResident.creativeMode', request.plan.mode === effective.mode ? effective.mode : `${request.plan.mode} -> ${effective.mode}`)
+          add('agentResident.creativeNotes', request.plan.brief, 'prompt')
+          add('agentResident.creativeActions', request.plan.actions, 'technical')
+          break
+        }
+      }
+      break
+    }
+    case DIRECTOR_RENDER_CAPABILITY.id: {
+      nameKey = 'agentResident.toolDirectorRender'
+      boundaryKey = 'agentResident.toolDirectorRenderSummary'
+      const parsed = DIRECTOR_RENDER_CAPABILITY.inputSchema.strip().safeParse(raw)
+      if (parsed.success) {
+        add('agentResident.creativeSource', parsed.data.sourceNodeId, 'target')
+        add('agentResident.creativeStage', parsed.data.stagePreset)
+      } else add('agentResident.toolOperationDetailsLabel', t('agentResident.creativeArgumentsPending'))
+      break
+    }
+    case GENERATION_BATCH_REQUEST_CAPABILITY.id: {
+      nameKey = 'agentResident.toolGenerationBatch'
+      boundaryKey = 'agentResident.toolGenerationBatchSummary'
+      const parsed = GENERATION_BATCH_REQUEST_CAPABILITY.inputSchema.strip().safeParse(raw)
+      if (parsed.success) {
+        const nodeIds = [...new Set(parsed.data.nodeIds)]
+        add('agentResident.toolTargetLabel', nodeIds.join(' · '), 'target')
+        add('agentResident.toolParameterCount', nodeIds.length)
+      } else add('agentResident.toolOperationDetailsLabel', t('agentResident.creativeArgumentsPending'))
+      add('agentResident.proposalEstimate', t('agentResident.costUnknown'), 'estimate')
+      break
+    }
+    default: return undefined
+  }
+  const boundary = t(boundaryKey)
+  // The live intervention consumes this summary, not the separate detail projection.
+  const review = fields.map(field => `${field.label}: ${field.value}`)
+  add('agentResident.toolBoundaryLabel', boundary, 'boundary')
+  return { name: t(nameKey), summary: [boundary, ...review].join('\n'), fields }
 }
 
 /** Generation tools keep effective settings under patch/candidate/parameters or per-shot records. */
@@ -224,6 +351,8 @@ function isAllArtifactDelivery(args: unknown): boolean {
 }
 
 export function readableToolName(t: Translate, name: string, rawArgs?: unknown): string {
+  const creative = readableCreativeTool(t, name, rawArgs)
+  if (creative) return creative.name
   const args = semanticArgsOf(name, rawArgs)
   if (name === 'nomi_request_tools') return t('agentResident.toolPrepareTools')
   if (name === 'read' || name === 'ls') return t('agentResident.toolFileRead')
@@ -282,6 +411,8 @@ export function readableToolName(t: Translate, name: string, rawArgs?: unknown):
 }
 
 export function readableToolSummary(t: Translate, name: string, rawArgs?: unknown): string {
+  const creative = readableCreativeTool(t, name, rawArgs)
+  if (creative) return creative.summary
   const args = semanticArgsOf(name, rawArgs)
   if (isStoryboardPlanWrite(name, args)) return t('agentResident.toolStoryboardWriteSummary')
   if (isReadOnlyToolName(name, args)) return t('agentResident.toolReadNoChange')
@@ -325,6 +456,8 @@ export function readableToolSummary(t: Translate, name: string, rawArgs?: unknow
  * 认不出的工具至少说清「它要做哪件事、动的是谁」（合同 §2.6：逐条给人话）。
  */
 export function readableToolPreview(t: Translate, name: string, rawArgs?: unknown): string {
+  const creative = readableCreativeTool(t, name, rawArgs)
+  if (creative) return creative.summary
   const args = semanticArgsOf(name, rawArgs)
   const normalized = toolIdentity(name, args)
   const record = args && typeof args === 'object' ? args as Record<string, unknown> : {}
@@ -353,6 +486,8 @@ export function readableToolPreview(t: Translate, name: string, rawArgs?: unknow
 }
 
 export function readableToolTarget(t: Translate, name: string, rawArgs?: unknown): string {
+  const creative = readableCreativeTool(t, name, rawArgs)
+  if (creative) return creative.fields.find(field => field.kind === 'target')?.value ?? t('agentResident.targetCurrentScene')
   const args = semanticArgsOf(name, rawArgs)
   const normalized = toolIdentity(name, args)
   const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}
@@ -398,6 +533,8 @@ function readableProposalParameters(t: Translate, record: Record<string, unknown
 }
 
 export function proposalForTool(t: Translate, name: string, rawArgs?: unknown): ResidentProposalData | undefined {
+  const creative = readableCreativeTool(t, name, rawArgs)
+  if (creative) return { fields: creative.fields }
   const args = semanticArgsOf(name, rawArgs)
   const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}
   const storyboardPlan = isStoryboardPlanWrite(name, record)
@@ -459,6 +596,8 @@ export function proposalForTool(t: Translate, name: string, rawArgs?: unknown): 
 }
 
 export function readableToolDetailRows(t: Translate, name: string, rawArgs?: unknown): readonly ResidentApprovalDetail[] {
+  const creative = readableCreativeTool(t, name, rawArgs)
+  if (creative) return creative.fields
   const args = semanticArgsOf(name, rawArgs)
   const normalized = name.toLowerCase()
   const record = args && typeof args === 'object' ? args as Record<string, unknown> : {}
