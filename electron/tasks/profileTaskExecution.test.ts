@@ -7,6 +7,10 @@ import {
   executeProfileOperation,
 } from "./profileTaskExecution";
 import { buildProfileTaskResult } from "../runtime";
+import * as metadataTransport from "../hardenedFetch";
+import * as profileHttpRequest from "../catalog/profileHttpRequest";
+import * as vendorHttp from "../vendor/vendorHttp";
+import * as submissionWindow from "../vendorSubmissionRateLimiter";
 
 const vendor: Vendor = {
   key: "agnes",
@@ -56,6 +60,9 @@ const mapping: Mapping = {
 };
 
 beforeEach(() => {
+  // This file tests orchestration, not the application route/DNS policy owner.
+  vi.spyOn(metadataTransport, "hardenedFetch").mockRejectedValue(new Error("Unexpected metadata transport"));
+  vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Unexpected vendor transport"); }));
   setSubmitOutboundDepsForTests({
     resolve: async () => [{ address: "93.184.216.34", family: 4 }],
     readEnvironment: async () => ({ syntheticResolver: false, syntheticSample: "" }),
@@ -64,8 +71,39 @@ beforeEach(() => {
 });
 afterEach(() => {
   setSubmitOutboundDepsForTests(null);
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+const publicImageUrl = "https://cdn.example.com/frame.png";
+
+function agnesFixture() {
+  const metadata = vi.mocked(metadataTransport.hardenedFetch).mockResolvedValue({
+    status: 206, contentType: "image/png", bytes: Buffer.alloc(0), finalUrl: publicImageUrl, truncated: false,
+  });
+  const build = vi.spyOn(profileHttpRequest, "buildProfileHttpRequest");
+  const submit = vi.spyOn(vendorHttp, "requestJson");
+  // Do not reserve slots in the user's persistent ledger. Rejection must never reach here.
+  const rate = vi.spyOn(submissionWindow, "waitForVendorSubmissionWindow").mockResolvedValue(null);
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    video_id: "video-1", status: "queued",
+  }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  const input: Parameters<typeof executeProfileOperation>[0] = {
+    vendor, model, apiKey: "test-key", operation,
+    request: {
+      kind: "image_to_video", prompt: "subtle camera push-in",
+      extras: { image_url: publicImageUrl, modelKey: model.modelKey },
+    },
+  };
+  const expectProbe = () => {
+    expect(metadata).toHaveBeenCalledExactlyOnceWith(publicImageUrl, {
+      method: "GET", headers: { Range: "bytes=0-0" }, signal: expect.any(AbortSignal),
+      timeoutMs: 12_000, headersOnly: true, outboundStage: "submit", throwOnNon2xx: false,
+    });
+  };
+  return { input, metadata, build, submit, rate, fetchMock, expectProbe };
+}
 
 describe("executeProfileOperation AGNES preflight", () => {
   it("snapshots the actual multipart edit size with one upload", async () => {
@@ -124,34 +162,9 @@ describe("executeProfileOperation AGNES preflight", () => {
   });
 
   it("probes the localized public image before submitting image-to-video", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(Buffer.from([137]), {
-        status: 206,
-        headers: { "Content-Type": "image/png" },
-      }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        video_id: "video-1",
-        status: "queued",
-      }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const executed = await executeProfileOperation({
-      vendor,
-      model,
-      apiKey: "test-key",
-      request: {
-        kind: "image_to_video",
-        prompt: "subtle camera push-in",
-        extras: {
-          image_url: "https://cdn.example.com/frame.png",
-          modelKey: model.modelKey,
-        },
-      },
-      operation,
-    });
+    const f = agnesFixture();
+    const original = JSON.stringify(f.input.request);
+    const executed = await executeProfileOperation(f.input);
 
     expect(executed.timings).toEqual({
       assetLocalizationMs: expect.any(Number),
@@ -161,14 +174,17 @@ describe("executeProfileOperation AGNES preflight", () => {
       providerRequestMs: expect.any(Number),
       totalMs: expect.any(Number),
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://cdn.example.com/frame.png");
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      method: "GET",
-      headers: { Range: "bytes=0-0" },
-    });
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://apihub.agnes-ai.com/v1/videos");
-    const submittedBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body || "{}")) as {
+    f.expectProbe();
+    expect(f.build).toHaveBeenCalledTimes(1);
+    expect(f.submit).toHaveBeenCalledTimes(1);
+    expect(f.rate).not.toHaveBeenCalled(); // This original call has no create stage.
+    expect(f.metadata.mock.invocationCallOrder[0]).toBeLessThan(f.build.mock.invocationCallOrder[0]);
+    expect(f.build.mock.invocationCallOrder[0]).toBeLessThan(f.submit.mock.invocationCallOrder[0]);
+    expect(f.submit.mock.invocationCallOrder[0]).toBeLessThan(f.fetchMock.mock.invocationCallOrder[0]);
+    expect(f.fetchMock).toHaveBeenCalledTimes(1);
+    expect(f.fetchMock.mock.calls[0]?.[0]).toBe("https://apihub.agnes-ai.com/v1/videos");
+    expect(f.fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    const submittedBody = JSON.parse(String(f.fetchMock.mock.calls[0]?.[1]?.body || "{}")) as {
       image?: unknown;
       prompt?: unknown;
     };
@@ -177,6 +193,79 @@ describe("executeProfileOperation AGNES preflight", () => {
       prompt: "subtle camera push-in",
     });
     expect(Array.isArray(submittedBody.image)).toBe(false);
+    expect(JSON.stringify(f.input.request)).toBe(original);
+    expect(executed.response).toEqual({ video_id: "video-1", status: "queued" });
+  });
+
+  it("localizes a local reference to its fresh public original before probe, build and one submit", async () => {
+    const f = agnesFixture();
+    const localUrl = "nomi-local://asset/fixture/frame.png";
+    const read = vi.fn(() => ({
+      bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=", "base64"),
+      contentType: "image/png", fileName: "frame.png", originalUrl: publicImageUrl, ageMs: 0,
+    }));
+    f.input.stage = "create";
+    f.input.request.extras!.image_url = localUrl;
+    f.input.localAssetReader = read;
+    const original = JSON.stringify(f.input.request);
+    const executed = await executeProfileOperation(f.input);
+
+    expect(read).toHaveBeenCalledWith(localUrl);
+    f.expectProbe();
+    expect(read.mock.invocationCallOrder[0]).toBeLessThan(f.metadata.mock.invocationCallOrder[0]);
+    expect(f.metadata.mock.invocationCallOrder[0]).toBeLessThan(f.build.mock.invocationCallOrder[0]);
+    expect(f.build.mock.invocationCallOrder[0]).toBeLessThan(f.rate.mock.invocationCallOrder[0]);
+    expect(f.rate.mock.invocationCallOrder[0]).toBeLessThan(f.submit.mock.invocationCallOrder[0]);
+    expect(f.build).toHaveBeenCalledTimes(1);
+    expect(f.build.mock.calls[0]?.[0].request.extras?.image_url).toBe(publicImageUrl);
+    expect(f.rate).toHaveBeenCalledExactlyOnceWith("agnes", "video");
+    expect(f.submit).toHaveBeenCalledTimes(1);
+    expect(f.fetchMock).toHaveBeenCalledTimes(1); // No upload: the original URL is fresh.
+    expect(f.fetchMock.mock.calls[0]?.[0]).toBe("https://apihub.agnes-ai.com/v1/videos");
+    expect(JSON.parse(String(f.fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ image: publicImageUrl });
+    expect(executed.timings.localizedAssetCount).toBe(1);
+    expect(JSON.stringify(f.input.request)).toBe(original);
+  });
+
+  it.each([
+    { reason: "metadata transport refusal", error: new Error("offline metadata refusal"), message: /offline metadata refusal/ },
+    { reason: "expired URL", status: 403, contentType: "image/png", message: /HTTP 403/ },
+    { reason: "HTML landing page", status: 200, contentType: "text/html", message: /不是图片/ },
+  ])("stops $reason before any build, vendor call or rate reservation without retrying", async rejection => {
+    const f = agnesFixture();
+    f.input.stage = "create";
+    if (rejection.error) f.metadata.mockRejectedValue(rejection.error);
+    else f.metadata.mockResolvedValue({ status: rejection.status!, contentType: rejection.contentType!, bytes: Buffer.alloc(0), finalUrl: publicImageUrl, truncated: false });
+
+    await expect(executeProfileOperation(f.input)).rejects.toThrow(rejection.message);
+    f.expectProbe(); // Exactly one real probe-to-transport call, even on refusal.
+    expect(f.build).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+    expect(f.rate).not.toHaveBeenCalled();
+    expect(f.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { reason: "network outcome unknown", error: new TypeError("offline fetch failed"), structured: { category: "submission-unknown", retryable: false } },
+    { reason: "timeout outcome unknown", error: new DOMException("offline timed out", "TimeoutError"), structured: { category: "submission-unknown", retryable: false } },
+    { reason: "retryable upstream logical error", response: { code: 500, message: "offline upstream failure" }, status: 200, structured: { category: "server", retryable: true } },
+    { reason: "explicit generation outcome unknown", response: { error: { code: "generation_outcome_unknown", message: "offline outcome unknown" } }, status: 502, structured: { category: "submission-unknown", retryable: false } },
+  ])("does not resubmit media after $reason", async failure => {
+    const f = agnesFixture();
+    f.input.stage = "create";
+    if (failure.error) f.fetchMock.mockRejectedValue(failure.error);
+    else f.fetchMock.mockResolvedValue(new Response(JSON.stringify(failure.response), { status: failure.status, headers: { "Content-Type": "application/json" } }));
+
+    await expect(executeProfileOperation(f.input)).rejects.toMatchObject({
+      structured: failure.structured,
+    });
+    f.expectProbe();
+    expect(f.build).toHaveBeenCalledTimes(1);
+    expect(f.rate).toHaveBeenCalledExactlyOnceWith("agnes", "video");
+    expect(f.submit).toHaveBeenCalledTimes(1);
+    expect(f.submit.mock.calls[0]?.[8]).toMatchObject({ role: "media-submit" });
+    expect(f.fetchMock).toHaveBeenCalledTimes(1);
+    expect(f.fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
   });
 
   it("records result asset persistence separately from provider execution", async () => {
